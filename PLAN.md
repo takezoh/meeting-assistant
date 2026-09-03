@@ -70,8 +70,9 @@ Detection should primarily use stable operating-system signals such as:
 - audio-session lifecycle
 - microphone usage
 - audio activity
-- calendar context when configured
+- calendar context when configured (never a required signal; Microsoft 365 tenants may block third-party Graph access)
 - explicit user actions
+- for browser meetings only: tab URL host pattern and tab audible state from the detection-only browser extension (public extension APIs, not DOM)
 
 Service-specific behavior must remain isolated behind thin adapters.
 
@@ -85,9 +86,14 @@ Service-specific behavior must remain isolated behind thin adapters.
 
 - Teams Desktop
 - Slack Desktop
-- Google Meet in a supported browser
+- Google Meet in Chrome or Edge, detected by the detection-only browser extension
 - Zoom Desktop
-- Teams Web and Zoom Web where the generic browser capture path is sufficient
+- Teams Web and Zoom Web: best effort, same browser detection and capture path as Google Meet
+
+Browser meeting limitations accepted for the MVP:
+
+- meeting audio is captured from the browser process loopback, so audio from other tabs can be mixed into the recording
+- without the extension installed, browser meetings fall back to manual start
 
 ### Capabilities
 
@@ -107,7 +113,7 @@ Service-specific behavior must remain isolated behind thin adapters.
 ### Non-goals
 
 - meeting participant bots
-- browser extensions
+- browser extensions beyond the detection-only extension (no tab audio capture, no DOM access, no content scripts)
 - mobile applications
 - Linux support
 - real-time translation
@@ -158,11 +164,14 @@ Deliverables:
 - processor contract
 - destination contract
 - threat model and credential policy
+- ADR: the capture engine runs in a process separate from the UI, so UI failure or restart never interrupts recording
+- module boundary rules and an automated dependency-direction check that keep meeting-service-specific logic out of the workflow core
 
 Exit criteria:
 
 - core boundaries do not require a proprietary backend
-- meeting-service-specific logic cannot leak into the workflow core
+- meeting-service-specific logic cannot leak into the workflow core, enforced by the automated dependency check
+- the capture engine can continue recording after the UI process terminates
 - workflow steps and artifacts have stable identifiers and states
 
 ### Phase 1 — Windows detection and audio-capture PoC
@@ -175,21 +184,30 @@ Implement a headless or diagnostic-first prototype for:
 - process-specific loopback capture where available
 - manual recording fallback
 - signal timeline and detector diagnostics
+- microphone endpoint selection that follows the capture session of the meeting application, not the system default device
+- measurement of meeting audio leaking into the microphone track when speakers are used
+- per-application record of whether process-tree loopback is required
+- signal timeline saved in a replayable fixture format, with an optional user confirmation label ("was this a meeting?") per session
+- detection-only browser extension PoC: reports tab URL host and audible state to the desktop application over a localhost channel, combined with OS-level browser microphone use for start and end decisions
 
 Test against:
 
 - Teams Desktop
 - Slack Huddle
-- Google Meet in Chrome
+- Google Meet in Chrome, with and without the extension
 - Zoom Desktop
 
 Exit criteria:
 
 - microphone and meeting audio can be recorded
+- Google Meet start and end are detected from extension signals plus OS microphone use, without DOM access
 - two-hour recording completes without losing data
 - meeting-start and meeting-end signals are observable for all four targets
 - detection requires no UI scraping
 - browser audio contamination and other platform limitations are documented
+- the recorded microphone matches the device used by the meeting application
+- echo conditions and their severity are documented per application
+- recorded signal timelines can be replayed as detector test fixtures
 
 ### Phase 2 — Local session and workflow runtime
 
@@ -214,6 +232,11 @@ Exit criteria:
 
 ### Phase 3 — Transcription, diarization, and summary
 
+Premises:
+
+- the microphone track is the local user and the loopback track is the remote participants; "self vs others" separation comes from the tracks, not from diarization
+- supported transcription languages: Japanese and English
+
 Implement replaceable processors for:
 
 - transcription
@@ -229,7 +252,10 @@ Initial execution options:
 
 - one external API adapter
 - one local transcription path
-- restricted Claude Code / Codex CLI summarization adapter
+
+Post-MVP:
+
+- restricted Claude Code / Codex CLI summarization adapter (deferred: subscription CLIs may restrict third-party use, and staged-file isolation needs a dedicated working directory and permission restrictions)
 
 Exit criteria:
 
@@ -251,6 +277,8 @@ Implement:
 - Google Drive destination
 - Notion database destination
 - direct user-owned authentication
+  - Google Drive: installed-app OAuth flow with PKCE, `drive.file` scope only
+  - Notion: user-created internal integration token, no OAuth redirect
 - persistent export retry queue
 
 Exit criteria:
@@ -261,6 +289,8 @@ Exit criteria:
 - large media can be stored in Drive while Notion stores links and metadata
 
 ### Phase 5 — Detection quality and supported-app hardening
+
+Test fixtures are the signal timelines recorded by the Phase 1 diagnostics, labeled with user confirmations collected during ordinary use.
 
 Build a repeatable validation matrix covering:
 
@@ -275,15 +305,17 @@ Build a repeatable validation matrix covering:
 - browser meetings with unrelated tab audio
 - unknown application versions
 
-Initial targets:
+Initial targets (desktop applications, and Google Meet with the extension installed):
 
 - start detection success: at least 95%
 - end detection success: at least 95%
 - false automatic recordings: fewer than one per eight hours of ordinary use
 
+Browser meetings without the extension are excluded from these targets.
+
 Exit criteria:
 
-- detection tests do not depend on screenshots or DOM fixtures
+- detection tests replay recorded signal timelines and do not depend on screenshots or DOM fixtures
 - adapter failure falls back safely to generic detection or manual control
 - unknown versions use the configured safe fallback
 - diagnostics explain the signals used for each decision
@@ -308,6 +340,7 @@ After the Windows audio-first MVP is stable:
 - external transmission is explicit and configurable
 - retention and source-deletion policies are user-controlled
 - recording-notice templates are available
+- the microphone track is recorded regardless of the meeting application's mute state; this is stated in the UI
 
 ### Security
 
@@ -325,28 +358,40 @@ After the Windows audio-first MVP is stable:
 - destination failures remain retryable
 - processing failure never stops the recording path
 
-## 8. Open decisions
+## 8. Decisions
 
-Resolve before or during Phase 0:
+### Decided
 
-- desktop framework and native-boundary strategy
+- the capture engine runs in a process separate from the UI (Phase 0 ADR)
+- supported transcription languages: Japanese and English
+- Google Drive uses the installed-app OAuth flow with PKCE and the `drive.file` scope
+- Notion uses a user-created internal integration token
+- the Claude Code / Codex CLI summarization adapter is post-MVP
+- Google Meet detection uses a detection-only browser extension (tab URL host and audible state); browser audio stays on the process loopback path, and tab-level audio capture via the extension is post-MVP because it requires a user click per meeting
+
+### Resolve before or during Phase 0
+
+- desktop framework, given the separate capture-engine process
 - local database and artifact-directory layout
 - audio container, codec, sample rate, and chunk duration
 - exact definition and UX of automatic-recording modes
-- default retention policy
 - initial transcription and summarization adapters
-- OAuth approach for destinations that restrict desktop public clients
+- maximum acceptable processing time for a two-hour recording on the local transcription path without a GPU
 - application-update and signed-adapter-manifest distribution
+
+### Resolve before Phase 2
+
+- default retention policy
 
 ## 9. MVP completion criteria
 
 The MVP is complete when:
 
-1. The four target meeting services can be detected and recorded on Windows 11 without joining as a bot.
+1. The four target meeting services can be detected and recorded on Windows 11 without joining as a bot, with Google Meet relying on the detection-only browser extension.
 2. Recording starts and stops automatically with visible user control.
 3. A two-hour meeting can be recorded and recovered safely.
 4. Transcription, diarization, summary, decisions, and action items can be generated.
 5. Results can be stored locally and exported to Google Drive or Notion.
 6. The complete workflow runs without a proprietary workflow backend.
-7. Meeting-service UI changes do not affect the core detection path.
+7. Meeting-service UI changes do not affect the core detection path, verified across the application versions in the Phase 5 matrix.
 8. Network loss, provider failure, and application restart do not lose the meeting or workflow state.
