@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "capture.degraded",
+  "params": {
+    "event": "capture.degraded",
+    "reason": "device_lost",
+    "seq": 102
+  }
+}

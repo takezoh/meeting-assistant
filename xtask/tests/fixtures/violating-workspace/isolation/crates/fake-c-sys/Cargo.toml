@@ -1,0 +1,12 @@
+[package]
+name = "fake-c-sys"
+version = "0.0.0"
+edition = "2021"
+publish = false
+links = "fakec"
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+cc = { path = "../cc" }

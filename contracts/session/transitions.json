@@ -1,0 +1,814 @@
+[
+  {
+    "effects": [
+      "record_suppressed_rearm"
+    ],
+    "event": "detector_start",
+    "from": "idle",
+    "guard": "cancel_suppressed",
+    "to": "idle"
+  },
+  {
+    "effects": [
+      "create_session",
+      "evaluate_policy"
+    ],
+    "event": "detector_start",
+    "from": "idle",
+    "guard": "not_cancel_suppressed",
+    "to": "candidate"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "idle",
+    "guard": null,
+    "to": "idle"
+  },
+  {
+    "effects": [],
+    "event": "system_suspend",
+    "from": "idle",
+    "guard": null,
+    "to": "idle"
+  },
+  {
+    "effects": [],
+    "event": "system_resume",
+    "from": "idle",
+    "guard": null,
+    "to": "idle"
+  },
+  {
+    "effects": [],
+    "event": "recovery_found",
+    "from": "idle",
+    "guard": null,
+    "to": "idle"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts"
+    ],
+    "event": "policy_evaluate",
+    "from": "candidate",
+    "guard": "identity_gone",
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "notify_countdown",
+      "set_deadline_countdown"
+    ],
+    "event": "policy_evaluate",
+    "from": "candidate",
+    "guard": "mode_auto_surface",
+    "to": "arming"
+  },
+  {
+    "effects": [
+      "record_suppression_no_consent_surface",
+      "discard_empty_artifacts"
+    ],
+    "event": "policy_evaluate",
+    "from": "candidate",
+    "guard": "mode_auto_no_surface",
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "notify_offer_start"
+    ],
+    "event": "policy_evaluate",
+    "from": "candidate",
+    "guard": "mode_ask_surface",
+    "to": "candidate"
+  },
+  {
+    "effects": [
+      "record_suppression_no_consent_surface",
+      "discard_empty_artifacts"
+    ],
+    "event": "policy_evaluate",
+    "from": "candidate",
+    "guard": "mode_ask_no_surface",
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts"
+    ],
+    "event": "policy_evaluate",
+    "from": "candidate",
+    "guard": "mode_manual",
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "notify_meeting_ended",
+      "discard_empty_artifacts"
+    ],
+    "event": "command_start",
+    "from": "candidate",
+    "guard": "identity_gone",
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "start_capture"
+    ],
+    "event": "command_start",
+    "from": "candidate",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts"
+    ],
+    "event": "detector_end",
+    "from": "candidate",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts",
+      "suppress_rearm"
+    ],
+    "event": "command_cancel",
+    "from": "candidate",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "candidate",
+    "guard": null,
+    "to": "candidate"
+  },
+  {
+    "effects": [],
+    "event": "system_suspend",
+    "from": "candidate",
+    "guard": null,
+    "to": "candidate"
+  },
+  {
+    "effects": [
+      "evaluate_policy"
+    ],
+    "event": "system_resume",
+    "from": "candidate",
+    "guard": null,
+    "to": "candidate"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts"
+    ],
+    "event": "recovery_found",
+    "from": "candidate",
+    "guard": null,
+    "to": "idle"
+  },
+  {
+    "effects": [
+      "clear_deadline_countdown",
+      "start_capture"
+    ],
+    "event": "timer_countdown",
+    "from": "arming",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "clear_deadline_countdown",
+      "start_capture"
+    ],
+    "event": "command_start",
+    "from": "arming",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "clear_deadline_countdown",
+      "discard_empty_artifacts",
+      "suppress_rearm"
+    ],
+    "event": "command_cancel",
+    "from": "arming",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "clear_deadline_countdown",
+      "discard_empty_artifacts"
+    ],
+    "event": "consent_lost",
+    "from": "arming",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "clear_deadline_countdown",
+      "discard_empty_artifacts"
+    ],
+    "event": "detector_end",
+    "from": "arming",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [],
+    "event": "detector_start",
+    "from": "arming",
+    "guard": null,
+    "to": "arming"
+  },
+  {
+    "effects": [
+      "freeze_deadlines"
+    ],
+    "event": "system_suspend",
+    "from": "arming",
+    "guard": null,
+    "to": "arming"
+  },
+  {
+    "effects": [
+      "clear_deadline_countdown",
+      "evaluate_policy"
+    ],
+    "event": "system_resume",
+    "from": "arming",
+    "guard": null,
+    "to": "candidate"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts"
+    ],
+    "event": "recovery_found",
+    "from": "arming",
+    "guard": null,
+    "to": "idle"
+  },
+  {
+    "effects": [
+      "set_deadline_hysteresis"
+    ],
+    "event": "detector_end",
+    "from": "recording",
+    "guard": null,
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "command_stop",
+    "from": "recording",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "pause_capture"
+    ],
+    "event": "command_pause",
+    "from": "recording",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "discard_artifacts"
+    ],
+    "event": "command_discard",
+    "from": "recording",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "record_failure"
+    ],
+    "event": "capture_failed",
+    "from": "recording",
+    "guard": null,
+    "to": "failed"
+  },
+  {
+    "effects": [],
+    "event": "capture_started",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "record_indicator_unavailable"
+    ],
+    "event": "consent_lost",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "freeze_deadlines"
+    ],
+    "event": "system_suspend",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "resume_deadlines"
+    ],
+    "event": "system_resume",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [],
+    "event": "detector_start",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [],
+    "event": "detector_continues",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [],
+    "event": "command_start",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "notify_already_recording"
+    ],
+    "event": "command_cancel",
+    "from": "recording",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "mark_interruption"
+    ],
+    "event": "recovery_found",
+    "from": "recording",
+    "guard": null,
+    "to": "interrupted"
+  },
+  {
+    "effects": [
+      "clear_deadline_hysteresis",
+      "resume_capture"
+    ],
+    "event": "command_resume",
+    "from": "paused",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "command_stop",
+    "from": "paused",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "discard_artifacts"
+    ],
+    "event": "command_discard",
+    "from": "paused",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "set_deadline_hysteresis"
+    ],
+    "event": "detector_end",
+    "from": "paused",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "clear_deadline_hysteresis"
+    ],
+    "event": "detector_continues",
+    "from": "paused",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "clear_deadline_hysteresis"
+    ],
+    "event": "detector_start",
+    "from": "paused",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "timer_hysteresis",
+    "from": "paused",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "record_indicator_unavailable"
+    ],
+    "event": "consent_lost",
+    "from": "paused",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "record_failure"
+    ],
+    "event": "capture_failed",
+    "from": "paused",
+    "guard": null,
+    "to": "failed"
+  },
+  {
+    "effects": [
+      "freeze_deadlines"
+    ],
+    "event": "system_suspend",
+    "from": "paused",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "resume_deadlines"
+    ],
+    "event": "system_resume",
+    "from": "paused",
+    "guard": null,
+    "to": "paused"
+  },
+  {
+    "effects": [
+      "mark_interruption"
+    ],
+    "event": "recovery_found",
+    "from": "paused",
+    "guard": null,
+    "to": "interrupted"
+  },
+  {
+    "effects": [
+      "clear_deadline_hysteresis",
+      "clear_deadline_prompt",
+      "clear_deadline_extension",
+      "reset_extension"
+    ],
+    "event": "detector_continues",
+    "from": "ending",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "clear_deadline_hysteresis",
+      "clear_deadline_prompt",
+      "clear_deadline_extension",
+      "reset_extension"
+    ],
+    "event": "detector_start",
+    "from": "ending",
+    "guard": null,
+    "to": "recording"
+  },
+  {
+    "effects": [
+      "record_failure"
+    ],
+    "event": "capture_failed",
+    "from": "ending",
+    "guard": null,
+    "to": "failed"
+  },
+  {
+    "effects": [
+      "notify_still_in_meeting",
+      "set_deadline_prompt"
+    ],
+    "event": "timer_hysteresis",
+    "from": "ending",
+    "guard": "extension_available",
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "timer_hysteresis",
+    "from": "ending",
+    "guard": "extension_used",
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "timer_prompt",
+    "from": "ending",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "clear_deadline_prompt",
+      "mark_extension_used",
+      "set_deadline_extension"
+    ],
+    "event": "command_extend_yes",
+    "from": "ending",
+    "guard": "extension_available",
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "command_extend_no",
+    "from": "ending",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "timer_extension",
+    "from": "ending",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "finalize"
+    ],
+    "event": "command_stop",
+    "from": "ending",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "stop_capture",
+      "discard_artifacts"
+    ],
+    "event": "command_discard",
+    "from": "ending",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [],
+    "event": "detector_end",
+    "from": "ending",
+    "guard": null,
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "record_indicator_unavailable"
+    ],
+    "event": "consent_lost",
+    "from": "ending",
+    "guard": null,
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "freeze_deadlines"
+    ],
+    "event": "system_suspend",
+    "from": "ending",
+    "guard": null,
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "resume_deadlines"
+    ],
+    "event": "system_resume",
+    "from": "ending",
+    "guard": null,
+    "to": "ending"
+  },
+  {
+    "effects": [
+      "mark_interruption"
+    ],
+    "event": "recovery_found",
+    "from": "ending",
+    "guard": null,
+    "to": "interrupted"
+  },
+  {
+    "effects": [],
+    "event": "finalize_completed",
+    "from": "finalizing",
+    "guard": null,
+    "to": "completed"
+  },
+  {
+    "effects": [
+      "record_failure"
+    ],
+    "event": "finalize_failed",
+    "from": "finalizing",
+    "guard": null,
+    "to": "failed"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "finalizing",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [],
+    "event": "detector_end",
+    "from": "finalizing",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [],
+    "event": "detector_continues",
+    "from": "finalizing",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "finalize"
+    ],
+    "event": "recovery_found",
+    "from": "finalizing",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [
+      "record_suppressed_rearm"
+    ],
+    "event": "detector_start",
+    "from": "completed",
+    "guard": "cancel_suppressed",
+    "to": "completed"
+  },
+  {
+    "effects": [
+      "create_session",
+      "evaluate_policy"
+    ],
+    "event": "detector_start",
+    "from": "completed",
+    "guard": "not_cancel_suppressed",
+    "to": "candidate"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "completed",
+    "guard": null,
+    "to": "completed"
+  },
+  {
+    "effects": [],
+    "event": "recovery_found",
+    "from": "completed",
+    "guard": null,
+    "to": "completed"
+  },
+  {
+    "effects": [
+      "record_suppressed_rearm"
+    ],
+    "event": "detector_start",
+    "from": "discarded",
+    "guard": "cancel_suppressed",
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "create_session",
+      "evaluate_policy"
+    ],
+    "event": "detector_start",
+    "from": "discarded",
+    "guard": "not_cancel_suppressed",
+    "to": "candidate"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "discarded",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "discard_empty_artifacts"
+    ],
+    "event": "recovery_found",
+    "from": "discarded",
+    "guard": null,
+    "to": "discarded"
+  },
+  {
+    "effects": [
+      "finalize"
+    ],
+    "event": "recovery_proceed",
+    "from": "interrupted",
+    "guard": null,
+    "to": "finalizing"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "interrupted",
+    "guard": null,
+    "to": "interrupted"
+  },
+  {
+    "effects": [
+      "record_suppressed_rearm"
+    ],
+    "event": "detector_start",
+    "from": "failed",
+    "guard": "cancel_suppressed",
+    "to": "failed"
+  },
+  {
+    "effects": [
+      "create_session",
+      "evaluate_policy"
+    ],
+    "event": "detector_start",
+    "from": "failed",
+    "guard": "not_cancel_suppressed",
+    "to": "candidate"
+  },
+  {
+    "effects": [],
+    "event": "command_stop",
+    "from": "failed",
+    "guard": null,
+    "to": "failed"
+  },
+  {
+    "effects": [],
+    "event": "recovery_found",
+    "from": "failed",
+    "guard": null,
+    "to": "failed"
+  }
+]

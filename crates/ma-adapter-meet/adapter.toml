@@ -1,0 +1,14 @@
+# Google Meet: browser only, detected through the extension tab signal and corroborated by
+# microphone use from a browser process (contract-extension-channel-trust).
+id = "meet"
+class = "browser"
+evidence_weight = 1
+corroboration = { microphone = true, tab = true }
+browser_images = ["chrome.exe", "msedge.exe"]
+tab_hosts = ["meet.google.com"]
+
+[fixtures]
+positive_process = ["chrome.exe", "msedge.exe"]
+negative_process = ["example-other.exe", "firefox.example"]
+positive_hosts = ["meet.google.com"]
+negative_hosts = ["google.com", "meet.example.test"]

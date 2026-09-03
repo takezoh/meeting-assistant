@@ -1,0 +1,10 @@
+error[E0277]: `Content` doesn't implement `std::fmt::Display`
+ --> tests/ui/content_display.rs:5:20
+  |
+5 |     println!("{}", title);
+  |               --   ^^^^^ `Content` cannot be formatted with the default formatter
+  |               |
+  |               required by this formatting parameter
+  |
+  = help: the trait `std::fmt::Display` is not implemented for `Content`
+  = note: in format strings you may be able to use `{:?}` (or {:#?} for pretty-print) instead

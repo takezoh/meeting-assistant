@@ -1,0 +1,53 @@
+# Release: build the Windows artifacts, sign the update and adapter manifests with the Ed25519
+# release key, and publish everything as a GitHub Release (contract-release-manifest-trust,
+# adr-20260903-update-and-manifest-distribution). There is no first-party server: the client
+# verifies the manifest signature and decides on its own. The private key lives only in the
+# repository secret MA_MANIFEST_SIGNING_KEY; its public half is crates/ma-manifest/keys/*.pub.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: build and sign (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: portable tier must be green on the tagged commit
+        run: cargo xtask verify --tier portable --strict
+      - name: windows tier must be green on the tagged commit
+        run: cargo xtask verify --tier windows --strict
+      - name: build release binaries
+        run: cargo build --release -p ma-engine -p ma-manifest
+      - name: write update manifest payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION="${GITHUB_RUN_NUMBER}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA=$(sha256sum target/release/ma-engine.exe | cut -d' ' -f1)
+          SIZE=$(stat -c%s target/release/ma-engine.exe)
+          cat > update-manifest.json <<EOF
+          {"manifest_version": ${MANIFEST_VERSION}, "version": "${VERSION}", "channel": "release",
+           "artifacts": [{"name": "ma-engine.exe", "url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/ma-engine.exe", "sha256": "${SHA}", "size": ${SIZE}}],
+           "engine_replacement": true}
+          EOF
+      - name: sign update manifest
+        env:
+          MA_MANIFEST_SIGNING_KEY: ${{ secrets.MA_MANIFEST_SIGNING_KEY }}
+        run: target/release/ma-manifest-sign release-2026 update-manifest.json update-manifest.signed
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/ma-engine.exe
+            update-manifest.signed

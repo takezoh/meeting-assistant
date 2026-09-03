@@ -1,0 +1,18 @@
+# Workspace manifest. Layer membership and boundary policy live in boundary.toml
+# (adr-20260903-workspace-boundary-enforcement); `cargo xtask boundary` enforces it.
+[workspace]
+resolver = "2"
+members = ["xtask", "crates/*"]
+exclude = ["xtask/tests/fixtures", "app/ui/src-tauri"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+cargo_metadata = "0.19"
+serde_yaml = "0.9"

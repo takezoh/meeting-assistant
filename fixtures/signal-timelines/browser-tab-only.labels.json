@@ -1,0 +1,11 @@
+{
+  "timeline": "browser-tab-only.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 0,
+      "to_monotonic_ns": 2000000000,
+      "was_meeting": false,
+      "note": "a recorded meeting being watched: tab present, no microphone"
+    }
+  ]
+}

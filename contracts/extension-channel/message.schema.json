@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-assistant.invalid/contracts/extension-channel/message.schema.json",
+  "title": "ExtensionMessage",
+  "description": "A detection-only tab report from the browser extension. Host, tab key, audible and meeting-present only; no URL, no title, no DOM content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "instance_id",
+    "seq",
+    "observed_at_ms",
+    "host",
+    "tab_key",
+    "audible",
+    "meeting_present"
+  ],
+  "properties": {
+    "audible": {
+      "type": "boolean"
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*$",
+      "description": "Hostname only."
+    },
+    "instance_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "The extension instance; a browser restart starts a new instance with its own seq space."
+    },
+    "meeting_present": {
+      "type": "boolean"
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "description": "Extension observation time, Unix milliseconds; dropped when older than 5 s at receipt."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Strictly increasing per instance_id; a non-increasing seq for the same instance is dropped."
+    },
+    "tab_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Opaque per-tab key."
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "timeline": "browser-tab-with-mic.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 1800000000,
+      "to_monotonic_ns": 2500000000,
+      "was_meeting": true,
+      "note": "tab present and the browser process captures the microphone"
+    }
+  ]
+}

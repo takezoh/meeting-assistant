@@ -1,0 +1,27 @@
+[package]
+name = "ma-secure"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Secret custody, type-level log redaction, owner-only security descriptors and the egress inventory check"
+
+[dependencies]
+ma-core-types = { path = "../ma-core-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+zeroize = "1"
+
+[dev-dependencies]
+trybuild = "1"
+toml = { workspace = true }
+tempfile = "3"
+regex = "1"
+
+[[test]]
+name = "compile_fail"
+path = "tests/compile_fail.rs"
+
+[[test]]
+name = "egress_inventory"
+path = "tests/egress_inventory.rs"

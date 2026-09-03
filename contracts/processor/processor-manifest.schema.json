@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-assistant.invalid/contracts/processor/processor-manifest.schema.json",
+  "title": "ProcessorManifest",
+  "description": "What a processor adapter declares: capability, where it runs, the pinned model digest, the argv template with typed parameters, and the hosts it contacts (checked against egress-inventory.toml).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "processor_id",
+    "version",
+    "capability",
+    "argv_template"
+  ],
+  "properties": {
+    "processor_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "languages",
+        "needs_gpu",
+        "max_input_seconds",
+        "streaming",
+        "egress_hosts",
+        "runs_in"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "transcription",
+            "diarization",
+            "summarization"
+          ]
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]+)*$"
+          }
+        },
+        "needs_gpu": {
+          "type": "boolean"
+        },
+        "max_input_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "egress_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9.-]+\\.[a-z]{2,}$"
+          }
+        },
+        "runs_in": {
+          "enum": [
+            "in_process",
+            "host"
+          ]
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_id",
+        "sha256"
+      ],
+      "properties": {
+        "model_id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "argv_template": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "args",
+        "params"
+      ],
+      "properties": {
+        "program": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Fixed arguments; `{name}` is substituted as one whole argument from params."
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "int",
+                  "enum",
+                  "staged_file",
+                  "bool"
+                ]
+              },
+              "min": {
+                "type": "integer"
+              },
+              "max": {
+                "type": "integer"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "purpose",
+          "delivery"
+        ],
+        "properties": {
+          "purpose": {
+            "type": "string"
+          },
+          "delivery": {
+            "enum": [
+              "environment",
+              "stdin"
+            ],
+            "description": "Never argv."
+          }
+        }
+      }
+    }
+  }
+}

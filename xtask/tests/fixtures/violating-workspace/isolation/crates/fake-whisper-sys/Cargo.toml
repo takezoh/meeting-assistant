@@ -1,0 +1,12 @@
+[package]
+name = "fake-whisper-sys"
+version = "0.0.0"
+edition = "2021"
+publish = false
+links = "whisper"
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+cc = { path = "../cc" }

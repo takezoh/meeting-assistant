@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Meeting Assistant</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Every value here is written by main.js from the engine's view; nothing is computed locally. -->
+    <main>
+      <p id="connection" data-state="disconnected">エンジンに接続していません</p>
+      <p id="session">状態: <span id="session-state">—</span></p>
+      <section id="countdown" hidden>
+        <p>録音を <span id="remaining">—</span> 秒後に開始します</p>
+        <button id="cancel" type="button">キャンセル</button>
+      </section>
+      <section id="indicator" hidden>
+        <p>● 録音中</p>
+      </section>
+      <p id="error" hidden></p>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

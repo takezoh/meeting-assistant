@@ -1,0 +1,15 @@
+{
+  "destination_id": "drive",
+  "display_name": "Google Drive",
+  "egress_hosts": [
+    "oauth2.googleapis.com",
+    "www.googleapis.com"
+  ],
+  "credential_kind": "oauth_refresh_token",
+  "integration_owner": "user_account",
+  "capabilities": {
+    "lookup_by_external_id": true,
+    "update": true,
+    "resumable_upload": true
+  }
+}

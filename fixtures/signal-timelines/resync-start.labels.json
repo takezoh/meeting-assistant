@@ -1,0 +1,11 @@
+{
+  "timeline": "resync-start.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 0,
+      "to_monotonic_ns": 5000000000,
+      "was_meeting": true,
+      "note": "meeting already in progress when the collector started"
+    }
+  ]
+}

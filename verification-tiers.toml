@@ -1,0 +1,820 @@
+# Verification tier registry (contract-verification-tiering). Every verification id declared by
+# the canonical plan (docs/changes/*/design-plan/spine.yaml) must appear here exactly once.
+# `cargo xtask verify --check-registration` enforces it; `cargo xtask verify --tier <name>` runs it.
+schema = 1
+plan = "docs/changes/change-20260903-phase0-repository-and-contracts/design-plan/spine.yaml"
+
+[tiers.portable]
+description = "runs on any host, including the Linux development and CI hosts"
+# Contract-core crates that must build and test on a non-Windows host.
+core_crates = ["ma-core-types", "ma-session", "ma-signal", "ma-detect", "ma-store", "ma-workflow", "ma-processor", "ma-destination", "ma-manifest", "ma-secure", "xtask"]
+
+[tiers.windows]
+description = "runs on a Windows 11 runner; Phase 0 is not complete until this tier reports green"
+platform = "windows"
+
+# ---- registrations are generated from the plan and must stay in sync with it ----
+
+[[verification]]
+id = "v-addressing-db-not-relocatable"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-artifact-addressing"
+command = "cargo test -p ma-store database_path_is_pinned_to_local_appdata"
+
+[[verification]]
+id = "v-addressing-identifier-only-segments"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-artifact-addressing"
+command = "cargo test -p ma-store hostile_titles_never_reach_the_filesystem"
+
+[[verification]]
+id = "v-addressing-no-absolute-paths"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-artifact-addressing"
+command = "cargo test -p ma-store no_absolute_artifact_path_is_stored"
+
+[[verification]]
+id = "v-addressing-relocation"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-artifact-addressing"
+command = "cargo test -p ma-store root_relocation_preserves_references"
+
+[[verification]]
+id = "v-authz-build-channel-carveout"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-ipc-transport-authz"
+command = "cargo test -p ma-ipc authz_build_channel_carveout"
+
+[[verification]]
+id = "v-authz-dacl-shape"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-ipc-transport-authz"
+command = "cargo test -p ma-secure acl_pipe_descriptor_owner_only"
+
+[[verification]]
+id = "v-authz-foreign-sid-rejected"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-ipc-transport-authz"
+command = "cargo test -p ma-ipc authz_foreign_sid_rejected_before_dispatch"
+
+[[verification]]
+id = "v-authz-pipe-squat"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-ipc-transport-authz"
+command = "cargo test -p ma-engine --test topology pipe_squat_detected"
+platform = "windows"
+
+[[verification]]
+id = "v-boundary-ci-gate"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-module-boundary-enforcement"
+command = "cargo test -p xtask ci_workflow_invokes_boundary_and_deny"
+
+[[verification]]
+id = "v-boundary-clean-workspace"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-module-boundary-enforcement"
+command = "cargo xtask boundary"
+
+[[verification]]
+id = "v-boundary-feature-gated-leak"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-module-boundary-enforcement"
+command = "cargo test -p xtask feature_gated_adapter_edge_is_detected"
+
+[[verification]]
+id = "v-boundary-negative-fixture"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-module-boundary-enforcement"
+command = "cargo test -p xtask boundary_negative_fixture_reports_three_violations"
+
+[[verification]]
+id = "v-budget-cancellation-bound"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-budget"
+command = "cargo test -p ma-processor cancellation_observed_within_bound"
+
+[[verification]]
+id = "v-budget-cost-convergence"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-budget"
+command = "cargo test -p ma-processor per_item_cost_does_not_grow"
+
+[[verification]]
+id = "v-budget-overrun-is-warning"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-budget"
+command = "cargo test -p ma-processor budget_overrun_emits_warning_not_failure"
+
+[[verification]]
+id = "v-budget-progress-monotonic"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-budget"
+command = "cargo test -p ma-processor progress_is_monotonic"
+
+[[verification]]
+id = "v-chunk-2h-scale"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-chunk-durability"
+command = "cargo test -p ma-engine --test durability two_hour_recovery_within_bound"
+platform = "windows"
+
+[[verification]]
+id = "v-chunk-backpressure-gap"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-chunk-durability"
+command = "cargo test -p ma-capture stalling_filesystem_yields_gap_not_stall"
+
+[[verification]]
+id = "v-chunk-kill-recovery"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-chunk-durability"
+command = "cargo test -p ma-engine --test durability kill_mid_chunk_bounded_loss"
+platform = "windows"
+
+[[verification]]
+id = "v-chunk-manifest-vs-directory"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-chunk-durability"
+command = "cargo test -p ma-capture directory_is_truth_manifest_is_cache"
+
+[[verification]]
+id = "v-consent-cancel-leaves-no-audio-byte"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-consent-surface-precondition"
+command = "cargo test -p ma-engine --test consent cancelled_countdown_writes_no_audio"
+platform = "windows"
+
+[[verification]]
+id = "v-consent-engine-notification-starts-without-client"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-consent-surface-precondition"
+command = "cargo test -p ma-engine --test consent auto_start_with_no_client_attached"
+platform = "windows"
+
+[[verification]]
+id = "v-consent-no-surface-no-start"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-consent-surface-precondition"
+command = "cargo test -p ma-engine --test consent no_surface_no_capture"
+platform = "windows"
+
+[[verification]]
+id = "v-consent-surface-loss-keeps-recording"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-consent-surface-precondition"
+command = "cargo test -p ma-engine --test consent surface_loss_keeps_recording"
+platform = "windows"
+
+[[verification]]
+id = "v-consolidate-crash-idempotent"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-track-consolidation"
+command = "cargo test -p ma-capture crash_between_verify_and_delete_is_idempotent"
+
+[[verification]]
+id = "v-consolidate-lossless"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-track-consolidation"
+command = "cargo test -p ma-capture flac_decodes_sample_identical"
+
+[[verification]]
+id = "v-consolidate-mismatch-keeps-chunks"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-track-consolidation"
+command = "cargo test -p ma-capture verification_mismatch_preserves_chunks"
+
+[[verification]]
+id = "v-credential-argv-free"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-credential-custody"
+command = "cargo test -p ma-processor secret_never_appears_in_child_argv"
+
+[[verification]]
+id = "v-credential-missing-is-typed"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-credential-custody"
+command = "cargo test -p ma-secure missing_credential_is_needs_authentication"
+
+[[verification]]
+id = "v-credential-no-secret-in-any-written-file"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-credential-custody"
+command = "cargo test -p ma-secure --test leak_scan planted_secret_absent_from_all_written_files"
+platform = "windows"
+
+[[verification]]
+id = "v-credential-type-not-displayable"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-credential-custody"
+command = "cargo test -p ma-secure --test compile_fail secret_cannot_be_displayed"
+
+[[verification]]
+id = "v-detect-adapter-panic-isolated"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-detector-outcome-partition"
+command = "cargo test -p ma-detect panicking_adapter_is_disabled_not_fatal"
+
+[[verification]]
+id = "v-detect-conflict-precedence"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-detector-outcome-partition"
+command = "cargo test -p ma-detect concurrent_candidates_yield_one_session"
+
+[[verification]]
+id = "v-detect-evidence-present"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-detector-determinism"
+command = "cargo test -p ma-detect every_decision_cites_evidence"
+
+[[verification]]
+id = "v-detect-extension-alone-inconclusive"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-detector-outcome-partition"
+command = "cargo test -p ma-detect extension_signal_alone_is_inconclusive"
+
+[[verification]]
+id = "v-detect-partition-exhaustive"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-detector-outcome-partition"
+command = "cargo test -p ma-detect outcome_partition_is_total"
+
+[[verification]]
+id = "v-detect-purity-lint"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-detector-determinism"
+command = "cargo xtask boundary --check forbidden-imports"
+
+[[verification]]
+id = "v-detect-replay-determinism"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-detector-determinism"
+command = "cargo test -p ma-detect replay_is_byte_identical"
+
+[[verification]]
+id = "v-docs-adr-placement"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-docs-conformance"
+command = "cargo xtask docs-check --rule adr-placement"
+
+[[verification]]
+id = "v-docs-change-members-nonempty"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-docs-conformance"
+command = "cargo xtask docs-check --rule change-members"
+
+[[verification]]
+id = "v-docs-invariant-enforcement-named"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-docs-conformance"
+command = "cargo xtask docs-check --rule design-set"
+
+[[verification]]
+id = "v-docs-schema-conformance"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-docs-conformance"
+command = "cargo xtask docs-check --rule schema"
+
+[[verification]]
+id = "v-egress-audit-matches-inventory"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-egress-inventory"
+command = "cargo test -p ma-destination audit_host_is_in_inventory"
+
+[[verification]]
+id = "v-egress-inventory-complete"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-egress-inventory"
+command = "cargo test -p ma-secure --test egress_inventory every_source_host_is_declared"
+
+[[verification]]
+id = "v-egress-inventory-negative-fixture"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-egress-inventory"
+command = "cargo test -p ma-secure --test egress_inventory undeclared_host_is_named"
+
+[[verification]]
+id = "v-egress-inventory-no-first-party"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-egress-inventory"
+command = "cargo test -p ma-secure --test egress_inventory owners_are_closed_and_entries_are_reachable"
+
+[[verification]]
+id = "v-export-auth-failure-classification"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-destination-export-idempotency"
+command = "cargo test -p ma-destination auth_failure_is_needs_reauthentication"
+
+[[verification]]
+id = "v-export-crash-before-identity-record"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-destination-export-idempotency"
+command = "cargo test -p ma-destination crash_before_identity_record_reconciles"
+
+[[verification]]
+id = "v-export-duplicate-retry-no-duplicate"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-destination-export-idempotency"
+command = "cargo test -p ma-destination retry_creates_no_duplicate_remote_object"
+
+[[verification]]
+id = "v-export-offline-queue-survives-restart"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-destination-export-idempotency"
+command = "cargo test -p ma-workflow --test export_queue queue_survives_restart"
+platform = "windows"
+
+[[verification]]
+id = "v-ext-alone-cannot-start"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-extension-channel-trust"
+command = "cargo test -p ma-detect forged_extension_signal_does_not_start_capture"
+
+[[verification]]
+id = "v-ext-origin-rejects-web"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-extension-channel-trust"
+command = "cargo test -p ma-ext-channel web_origin_rejected"
+
+[[verification]]
+id = "v-ext-replay-rejected"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-extension-channel-trust"
+command = "cargo test -p ma-ext-channel stale_sequence_rejected"
+
+[[verification]]
+id = "v-ext-token-required"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-extension-channel-trust"
+command = "cargo test -p ma-ext-channel request_without_token_rejected"
+
+[[verification]]
+id = "v-identity-cross-surface-equality"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-stable-identity"
+command = "cargo test -p ma-store identifier_identical_across_db_path_and_export"
+
+[[verification]]
+id = "v-identity-ordering"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-stable-identity"
+command = "cargo test -p ma-core-types uuidv7_is_time_ordered"
+
+[[verification]]
+id = "v-identity-recovery-reuse"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-stable-identity"
+command = "cargo test -p ma-engine --test durability recovery_reuses_session_id"
+platform = "windows"
+
+[[verification]]
+id = "v-ipc-backpressure-never-stalls-capture"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-ipc-protocol"
+command = "cargo test -p ma-engine --test topology wedged_client_does_not_stall_capture"
+platform = "windows"
+
+[[verification]]
+id = "v-ipc-handshake-mismatch"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-ipc-protocol"
+command = "cargo test -p ma-ipc handshake_major_mismatch_refused"
+
+[[verification]]
+id = "v-ipc-resync-after-stall"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-ipc-protocol"
+command = "cargo test -p ma-ipc stalled_client_resyncs"
+
+[[verification]]
+id = "v-ipc-schema-conformance"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-ipc-protocol"
+command = "cargo test -p ma-ipc schema_golden_roundtrip"
+
+[[verification]]
+id = "v-isolation-capture-path-edges"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-processing-isolation"
+command = "cargo xtask boundary --rule capture-path-isolation"
+
+[[verification]]
+id = "v-isolation-native-link-confined"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-processing-isolation"
+command = "cargo xtask boundary --rule native-inference-confinement"
+
+[[verification]]
+id = "v-isolation-negative-fixture"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processing-isolation"
+command = "cargo test -p xtask isolation_negative_fixture"
+
+[[verification]]
+id = "v-isolation-processor-abort-keeps-recording"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-processing-isolation"
+command = "cargo test -p ma-engine --test durability processor_abort_keeps_recording"
+platform = "windows"
+
+[[verification]]
+id = "v-manifest-digest-mismatch-no-activation"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-release-manifest-trust"
+command = "cargo test -p ma-manifest digest_mismatch_blocks_adapter_activation"
+
+[[verification]]
+id = "v-manifest-downgrade-rejected"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-release-manifest-trust"
+command = "cargo test -p ma-manifest replayed_older_manifest_rejected"
+
+[[verification]]
+id = "v-manifest-tampered-rejected"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-release-manifest-trust"
+command = "cargo test -p ma-manifest tampered_manifest_rejected"
+
+[[verification]]
+id = "v-manifest-unknown-key-rejected"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-release-manifest-trust"
+command = "cargo test -p ma-manifest unknown_key_rejected_rollover_accepted"
+
+[[verification]]
+id = "v-mode-countdown-cancel-suppression"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-recording-mode-policy"
+command = "cargo test -p ma-session cancel_suppresses_rearm_for_identity"
+
+[[verification]]
+id = "v-mode-hysteresis-flap"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-recording-mode-policy"
+command = "cargo test -p ma-session flapping_end_signal_yields_one_session"
+
+[[verification]]
+id = "v-mode-resolution-order"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-recording-mode-policy"
+command = "cargo test -p ma-session mode_resolution_override_class_global"
+
+[[verification]]
+id = "v-mode-suspend-resume-reevaluation"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-recording-mode-policy"
+command = "cargo test -p ma-session suspend_during_countdown_reevaluates"
+
+[[verification]]
+id = "v-processor-argv-no-shell"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-interface"
+command = "cargo test -p ma-processor config_value_never_reaches_a_shell"
+
+[[verification]]
+id = "v-processor-capability-refusal"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-interface"
+command = "cargo test -p ma-processor unsupported_language_is_typed_refusal"
+
+[[verification]]
+id = "v-processor-model-digest"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-interface"
+command = "cargo test -p ma-processor model_digest_mismatch_is_permanent_failure"
+
+[[verification]]
+id = "v-processor-staging-exact-contents"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-processor-interface"
+command = "cargo test -p ma-processor staging_dir_contains_only_declared_inputs"
+
+[[verification]]
+id = "v-purge-cancels-inflight-steps"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-retention-purge"
+command = "cargo test -p ma-workflow delete_cancels_inflight_steps"
+
+[[verification]]
+id = "v-purge-completeness"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-retention-purge"
+command = "cargo test -p ma-store purge_leaves_only_tombstone"
+
+[[verification]]
+id = "v-purge-idempotent"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-retention-purge"
+command = "cargo test -p ma-store purge_rerun_is_idempotent"
+
+[[verification]]
+id = "v-purge-interrupted-resumes"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-retention-purge"
+command = "cargo test -p ma-engine --test durability killed_purge_resumes_to_completion"
+platform = "windows"
+
+[[verification]]
+id = "v-redaction-content-type-not-loggable"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-diagnostic-redaction"
+command = "cargo test -p ma-secure --test compile_fail content_type_cannot_be_logged"
+
+[[verification]]
+id = "v-redaction-error-display-elides-payload"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-diagnostic-redaction"
+command = "cargo test -p ma-secure parse_error_display_elides_payload"
+
+[[verification]]
+id = "v-redaction-marker-scan"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-diagnostic-redaction"
+command = "cargo test -p ma-secure --test leak_scan diagnostic_bundle_contains_no_markers"
+platform = "windows"
+
+[[verification]]
+id = "v-session-crash-in-arming"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-state-machine"
+command = "cargo test -p ma-session recovery_from_arming_lands_in_idle"
+
+[[verification]]
+id = "v-session-exhaustive-step"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-state-machine"
+command = "cargo test -p ma-session step_is_total_over_state_event_space"
+
+[[verification]]
+id = "v-session-idempotent-commands"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-state-machine"
+command = "cargo test -p ma-session repeated_stop_is_success_without_effect"
+
+[[verification]]
+id = "v-session-table-conformance"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-session-state-machine"
+command = "cargo test -p ma-session transition_table_matches_contract_json"
+
+[[verification]]
+id = "v-signal-no-ui-text-fields"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-signal-envelope"
+command = "cargo test -p ma-signal schema_contains_no_free_text_subject"
+
+[[verification]]
+id = "v-signal-resync-no-autostart"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-signal-envelope"
+command = "cargo test -p ma-detect resync_signal_never_arms"
+
+[[verification]]
+id = "v-signal-schema-conformance"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-signal-envelope"
+command = "cargo test -p ma-signal schema_golden_roundtrip"
+
+[[verification]]
+id = "v-signal-wall-clock-jump"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-signal-envelope"
+command = "cargo test -p ma-detect wall_clock_jump_does_not_reorder"
+
+[[verification]]
+id = "v-store-busy-does-not-stall-capture"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-store-ownership"
+command = "cargo test -p ma-engine --test durability wedged_writer_does_not_stall_capture"
+platform = "windows"
+
+[[verification]]
+id = "v-store-migration-forward-from-every-version"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-store-ownership"
+command = "cargo test -p ma-store migrate_from_every_released_version"
+
+[[verification]]
+id = "v-store-role-enforcement"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-store-ownership"
+command = "cargo test -p ma-store write_outside_role_family_is_rejected"
+
+[[verification]]
+id = "v-store-wal-config"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-store-ownership"
+command = "cargo test -p ma-store wal_and_busy_timeout_configured"
+
+[[verification]]
+id = "v-tier-ci-defines-both-gates"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-verification-tiering"
+command = "cargo test -p xtask ci_defines_portable_and_windows_gates"
+
+[[verification]]
+id = "v-tier-every-t2-registered"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-verification-tiering"
+command = "cargo xtask verify --check-registration"
+
+[[verification]]
+id = "v-tier-portable-suite-on-non-windows"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-verification-tiering"
+command = "cargo xtask verify --tier portable"
+
+[[verification]]
+id = "v-tier-windows-suite-green"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-verification-tiering"
+command = "cargo xtask verify --tier windows"
+platform = "windows"
+
+[[verification]]
+id = "v-timeline-coverage-invariant"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-timeline"
+command = "cargo test -p ma-core-types chunks_and_gaps_tile_without_overlap"
+
+[[verification]]
+id = "v-timeline-format-change-segment"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-timeline"
+command = "cargo test -p ma-capture device_format_change_opens_new_segment"
+
+[[verification]]
+id = "v-timeline-gap-preserving-timestamps"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-timeline"
+command = "cargo test -p ma-core-types timestamps_survive_missing_chunk"
+
+[[verification]]
+id = "v-timeline-track-independence"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-session-timeline"
+command = "cargo test -p ma-core-types tracks_have_independent_origins"
+
+[[verification]]
+id = "v-topology-engine-restart-resync"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-process-topology"
+command = "cargo test -p ma-engine --test topology engine_restart_client_resync"
+platform = "windows"
+
+[[verification]]
+id = "v-topology-single-instance"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-process-topology"
+command = "cargo test -p ma-engine --test topology second_instance_exits_without_mutation"
+platform = "windows"
+
+[[verification]]
+id = "v-topology-ui-kill"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-process-topology"
+command = "cargo test -p ma-engine --test topology ui_kill_keeps_recording"
+platform = "windows"
+
+[[verification]]
+id = "v-topology-update-deferred-during-session"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-process-topology"
+command = "cargo test -p ma-engine --test topology update_deferred_while_session_active"
+platform = "windows"
+
+[[verification]]
+id = "v-workflow-config-change-new-step"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-workflow-step-idempotency"
+command = "cargo test -p ma-workflow config_change_creates_new_step"
+
+[[verification]]
+id = "v-workflow-duplicate-enqueue-noop"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-workflow-step-idempotency"
+command = "cargo test -p ma-workflow duplicate_enqueue_is_noop"
+
+[[verification]]
+id = "v-workflow-edit-preservation"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-workflow-step-idempotency"
+command = "cargo test -p ma-workflow regeneration_preserves_user_edits"
+
+[[verification]]
+id = "v-workflow-lease-recovery-no-duplicate"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-workflow-step-idempotency"
+command = "cargo test -p ma-workflow lease_recovery_creates_no_duplicate_artifact"

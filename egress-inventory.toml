@@ -1,0 +1,59 @@
+# The single declaration of every host any component of this product may contact
+# (contract-egress-inventory). `cargo test -p ma-secure --test egress_inventory` fails when a
+# host appears in workspace source or in a contracts/ manifest but not here (undeclared_host),
+# when an entry is reachable from no source or manifest (stale_entry), and when an entry's
+# integration_owner is not one of user_account | distribution | operating_system. There is no
+# first_party owner: a host that would need one cannot be expressed. Each entry is
+# {host, component, purpose, integration_owner, credential_kind} and nothing else; a host whose
+# adapter has not landed is reachable through that adapter's descriptor under contracts/.
+
+exclude_paths = ["xtask/tests/fixtures", "fixtures", "crates/ma-secure/tests", "docs"]
+
+[[host]]
+host = "oauth2.googleapis.com"
+component = "ma-destination-drive"
+purpose = "Google OAuth token exchange for the user's own Drive (installed-app PKCE flow, drive.file scope)"
+integration_owner = "user_account"
+credential_kind = "oauth_refresh_token"
+
+[[host]]
+host = "www.googleapis.com"
+component = "ma-destination-drive"
+purpose = "Google Drive file upload and lookup in the user's own account"
+integration_owner = "user_account"
+credential_kind = "oauth_access_token"
+
+[[host]]
+host = "api.notion.com"
+component = "ma-destination-notion"
+purpose = "Notion database rows in the user's own workspace via a user-created internal integration"
+integration_owner = "user_account"
+credential_kind = "internal_integration_token"
+
+[[host]]
+host = "api.openai.com"
+component = "ma-processor-openai-stt"
+purpose = "External speech-to-text with the user's own API key"
+integration_owner = "user_account"
+credential_kind = "api_key"
+
+[[host]]
+host = "api.anthropic.com"
+component = "ma-processor-claude"
+purpose = "Summarization with the user's own Claude API key"
+integration_owner = "user_account"
+credential_kind = "api_key"
+
+[[host]]
+host = "objects.githubusercontent.com"
+component = "ma-manifest"
+purpose = "Signed update and adapter manifests and installers hosted on GitHub Releases"
+integration_owner = "distribution"
+credential_kind = "none"
+
+[[host]]
+host = "github.com"
+component = "ma-manifest"
+purpose = "GitHub Releases redirect endpoint for the static distribution"
+integration_owner = "distribution"
+credential_kind = "none"

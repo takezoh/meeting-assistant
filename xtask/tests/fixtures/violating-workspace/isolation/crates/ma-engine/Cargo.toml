@@ -1,0 +1,8 @@
+[package]
+name = "ma-engine"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fake-whisper-sys = { path = "../fake-whisper-sys" }

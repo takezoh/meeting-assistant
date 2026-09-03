@@ -1,0 +1,9 @@
+[package]
+name = "ma-capture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ma-workflow = { path = "../ma-workflow" }
+fake-c-sys = { path = "../fake-c-sys" }

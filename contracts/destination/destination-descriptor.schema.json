@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-assistant.invalid/contracts/destination/destination-descriptor.schema.json",
+  "title": "DestinationDescriptor",
+  "description": "What a destination adapter declares about itself: identity, the hosts it contacts (checked against egress-inventory.toml), the credential it needs, and the capabilities the exporter relies on.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "destination_id",
+    "display_name",
+    "egress_hosts",
+    "credential_kind",
+    "integration_owner",
+    "capabilities"
+  ],
+  "properties": {
+    "destination_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "egress_hosts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9.-]+\\.[a-z]{2,}$"
+      },
+      "description": "Empty for a local-folder destination. Every entry must be declared in egress-inventory.toml."
+    },
+    "credential_kind": {
+      "enum": [
+        "none",
+        "oauth_refresh_token",
+        "oauth_access_token",
+        "internal_integration_token",
+        "api_key"
+      ]
+    },
+    "integration_owner": {
+      "enum": [
+        "user_account",
+        "distribution",
+        "operating_system"
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lookup_by_external_id",
+        "update",
+        "resumable_upload"
+      ],
+      "properties": {
+        "lookup_by_external_id": {
+          "const": true,
+          "description": "Required: the exporter reconciles after a crash by the export key stamped on the object."
+        },
+        "update": {
+          "type": "boolean"
+        },
+        "resumable_upload": {
+          "type": "boolean"
+        }
+      }
+    },
+    "config_schema": {
+      "type": "object",
+      "description": "JSON Schema of the destination's user configuration; its hash is part of the export key."
+    }
+  }
+}

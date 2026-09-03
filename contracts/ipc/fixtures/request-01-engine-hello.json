@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "engine.hello",
+  "params": {
+    "client_capabilities": [
+      "indicator",
+      "cancel",
+      "notify"
+    ],
+    "client_protocol": "1.0.0"
+  }
+}

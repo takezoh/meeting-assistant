@@ -1,0 +1,11 @@
+{
+  "timeline": "wall-clock-jump.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 2000000000,
+      "to_monotonic_ns": 900000000000,
+      "was_meeting": true,
+      "note": "wall clock steps back one hour at 30 s; same signal ids as desktop-start-end"
+    }
+  ]
+}

@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-assistant.invalid/contracts/ipc/protocol.schema.json",
+  "title": "EngineControlFrame",
+  "description": "JSON-RPC 2.0 frames on the engine control pipe. Requests carry an id; events are notifications carrying a strictly increasing per-connection seq.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/error"
+    },
+    {
+      "$ref": "#/$defs/notification"
+    }
+  ],
+  "$defs": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "engine.hello",
+            "session.snapshot",
+            "session.start",
+            "session.stop",
+            "session.pause",
+            "session.resume",
+            "session.discard",
+            "session.cancel_arming",
+            "session.extend_hysteresis",
+            "mode.set",
+            "artifact.edit",
+            "meeting.delete",
+            "diagnostics.export",
+            "engine.shutdown"
+          ]
+        },
+        "params": {}
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result": {}
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "integer",
+              "enum": [
+                -32700,
+                -32600,
+                -32601,
+                -32602,
+                -32001,
+                -32002,
+                -32003,
+                -32004,
+                -32005,
+                -32006
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "data": {}
+          }
+        }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "session.transition",
+            "capture.level",
+            "capture.degraded",
+            "arming.tick",
+            "detector.decision",
+            "error"
+          ]
+        },
+        "params": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "seq",
+                "event",
+                "from",
+                "to",
+                "cause"
+              ],
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "event": {
+                  "const": "session.transition"
+                },
+                "from": {
+                  "$ref": "#/$defs/state"
+                },
+                "to": {
+                  "$ref": "#/$defs/state"
+                },
+                "cause": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "refs"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "signal",
+                        "command",
+                        "timer",
+                        "recovery"
+                      ]
+                    },
+                    "refs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "seq",
+                "event",
+                "track",
+                "rms"
+              ],
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "event": {
+                  "const": "capture.level"
+                },
+                "track": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rms": {
+                  "type": "integer",
+                  "minimum": -120,
+                  "maximum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "seq",
+                "event",
+                "reason"
+              ],
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "event": {
+                  "const": "capture.degraded"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "seq",
+                "event",
+                "remaining_ms"
+              ],
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "event": {
+                  "const": "arming.tick"
+                },
+                "remaining_ms": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "seq",
+                "event",
+                "outcome",
+                "evidence"
+              ],
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "event": {
+                  "const": "detector.decision"
+                },
+                "outcome": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "seq",
+                "event",
+                "code",
+                "message"
+              ],
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "event": {
+                  "const": "error"
+                },
+                "code": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "state": {
+      "enum": [
+        "idle",
+        "candidate",
+        "arming",
+        "recording",
+        "paused",
+        "ending",
+        "finalizing",
+        "completed",
+        "discarded",
+        "interrupted",
+        "failed"
+      ]
+    }
+  }
+}

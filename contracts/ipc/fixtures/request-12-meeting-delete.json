@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "meeting.delete",
+  "params": {
+    "meeting_id": "22222222-2222-7222-a222-222222222222"
+  }
+}

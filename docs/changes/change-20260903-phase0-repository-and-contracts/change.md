@@ -5,7 +5,7 @@ title: 'Phase 0: repository structure, contracts, and Phase 0 decisions'
 summary: Establish the cargo workspace, module boundary enforcement, session/signal/artifact/processor/destination
   contracts, threat model and verification tiering for the Windows 11 MVP, and record
   fifteen Phase 0 ADRs.
-status: ready
+status: done
 created: '2026-09-03'
 profile: sdd@1
 intent: Turn PLAN.md's Phase 0 deliverable list into falsifiable, mechanically checked
@@ -141,6 +141,26 @@ relations: []
 source_paths:
 - PLAN.md
 updated: '2026-09-03'
+evidence_refs:
+- type: command
+  ref: cargo xtask verify --tier portable --strict (OK on delivery/phase0-repository-and-contracts
+    @ 46ff227)
+- type: command
+  ref: 'cargo xtask boundary (OK: no boundary violations)'
+- type: command
+  ref: 'cargo xtask docs-check (OK: 4 rules)'
+- type: command
+  ref: cargo test --workspace (green) and cargo test --manifest-path app/ui/src-tauri/Cargo.toml
+    --no-default-features (4 passed)
+- type: contract
+  ref: verification-tiers.toml (112 registrations; the 20 windows-tier verifications
+    run by the ci.yml windows job, phase0-exit-gate)
+- type: source
+  ref: .github/workflows/ci.yml
+promotion_applied_at: '2026-09-03T13:30:27.457844+00:00'
+closure:
+  closed_at: '2026-09-03T13:30:28.376675+00:00'
+  content_hash: sha256:e2c861cbdefda6f646c6470ca1c749549e49fe5559424b2660b75a92bf4db185
 ---
 
 ## Summary
@@ -183,4 +203,34 @@ unrun Windows suite a failure rather than a silent pass.
 
 {% transition from="draft" to="ready" date="2026-09-03" %}
 design skill run design-phase0-20260903-1: all 15 ADRs accepted, verify-final approved, docs lint --conformance ok
+{% /transition %}
+
+
+{% transition from="ready" to="active" date="2026-09-03" %}
+plan-delivery run plan-delivery-phase0-20260903-2: all 16 tasks done on delivery/phase0-repository-and-contracts
+{% /transition %}
+
+
+{% transition from="active" to="closing" date="2026-09-03" %}
+plan-delivery run plan-delivery-phase0-20260903-2: all 16 tasks done on delivery/phase0-repository-and-contracts
+{% /transition %}
+
+
+{% transition from="closing" to="active" date="2026-09-03" %}
+reopen to record verification evidence_refs before closure
+{% /transition %}
+
+
+{% transition from="active" to="closing" date="2026-09-03" %}
+plan-delivery run plan-delivery-phase0-20260903-2: all 16 tasks done, evidence recorded
+{% /transition %}
+
+
+{% transition from="closing" to="active" date="2026-09-03" %}
+reopen to record verification evidence_refs before closure
+{% /transition %}
+
+
+{% transition from="active" to="closing" date="2026-09-03" %}
+plan-delivery run plan-delivery-phase0-20260903-2: all 16 tasks done, evidence recorded
 {% /transition %}

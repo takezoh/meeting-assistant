@@ -1,0 +1,4 @@
+body { font-family: system-ui, sans-serif; margin: 1.5rem; }
+#indicator p { color: #b00020; font-weight: 600; }
+#countdown { border: 1px solid #ccc; padding: 1rem; }
+[data-state="disconnected"] { color: #666; }

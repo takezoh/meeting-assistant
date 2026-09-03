@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/signal/signal-envelope.schema.json",
+  "title": "signal envelope",
+  "description": "A closed envelope: enums, numbers, identifiers and operating-system facts only. No window title, control label, coordinate, accessibility path or full URL can be represented.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "signal_id",
+    "source_id",
+    "kind",
+    "subject",
+    "observed_at",
+    "authority",
+    "schema_version"
+  ],
+  "properties": {
+    "signal_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+    },
+    "kind": {
+      "enum": [
+        "process_started",
+        "process_stopped",
+        "package_identity_observed",
+        "audio_session_created",
+        "audio_session_destroyed",
+        "mic_capture_started",
+        "mic_capture_stopped",
+        "audio_activity",
+        "tab_meeting_present",
+        "tab_audible",
+        "calendar_event_active",
+        "user_command",
+        "system_suspend",
+        "system_resume",
+        "collector_started"
+      ]
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "observed_at": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monotonic_ns",
+        "wall_utc_ms"
+      ],
+      "properties": {
+        "monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_utc_ms": {
+          "type": "integer"
+        }
+      }
+    },
+    "payload": {
+      "$ref": "#/$defs/payload"
+    },
+    "authority": {
+      "enum": [
+        "os",
+        "extension",
+        "user",
+        "calendar"
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "$defs": {
+    "subject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pid",
+            "image_name"
+          ],
+          "properties": {
+            "type": {
+              "const": "process"
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "image_name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]{1,255}$"
+            },
+            "package_family_name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[A-Za-z0-9._-]{1,255}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "endpoint_id"
+          ],
+          "properties": {
+            "type": {
+              "const": "device"
+            },
+            "endpoint_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9{}#._:\\\\-]{1,255}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "host",
+            "tab_key"
+          ],
+          "properties": {
+            "type": {
+              "const": "tab"
+            },
+            "host": {
+              "type": "string",
+              "format": "hostname",
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*$"
+            },
+            "tab_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]{1,64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "system"
+            }
+          }
+        }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restart_resync": {
+          "type": "boolean"
+        },
+        "audible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "level_dbfs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -120,
+          "maximum": 0
+        },
+        "command": {
+          "enum": [
+            "start",
+            "stop",
+            "pause",
+            "resume",
+            "cancel",
+            "discard",
+            null
+          ]
+        },
+        "calendar_event_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9._-]{1,128}$"
+        },
+        "process_tree_root_pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

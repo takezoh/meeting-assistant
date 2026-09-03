@@ -1,0 +1,14 @@
+# Zoom Workplace desktop client and the browser client.
+id = "zoom"
+class = "desktop"
+evidence_weight = 3
+corroboration = { microphone = true, tab = false }
+process_images = ["Zoom.exe", "CptHost.exe"]
+package_family_names = []
+tab_hosts = ["zoom.us"]
+
+[fixtures]
+positive_process = ["Zoom.exe", "zoom.exe"]
+negative_process = ["example-other.exe", "ZoomInstaller.exe"]
+positive_hosts = ["zoom.us", "us02web.zoom.us"]
+negative_hosts = ["zoom.example.test"]

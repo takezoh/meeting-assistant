@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-assistant.invalid/contracts/manifest/update-manifest.schema.json",
+  "title": "UpdateManifest",
+  "description": "Payload of a signed update manifest (ma-manifest-v1 header + Ed25519 signature precede it on the wire). Nothing here is used before the signature verifies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "version",
+    "channel",
+    "artifacts",
+    "engine_replacement"
+  ],
+  "properties": {
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Strictly increasing; a manifest not greater than the installed one is a downgrade."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "channel": {
+      "enum": [
+        "release",
+        "development"
+      ]
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url",
+          "sha256",
+          "size"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https://(github\\.com|objects\\.githubusercontent\\.com)/"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "engine_replacement": {
+      "type": "boolean",
+      "description": "True when applying replaces ma-engine.exe; such an update is deferred while any session is non-terminal."
+    },
+    "key_rollover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "next_key_id",
+        "next_public_key"
+      ],
+      "properties": {
+        "next_key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next_public_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

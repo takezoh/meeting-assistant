@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-assistant.invalid/contracts/artifact/chunk-manifest.schema.json",
+  "title": "ChunkManifest",
+  "description": "Per-track manifest under <root>/meetings/<meeting_id>/chunks/<track_id>/manifest.json. A cache of the chunk directory, which is the truth; rewritten atomically after every durable step. A track has one origin; a device format or endpoint change opens a successor track with its own identifier, so every consolidated file is tracks/<track_id>.flac.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "track",
+    "role",
+    "origin",
+    "chunks",
+    "gaps",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "track": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The TrackId; also the chunk directory name and the consolidated file stem."
+    },
+    "chunks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seq",
+          "file",
+          "start_sample",
+          "len_samples"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.wav$"
+          },
+          "start_sample": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "len_samples": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from_sample",
+          "to_sample",
+          "reason"
+        ],
+        "properties": {
+          "from_sample": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "to_sample": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "enum": [
+                  "chunk_lost",
+                  "device_discontinuity",
+                  "capture_interrupted"
+                ]
+              },
+              {
+                "type": "object",
+                "required": [
+                  "other"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "other": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "at_ms"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "chunk_repaired",
+              "chunk_discarded",
+              "chunk_adopted",
+              "manifest_rebuilt",
+              "successor_opened",
+              "consolidated",
+              "chunks_deleted",
+              "consolidation_failed"
+            ]
+          },
+          "at_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string"
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "description": "Human role of the track (mic, loopback, recovered); never a path segment."
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_wall_utc_ms",
+        "start_monotonic_ns",
+        "sample_rate",
+        "channels",
+        "capture_mode",
+        "contamination_risk"
+      ],
+      "properties": {
+        "start_wall_utc_ms": {
+          "type": "integer"
+        },
+        "start_monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "capture_mode": {
+          "enum": [
+            "process_loopback",
+            "system_loopback",
+            "device"
+          ]
+        },
+        "contamination_risk": {
+          "enum": [
+            "none",
+            "possible_other_apps"
+          ]
+        }
+      }
+    },
+    "predecessor": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The track this one continues after a format or endpoint change."
+    },
+    "successor": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The track opened when this one ended on a format or endpoint change."
+    },
+    "consolidated_file": {
+      "type": "string",
+      "pattern": "\\.flac$"
+    }
+  }
+}

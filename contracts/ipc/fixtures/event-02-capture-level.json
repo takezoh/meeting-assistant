@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "capture.level",
+  "params": {
+    "event": "capture.level",
+    "rms": -23,
+    "seq": 101,
+    "track": "mic"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "engine_protocol": "1.0.0",
+    "engine_version": "0.1.0",
+    "event_seq": 0,
+    "session_snapshot": {
+      "session_id": null,
+      "state": "idle"
+    }
+  }
+}

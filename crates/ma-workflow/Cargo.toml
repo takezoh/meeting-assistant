@@ -1,0 +1,18 @@
+[package]
+name = "ma-workflow"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Post-meeting workflow core: step identity, durable queue, retry classes, effect ledger, artifact lifecycle and the generation/edit-overlay separation"
+
+[dependencies]
+ma-core-types = { path = "../ma-core-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v5"] }
+
+[dev-dependencies]
+tempfile = "3"

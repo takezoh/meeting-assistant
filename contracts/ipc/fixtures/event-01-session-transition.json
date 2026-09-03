@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session.transition",
+  "params": {
+    "cause": {
+      "kind": "timer",
+      "refs": [
+        "countdown"
+      ]
+    },
+    "event": "session.transition",
+    "from": "arming",
+    "seq": 100,
+    "to": "recording"
+  }
+}

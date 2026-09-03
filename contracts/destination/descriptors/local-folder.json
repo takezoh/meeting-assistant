@@ -1,0 +1,12 @@
+{
+  "destination_id": "local-folder",
+  "display_name": "Local folder",
+  "egress_hosts": [],
+  "credential_kind": "none",
+  "integration_owner": "operating_system",
+  "capabilities": {
+    "lookup_by_external_id": true,
+    "update": true,
+    "resumable_upload": false
+  }
+}

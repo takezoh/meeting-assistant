@@ -1,0 +1,14 @@
+# Slack desktop client (huddles) and the web client.
+id = "slack"
+class = "desktop"
+evidence_weight = 2
+corroboration = { microphone = true, tab = false }
+process_images = ["slack.exe"]
+package_family_names = ["91750D7E.Slack_8she8kybcnzg4"]
+tab_hosts = ["app.slack.com"]
+
+[fixtures]
+positive_process = ["slack.exe", "Slack.exe"]
+negative_process = ["example-other.exe", "slack-helper.exe"]
+positive_hosts = ["app.slack.com"]
+negative_hosts = ["slack.example.test"]

@@ -1,0 +1,29 @@
+{
+  "processor_id": "openai-stt",
+  "version": "0.1.0",
+  "capability": {
+    "kind": "transcription",
+    "languages": [
+      "ja",
+      "en"
+    ],
+    "needs_gpu": false,
+    "max_input_seconds": 14400,
+    "streaming": false,
+    "egress_hosts": [
+      "api.openai.com"
+    ],
+    "runs_in": "host"
+  },
+  "argv_template": {
+    "program": "ma-processor-host",
+    "args": [],
+    "params": {}
+  },
+  "secrets": [
+    {
+      "purpose": "openai-api",
+      "delivery": "environment"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "arming.tick",
+  "params": {
+    "event": "arming.tick",
+    "remaining_ms": 7000,
+    "seq": 103
+  }
+}

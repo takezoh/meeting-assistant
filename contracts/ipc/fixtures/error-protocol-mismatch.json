@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32001,
+    "message": "protocol major version mismatch",
+    "data": {
+      "offered_protocol": "2.0.0",
+      "required_protocol": "1.0.0"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "event_seq": 17,
+    "session_snapshot": {
+      "session_id": "01990ce0-1000-7000-8000-000000000042",
+      "state": "recording"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "timeline": "desktop-start-end.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 2000000000,
+      "to_monotonic_ns": 900000000000,
+      "was_meeting": true,
+      "note": "synthetic desktop meeting"
+    }
+  ]
+}

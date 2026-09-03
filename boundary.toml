@@ -1,0 +1,70 @@
+# Module boundary policy — the single source of truth read by `cargo xtask boundary`.
+# adr-20260903-workspace-boundary-enforcement / contract-module-boundary-enforcement /
+# contract-processing-isolation / contract-detector-determinism.
+#
+# A crate may depend only on strictly lower layers. L4 is a sink: only L5 composition
+# roots may depend on an L4 crate, and L4 crates themselves may depend only on L0 and L1.
+# Composition roots that link adapter crates must rename them in Cargo.toml
+# (`adapter_a = { package = "ma-adapter-teams" }`) so that no service identifier appears
+# in Rust source outside the L4 crates.
+schema = 1
+
+[layers]
+L0 = ["ma-core-types"]
+L1 = ["ma-signal", "ma-ipc", "ma-processor", "ma-destination", "ma-manifest", "ma-secure"]
+L2 = ["ma-session", "ma-detect", "ma-workflow"]
+L3 = ["ma-store", "ma-capture", "ma-signals-windows", "ma-ext-channel"]
+L4 = ["ma-adapter-teams", "ma-adapter-slack", "ma-adapter-zoom", "ma-adapter-meet"]
+L5 = ["ma-engine", "ma-processor-host", "app-ui", "xtask"]
+
+[layer_patterns]
+L4 = ["ma-adapter-*", "ma-processor-*", "ma-destination-*"]
+
+[edges]
+# Layers whose crates may depend only on the listed layers (overrides "strictly lower").
+[edges.restricted]
+L4 = ["L0", "L1"]
+
+[forbidden_imports]
+# Purity of the detector is decided mechanically (contract-detector-determinism).
+ma-detect = ["std::time", "std::fs", "std::net", "std::process", "rand", "std::collections::HashMap"]
+
+[literals]
+# Layers whose crates (including their tests and fixtures) may contain service identifiers.
+allow_layers = ["L4"]
+
+[literals.class_a]
+# Identifier tokens only. Each identifier is split on `_` and CamelCase boundaries and every
+# resulting word is compared case-insensitively for equality. `meet`, `edge` and `chrome` are
+# deliberately absent: they are ordinary words and are caught by class B instead.
+words = ["teams", "slack", "zoom", "webex", "msedge", "gmeet", "googlemeet"]
+
+[literals.class_b]
+# String literal tokens only, whole-literal case-insensitive equality. Comments and doc
+# comments are never scanned by either class; substring matching is forbidden.
+literals = [
+  "Teams.exe", "ms-teams.exe", "MSTeams_8wekyb3d8bbwe", "Zoom.exe", "slack.exe",
+  "chrome.exe", "msedge.exe", "teams.microsoft.com", "meet.google.com", "zoom.us",
+]
+
+[rules.capture-path-isolation]
+# No capture-path crate may reach the processing side, directly, transitively or through
+# a feature gate (contract-processing-isolation, layer 1).
+sources = ["ma-core-types", "ma-session", "ma-capture"]
+forbidden = ["ma-workflow", "ma-processor", "ma-destination", "ma-store"]
+forbidden_patterns = ["ma-adapter-*", "ma-processor-*", "ma-destination-*"]
+
+[rules.native-inference-confinement]
+# Only the processor host and the processor adapters it loads may depend on a crate listed in
+# native_crates (native inference bindings). Separately, an undeclared crate that declares
+# `links` and compiles C/C++ in its build script (a build-dependency on cc, cmake, cxx-build,
+# bindgen or pkg-config) must not reach a capture-path crate, unless listed in
+# build_script_exempt.
+allowed = ["ma-processor-host"]
+allowed_patterns = ["ma-processor-*"]
+native_crates = ["whisper-rs", "whisper-rs-sys", "sherpa-rs", "sherpa-rs-sys"]
+build_script_exempt = []
+
+[third_party]
+# Workspace crates that are not part of the product layer model (none in the real workspace).
+crates = []

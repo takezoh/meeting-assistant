@@ -1,0 +1,10 @@
+[package]
+name = "ma-workflow"
+version = "0.0.0"
+edition = "2021"
+publish = false
+[features]
+zoom = ["dep:ma-adapter-zoom"]
+
+[dependencies]
+ma-adapter-zoom = { path = "../ma-adapter-zoom", optional = true }

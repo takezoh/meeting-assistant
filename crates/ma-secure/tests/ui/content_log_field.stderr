@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `Content: LogValue` is not satisfied
+ --> tests/ui/content_log_field.rs:5:41
+  |
+5 |     let _ = LogField::new("transcript", &transcript);
+  |                                         ^^^^^^^^^^^ the trait `LogValue` is not implemented for `Content`
+  |
+  = help: the following other types implement trait `LogValue`:
+            &'static str
+            Duration
+            RedactedPath
+            bool
+            i32
+            i64
+            ma_core_types::id::ArtifactId
+            ma_core_types::id::ChunkId
+          and $N others
+  = note: required for the cast from `&Content` to `&dyn LogValue`

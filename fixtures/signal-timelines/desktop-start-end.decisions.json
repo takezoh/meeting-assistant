@@ -1,0 +1,89 @@
+{
+  "adapter_table_version": 1,
+  "decisions": [
+    {
+      "decision_id": "52551a9c-58c1-5851-b31e-b8b645d2f80f",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "desk-a",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990cdf-8801-7000-9000-009e3779b100"
+      ],
+      "produced_at_monotonic": 1000000000
+    },
+    {
+      "decision_id": "a6f1c9f6-74b0-5df4-abd5-fa9c50dfc295",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "desk-a",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990cdf-8802-7000-a000-013c6ef36200"
+      ],
+      "produced_at_monotonic": 1200000000
+    },
+    {
+      "decision_id": "73d8731c-90bd-5304-9d64-096f62206153",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "desk-a",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990cdf-8803-7000-b000-01daa66d1300"
+      ],
+      "produced_at_monotonic": 1500000000
+    },
+    {
+      "decision_id": "d92a8c04-f272-5e83-8ae9-97dfc2742612",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "start"
+      },
+      "adapter_id": "desk-a",
+      "subject_key": "process:4100:example-desk.exe",
+      "rule_id": "adapter-match",
+      "evidence": [
+        "01990cdf-8804-7000-8000-0278dde6c400"
+      ],
+      "produced_at_monotonic": 2000000000
+    },
+    {
+      "decision_id": "ac8b36b2-48aa-5a3f-b98c-8e31aa5377c1",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "continue"
+      },
+      "adapter_id": "desk-a",
+      "subject_key": "process:4100:example-desk.exe",
+      "rule_id": "continue",
+      "evidence": [
+        "01990cdf-8805-7000-9000-031715607500"
+      ],
+      "produced_at_monotonic": 30000000000
+    },
+    {
+      "decision_id": "cc95b2a8-e1cb-59a6-b4cc-c868ac3509ba",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "end"
+      },
+      "adapter_id": "desk-a",
+      "subject_key": "process:4100:example-desk.exe",
+      "rule_id": "end",
+      "evidence": [
+        "01990cdf-8804-7000-8000-0278dde6c400",
+        "01990cdf-8805-7000-9000-031715607500",
+        "01990cdf-8806-7000-a000-03b54cda2600"
+      ],
+      "produced_at_monotonic": 900000000000
+    }
+  ],
+  "diagnostics": []
+}

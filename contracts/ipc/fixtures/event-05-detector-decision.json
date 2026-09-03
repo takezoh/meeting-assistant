@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "detector.decision",
+  "params": {
+    "event": "detector.decision",
+    "evidence": [
+      "01990cdf-881f-7000-b000-1328b7bc6f00"
+    ],
+    "outcome": "determinate_start",
+    "seq": 104
+  }
+}

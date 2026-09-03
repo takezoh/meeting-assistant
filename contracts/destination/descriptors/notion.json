@@ -1,0 +1,14 @@
+{
+  "destination_id": "notion",
+  "display_name": "Notion",
+  "egress_hosts": [
+    "api.notion.com"
+  ],
+  "credential_kind": "internal_integration_token",
+  "integration_owner": "user_account",
+  "capabilities": {
+    "lookup_by_external_id": true,
+    "update": true,
+    "resumable_upload": false
+  }
+}

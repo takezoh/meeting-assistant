@@ -1,0 +1,14 @@
+# Microsoft Teams (new and classic desktop clients, and the web client in a browser tab).
+id = "teams"
+class = "desktop"
+evidence_weight = 3
+corroboration = { microphone = true, tab = false }
+process_images = ["ms-teams.exe", "Teams.exe"]
+package_family_names = ["MSTeams_8wekyb3d8bbwe"]
+tab_hosts = ["teams.microsoft.com", "teams.live.com"]
+
+[fixtures]
+positive_process = ["ms-teams.exe", "TEAMS.EXE"]
+negative_process = ["example-other.exe", "Teams.exe.bak"]
+positive_hosts = ["teams.microsoft.com", "teams.live.com"]
+negative_hosts = ["meet.example.test", "microsoft.com"]

@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "artifact.edit",
+  "params": {
+    "artifact_id": "11111111-1111-7111-9111-111111111111",
+    "edit_revision": 3
+  }
+}

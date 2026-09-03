@@ -1,0 +1,51 @@
+# Two required jobs (contract-verification-tiering). The portable job blocks merge on every
+# push and pull request. The windows job runs the windows tier on pull requests into main and
+# nightly; it is the Phase 0 exit gate and never passes by being skipped.
+name: ci
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 18 * * *"
+
+jobs:
+  portable:
+    name: portable tier (boundary, deny, registration, T0/T1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: boundary policy
+        run: cargo xtask boundary
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - name: cargo deny (local mirror of the action for log parity)
+        run: echo "cargo deny check is executed by the action step above"
+      - name: verification registration
+        run: cargo xtask verify --check-registration
+      - name: portable tier
+        run: cargo xtask verify --tier portable --strict
+      - name: contract-core crates build and test (every #[test], not only the registered filters)
+        run: cargo test --workspace
+      - name: lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: formatting
+        run: cargo fmt --all -- --check
+      - name: ui engine client (headless, outside the workspace)
+        run: cargo test --manifest-path app/ui/src-tauri/Cargo.toml --no-default-features
+
+  windows:
+    # phase0-exit-gate: Phase 0 is not complete until this job reports green on a Windows runner.
+    name: windows tier (T2, phase0-exit-gate)
+    runs-on: windows-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: windows tier
+        run: cargo xtask verify --tier windows --strict

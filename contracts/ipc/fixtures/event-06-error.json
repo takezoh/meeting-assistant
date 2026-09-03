@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "error",
+  "params": {
+    "code": -32005,
+    "event": "error",
+    "message": "not applicable in this state",
+    "seq": 105
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "timeline": "two-concurrent.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 2000000000,
+      "to_monotonic_ns": 120000000000,
+      "was_meeting": true,
+      "note": "two applications capture the microphone in overlapping windows"
+    }
+  ]
+}
