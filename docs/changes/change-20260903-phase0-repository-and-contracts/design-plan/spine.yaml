@@ -1,0 +1,2732 @@
+artifact: design-plan-spine
+version: 2
+granularity_profile: boundary-complete
+requirements:
+- id: FR-001
+  type: functional
+  priority: must
+  statement: The repository shall provide a cargo workspace whose crate graph declares the workflow core, service adapters,
+    platform collectors, capture engine, and composition roots as separate crates with declared layer membership.
+- id: FR-002
+  type: functional
+  priority: must
+  statement: When the dependency-direction check runs and any crate outside a composition root depends directly, transitively,
+    or through a feature gate on a service-adapter crate, the check shall exit non-zero and name the offending dependency
+    path.
+- id: FR-003
+  type: functional
+  priority: must
+  statement: When a core-layer crate contains a supported-service identifier literal, the boundary check shall exit non-zero
+    and name the file, line and literal.
+- id: FR-004
+  type: functional
+  priority: must
+  statement: While a session is in the recording state, if the UI process terminates, then the capture engine shall continue
+    writing durable chunks and shall keep the session in the recording state.
+- id: FR-005
+  type: functional
+  priority: must
+  statement: When a client connects or reconnects to the capture engine, the engine shall return an authoritative session
+    snapshot with a monotonically increasing event sequence number, and the client shall render that state rather than a locally
+    inferred state.
+- id: FR-006
+  type: functional
+  priority: must
+  statement: If a client connecting to the engine control channel does not belong to the same operating-system user as the
+    engine, then the engine shall refuse the connection before dispatching any method and shall record a security diagnostic
+    containing no payload.
+- id: FR-007
+  type: functional
+  priority: must
+  statement: When the detector replays a recorded signal timeline with the same configuration and adapter-table version, it
+    shall emit a byte-identical decision sequence across runs and processes, and every decision shall cite the signal identifiers
+    it used.
+- id: FR-008
+  type: functional
+  priority: must
+  statement: Where no adapter matches the observed subject, or where a matched adapter's corroboration requirement is unmet,
+    the detector shall return unknown or inconclusive respectively and the session shall fall back to manual control without
+    arming.
+- id: FR-009
+  type: functional
+  priority: must
+  statement: When the browser extension reports a meeting tab without a corroborating operating-system microphone-use signal
+    from the same browser process tree, the detector shall not produce a determinate start decision.
+- id: FR-010
+  type: functional
+  priority: must
+  statement: While automatic mode is active and a determinate start decision is produced, the system shall arm a cancellable
+    ten-second countdown before capture begins, and cancellation shall suppress re-arming for the same meeting identity until
+    that identity's signals have been continuously absent for sixty seconds.
+- id: FR-011
+  type: functional
+  priority: must
+  statement: If neither the engine-owned operating-system notification channel nor an attached client declaring indicator
+    and cancel capabilities can present the countdown, then the system shall not begin automatic capture and shall record
+    the suppressed decision with its cause.
+- id: FR-012
+  type: functional
+  priority: must
+  statement: When a determinate end decision is produced, the system shall hold the session for a sixty-second hysteresis
+    window during which a continuing signal returns the session to recording on the same tracks without creating a new session.
+- id: FR-013
+  type: functional
+  priority: must
+  statement: The capture engine shall write each track as fixed-duration chunks that become durable by atomic rename before
+    the manifest records them, bounding audio loss on abrupt termination to the single in-progress chunk.
+- id: FR-014
+  type: functional
+  priority: must
+  statement: When the engine restarts and finds a session left in the recording state, it shall recover the session from durable
+    chunks under the same session identifier, mark the interruption explicitly on the timeline, and finalize rather than silently
+    resume.
+- id: FR-015
+  type: functional
+  priority: must
+  statement: The recording model shall express every chunk's position as a sample offset on its own track timeline, shall
+    represent missing audio as explicit gap records, and shall not derive any timestamp from concatenation order.
+- id: FR-016
+  type: functional
+  priority: must
+  statement: When track consolidation completes, the system shall verify that the decoded output is sample-identical to the
+    durable chunk sequence with recorded gaps rendered as silence before deleting any chunk.
+- id: FR-017
+  type: functional
+  priority: must
+  statement: The system shall assign time-ordered unique identifiers to meetings, sessions, tracks, chunks, artifacts, workflow
+    steps and exports, and shall reproduce each identifier verbatim in database rows, filesystem path segments and export
+    payloads.
+- id: FR-018
+  type: functional
+  priority: must
+  statement: When a workflow step whose step key is already recorded as succeeded is enqueued again, the workflow runtime
+    shall return the recorded result without re-executing any side effect.
+- id: FR-019
+  type: functional
+  priority: must
+  statement: When a processor, processor version or processor configuration changes, the workflow runtime shall derive a new
+    step identity and shall retain the previous result rather than overwriting it.
+- id: FR-020
+  type: functional
+  priority: must
+  statement: The processor contract shall pass only explicitly staged input files to external processors, shall invoke them
+    with an argument vector built from a manifest-declared template, and shall never construct a shell command line or place
+    a secret in process arguments.
+- id: FR-021
+  type: functional
+  priority: must
+  statement: When a processor runs, it shall report monotonically non-decreasing progress at least once per work item and
+    shall observe cancellation within one work item and within five seconds.
+- id: FR-022
+  type: functional
+  priority: must
+  statement: If local transcription of a two-hour recording exceeds the real-time budget, then the system shall emit a budget
+    warning and shall continue the step rather than failing it.
+- id: FR-023
+  type: functional
+  priority: must
+  statement: When an export is retried after a crash or network failure, the destination shall reconcile against the recorded
+    remote identity or the external-identifier marker before creating any remote object, so that no duplicate remote object
+    is created.
+- id: FR-024
+  type: functional
+  priority: must
+  statement: The artifact store shall address artifacts as a root identifier plus a relative path composed only of generated
+    identifiers, so that relocating the configurable artifact root does not invalidate any stored reference.
+- id: FR-025
+  type: functional
+  priority: must
+  statement: If an update or adapter manifest fails Ed25519 verification, declares a manifest version not greater than the
+    installed version, or declares an artifact digest that does not match the file on disk, then the system shall reject it
+    before using any value it declares.
+- id: FR-026
+  type: functional
+  priority: must
+  statement: The Phase 0 change package, its ADRs and its persistent design documents shall conform to the repository documentation
+    schemas, lint target placement and status transition whitelist.
+- id: FR-027
+  type: functional
+  priority: must
+  statement: While a session is in the candidate or arming state, the system shall write no audio sample under the artifact
+    root and shall persist session metadata only, so that a meeting that is detected but never recorded leaves no audio on
+    durable storage.
+- id: FR-028
+  type: functional
+  priority: must
+  statement: When an armed countdown is cancelled, expires without entering the recording state, or is abandoned by a restart,
+    the system shall leave no chunk file and no audio byte under the artifact root for that session.
+- id: FR-029
+  type: functional
+  priority: must
+  statement: When a user deletes a meeting, the system shall immediately make it invisible to every view, cancel its in-flight
+    workflow steps, and shall purge its artifact directory and its derived rows, retaining only a tombstone carrying the meeting
+    identifier, its timestamps and the identifiers of the remote objects it exported.
+- id: FR-030
+  type: functional
+  priority: must
+  statement: When a processing step executes work that loads a native inference library or runs an external program, the system
+    shall execute that work in a child process supervised by the engine, so that the work's abnormal termination terminates
+    only that child process.
+- id: NFR-001
+  type: non-functional
+  priority: must
+  statement: Secrets shall exist only in the operating-system credential store and shall never appear in application files,
+    databases, artifacts, logs or process arguments.
+- id: NFR-002
+  type: non-functional
+  priority: must
+  statement: Diagnostic output shall contain no meeting audio, transcript text, summary text, meeting title, participant name
+    or full URL.
+- id: NFR-003
+  type: non-functional
+  priority: must
+  statement: No component on the detection, capture, workflow, processing or export path shall depend on a first-party backend
+    service.
+- id: NFR-004
+  type: non-functional
+  priority: must
+  statement: Local transcription without a GPU shall complete a two-hour recording within two hours of wall-clock time, with
+    overrun treated as a warning.
+- id: NFR-005
+  type: non-functional
+  priority: must
+  statement: Detection inputs shall carry no DOM structure, selector, control label, screen coordinate, accessibility path
+    or full URL, enforced by the closed signal envelope schema.
+- id: NFR-006
+  type: non-functional
+  priority: must
+  statement: Every outbound send shall append a local audit record naming destination, host, artifact identifier, byte count
+    and outcome, and every egress host shall appear in the egress inventory.
+- id: NFR-007
+  type: non-functional
+  priority: must
+  statement: The application database shall reside under the local application-data directory regardless of the configured
+    artifact root.
+- id: NFR-008
+  type: non-functional
+  priority: must
+  statement: The boundary check, the schema conformance checks, the egress inventory check and the documentation conformance
+    check shall run in continuous integration on every push and pull request in the portable tier and shall block merge on
+    failure, and the Windows tier shall run every registered T2 verification and shall block Phase 0 completion on failure.
+- id: NFR-009
+  type: non-functional
+  priority: must
+  statement: No crate on the capture path shall depend on the workflow, processor or destination crates, and no crate other
+    than the processor host binary shall link a native inference library, so that a processing failure cannot reach the recording
+    path.
+- id: NFR-010
+  type: non-functional
+  priority: must
+  statement: The contract-core crates shall build and pass their T0 and T1 verifications on a non-Windows host, and every
+    T2 verification declared by this plan shall be registered in the Windows tier manifest.
+components:
+- id: component-workspace-layout
+  kind: planned
+  contract_refs:
+  - contract-module-boundary-enforcement
+  paths:
+  - Cargo.toml
+  - rust-toolchain.toml
+  - boundary.toml
+  - crates/
+  - app/ui/
+  - xtask/
+- id: component-boundary-check
+  kind: planned
+  contract_refs:
+  - contract-module-boundary-enforcement
+  - contract-verification-tiering
+  - contract-processing-isolation
+  paths:
+  - xtask/Cargo.toml
+  - xtask/src/main.rs
+  - xtask/src/boundary.rs
+  - xtask/src/verify.rs
+  - boundary.toml
+  - verification-tiers.toml
+  - deny.toml
+  - .github/workflows/ci.yml
+  - xtask/tests/boundary_negative.rs
+  - xtask/tests/isolation_negative.rs
+  - xtask/tests/fixtures/violating-workspace/
+- id: component-core-types
+  kind: planned
+  contract_refs:
+  - contract-stable-identity
+  - contract-session-timeline
+  - contract-artifact-addressing
+  paths:
+  - crates/ma-core-types/src/id.rs
+  - crates/ma-core-types/src/timeline.rs
+  - crates/ma-core-types/src/artifact_ref.rs
+  - crates/ma-core-types/src/error.rs
+- id: component-session-model
+  kind: planned
+  contract_refs:
+  - contract-session-state-machine
+  - contract-recording-mode-policy
+  - contract-consent-surface-precondition
+  paths:
+  - crates/ma-session/src/state.rs
+  - crates/ma-session/src/transition_table.rs
+  - crates/ma-session/src/mode.rs
+  - crates/ma-session/src/deadline.rs
+  - contracts/session/transitions.json
+- id: component-signal-contract
+  kind: planned
+  contract_refs:
+  - contract-signal-envelope
+  paths:
+  - crates/ma-signal/src/envelope.rs
+  - crates/ma-signal/src/source.rs
+  - crates/ma-signal/src/timeline.rs
+  - contracts/signal/signal-envelope.schema.json
+  - fixtures/signal-timelines/
+- id: component-detector-core
+  kind: planned
+  contract_refs:
+  - contract-detector-determinism
+  - contract-detector-outcome-partition
+  - contract-module-boundary-enforcement
+  paths:
+  - crates/ma-detect/src/detector.rs
+  - crates/ma-detect/src/adapter.rs
+  - crates/ma-detect/src/decision.rs
+  - crates/ma-detect/src/outcome.rs
+- id: component-service-adapters
+  kind: planned
+  contract_refs:
+  - contract-module-boundary-enforcement
+  - contract-detector-outcome-partition
+  paths:
+  - crates/ma-adapter-teams/
+  - crates/ma-adapter-slack/
+  - crates/ma-adapter-zoom/
+  - crates/ma-adapter-meet/
+- id: component-extension-channel
+  kind: planned
+  contract_refs:
+  - contract-extension-channel-trust
+  paths:
+  - crates/ma-ext-channel/src/server.rs
+  - crates/ma-ext-channel/src/auth.rs
+  - crates/ma-ext-channel/src/message.rs
+  - contracts/extension-channel/message.schema.json
+- id: component-capture-engine
+  kind: planned
+  contract_refs:
+  - contract-process-topology
+  - contract-chunk-durability
+  - contract-session-timeline
+  - contract-track-consolidation
+  - contract-processing-isolation
+  paths:
+  - crates/ma-capture/src/source.rs
+  - crates/ma-capture/src/chunk_writer.rs
+  - crates/ma-capture/src/manifest.rs
+  - crates/ma-capture/src/recovery.rs
+  - crates/ma-capture/src/consolidate.rs
+  - crates/ma-engine/src/main.rs
+  - crates/ma-engine/src/supervisor.rs
+  - contracts/artifact/chunk-manifest.schema.json
+- id: component-ipc-contract
+  kind: planned
+  contract_refs:
+  - contract-ipc-protocol
+  - contract-ipc-transport-authz
+  paths:
+  - crates/ma-ipc/src/protocol.rs
+  - crates/ma-ipc/src/method.rs
+  - crates/ma-ipc/src/event.rs
+  - crates/ma-ipc/src/transport.rs
+  - crates/ma-ipc/src/dispatch.rs
+  - crates/ma-ipc/src/authz.rs
+  - contracts/ipc/protocol.schema.json
+  - contracts/ipc/methods.schema.json
+- id: component-store
+  kind: planned
+  contract_refs:
+  - contract-store-ownership
+  - contract-artifact-addressing
+  - contract-stable-identity
+  - contract-retention-purge
+  paths:
+  - crates/ma-store/src/schema.rs
+  - crates/ma-store/src/migration.rs
+  - crates/ma-store/migrations/
+  - crates/ma-store/src/repo/
+  - crates/ma-store/src/purge.rs
+- id: component-workflow-core
+  kind: planned
+  contract_refs:
+  - contract-workflow-step-idempotency
+  - contract-stable-identity
+  - contract-retention-purge
+  paths:
+  - crates/ma-workflow/src/step.rs
+  - crates/ma-workflow/src/queue.rs
+  - crates/ma-workflow/src/retry.rs
+  - crates/ma-workflow/src/lifecycle.rs
+  - crates/ma-workflow/src/edits.rs
+  - crates/ma-workflow/src/effect_ledger.rs
+- id: component-processor-contract
+  kind: planned
+  contract_refs:
+  - contract-processor-interface
+  - contract-processor-budget
+  - contract-processing-isolation
+  paths:
+  - crates/ma-processor/src/lib.rs
+  - crates/ma-processor/src/capability.rs
+  - crates/ma-processor/src/staging.rs
+  - crates/ma-processor/src/progress.rs
+  - crates/ma-processor/src/failure.rs
+  - contracts/processor/processor-manifest.schema.json
+  - crates/ma-processor/src/host.rs
+  - crates/ma-processor-host/src/main.rs
+- id: component-destination-contract
+  kind: planned
+  contract_refs:
+  - contract-destination-export-idempotency
+  - contract-diagnostic-redaction
+  paths:
+  - crates/ma-destination/src/lib.rs
+  - crates/ma-destination/src/identity.rs
+  - crates/ma-destination/src/retry.rs
+  - crates/ma-destination/src/audit.rs
+  - contracts/destination/destination-descriptor.schema.json
+- id: component-security-policy
+  kind: planned
+  contract_refs:
+  - contract-credential-custody
+  - contract-diagnostic-redaction
+  - contract-ipc-transport-authz
+  - contract-egress-inventory
+  paths:
+  - crates/ma-secure/src/secret.rs
+  - crates/ma-secure/src/credential_store.rs
+  - crates/ma-secure/src/redaction.rs
+  - crates/ma-secure/src/acl.rs
+  - crates/ma-secure/tests/egress_inventory.rs
+  - egress-inventory.toml
+  - docs/design/threat-model.md
+  - docs/design/credential-policy.md
+- id: component-release-supply-chain
+  kind: planned
+  contract_refs:
+  - contract-release-manifest-trust
+  paths:
+  - crates/ma-manifest/src/manifest.rs
+  - crates/ma-manifest/src/verify.rs
+  - crates/ma-manifest/src/rollback.rs
+  - crates/ma-manifest/src/keys.rs
+  - contracts/manifest/update-manifest.schema.json
+  - contracts/manifest/adapter-manifest.schema.json
+  - .github/workflows/release.yml
+- id: component-ui-shell
+  kind: planned
+  contract_refs:
+  - contract-consent-surface-precondition
+  - contract-ipc-protocol
+  paths:
+  - app/ui/src-tauri/src/main.rs
+  - app/ui/src-tauri/src/engine_client.rs
+  - app/ui/src/
+  - app/ui/src-tauri/tauri.conf.json
+- id: component-docs-artifacts
+  kind: planned
+  contract_refs:
+  - contract-docs-conformance
+  paths:
+  - docs/adr/
+  - docs/design/module-boundaries.md
+  - docs/design/session-lifecycle.md
+  - docs/design/recording-artifact-model.md
+  - docs/design/threat-model.md
+  - docs/design/credential-policy.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/requirements.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/implementation.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/verification.md
+contracts:
+- id: contract-process-topology
+  dimension: state_lifecycle
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-004
+  - FR-005
+  - FR-017
+  - NFR-003
+  - FR-030
+  - FR-025
+  unit_refs:
+  - ipc-contract-and-engine-process
+  - capture-recording-durability
+  adr_refs:
+  - adr-20260903-capture-engine-process-isolation
+  - adr-20260903-phase0-executable-contract-skeleton
+  - adr-20260903-workflow-runtime-process-topology
+  - adr-20260903-update-and-manifest-distribution
+  verification:
+  - id: v-topology-ui-kill
+    tier: T2
+    command: cargo test -p ma-engine --test topology ui_kill_keeps_recording
+  - id: v-topology-single-instance
+    tier: T2
+    command: cargo test -p ma-engine --test topology second_instance_exits_without_mutation
+  - id: v-topology-engine-restart-resync
+    tier: T2
+    command: cargo test -p ma-engine --test topology engine_restart_client_resync
+  - id: v-topology-update-deferred-during-session
+    tier: T2
+    command: cargo test -p ma-engine --test topology update_deferred_while_session_active
+- id: contract-processing-isolation
+  dimension: failure_recovery
+  owner: component-capture-engine
+  requirement_refs:
+  - NFR-009
+  - FR-030
+  - FR-004
+  unit_refs:
+  - workspace-and-boundary-scaffold
+  - capture-recording-durability
+  - processor-contract
+  adr_refs:
+  - adr-20260903-workflow-runtime-process-topology
+  - adr-20260903-workspace-boundary-enforcement
+  verification:
+  - id: v-isolation-capture-path-edges
+    tier: T0
+    command: cargo xtask boundary --rule capture-path-isolation
+  - id: v-isolation-native-link-confined
+    tier: T0
+    command: cargo xtask boundary --rule native-inference-confinement
+  - id: v-isolation-negative-fixture
+    tier: T1
+    command: cargo test -p xtask isolation_negative_fixture
+  - id: v-isolation-processor-abort-keeps-recording
+    tier: T2
+    command: cargo test -p ma-engine --test durability processor_abort_keeps_recording
+- id: contract-ipc-protocol
+  dimension: integration_contract
+  owner: component-ipc-contract
+  requirement_refs:
+  - FR-005
+  - FR-011
+  - NFR-008
+  unit_refs:
+  - ipc-contract-and-engine-process
+  - ui-shell-consent-surface
+  adr_refs:
+  - adr-20260903-desktop-stack-and-ipc
+  verification:
+  - id: v-ipc-schema-conformance
+    tier: T0
+    command: cargo test -p ma-ipc schema_golden_roundtrip
+  - id: v-ipc-handshake-mismatch
+    tier: T1
+    command: cargo test -p ma-ipc handshake_major_mismatch_refused
+  - id: v-ipc-resync-after-stall
+    tier: T1
+    command: cargo test -p ma-ipc stalled_client_resyncs
+  - id: v-ipc-backpressure-never-stalls-capture
+    tier: T2
+    command: cargo test -p ma-engine --test topology wedged_client_does_not_stall_capture
+  discretion:
+  - id: discretion-jsonrpc-dispatch
+    unit_ref: ipc-contract-and-engine-process
+    question: How are JSON-RPC methods registered and dispatched inside the transport-agnostic protocol layer?
+    scope:
+      files:
+      - crates/ma-ipc/src/dispatch.rs
+      component: component-ipc-contract
+      visibility: private
+    escalate_when:
+    - the wire framing, method set, error codes or event ordering guarantees would change
+    - dispatch would introduce a blocking path that can stall event publication
+    constraints:
+    - every declared method and event in contracts/ipc/ remains reachable and schema-conformant
+    preserves:
+      contract_refs:
+      - contract-ipc-protocol
+      invariant_refs:
+      - events carry strictly increasing per-connection sequence numbers
+      - session transition events are never dropped
+    verification_refs:
+    - v-ipc-schema-conformance
+    - v-ipc-resync-after-stall
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: trivial
+      verification_strength: discriminating
+      runtime_risk: normal
+      coupling: coupled_within_unit
+      grounding: evidenced
+- id: contract-ipc-transport-authz
+  dimension: security_boundary
+  owner: component-security-policy
+  requirement_refs:
+  - FR-006
+  - NFR-001
+  unit_refs:
+  - ipc-contract-and-engine-process
+  - security-and-credential-policy
+  adr_refs:
+  - adr-20260903-desktop-stack-and-ipc
+  - adr-20260903-threat-model-and-credential-policy
+  verification:
+  - id: v-authz-foreign-sid-rejected
+    tier: T1
+    command: cargo test -p ma-ipc authz_foreign_sid_rejected_before_dispatch
+  - id: v-authz-dacl-shape
+    tier: T1
+    command: cargo test -p ma-secure acl_pipe_descriptor_owner_only
+  - id: v-authz-pipe-squat
+    tier: T2
+    command: cargo test -p ma-engine --test topology pipe_squat_detected
+  - id: v-authz-build-channel-carveout
+    tier: T1
+    command: cargo test -p ma-ipc authz_build_channel_carveout
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - conflicting
+    default_policy: any identity check that cannot be completed is treated as a mismatch and the connection is closed before
+      method dispatch; the compile-time build channel selects which server-authenticity rule applies and a release client
+      never accepts an unsigned server
+- id: contract-session-state-machine
+  dimension: state_lifecycle
+  owner: component-session-model
+  requirement_refs:
+  - FR-010
+  - FR-011
+  - FR-012
+  - FR-014
+  - FR-017
+  - FR-027
+  unit_refs:
+  - session-state-machine
+  adr_refs:
+  - adr-20260903-automatic-recording-modes
+  - adr-20260903-capture-engine-process-isolation
+  verification:
+  - id: v-session-table-conformance
+    tier: T0
+    command: cargo test -p ma-session transition_table_matches_contract_json
+  - id: v-session-exhaustive-step
+    tier: T1
+    command: cargo test -p ma-session step_is_total_over_state_event_space
+  - id: v-session-idempotent-commands
+    tier: T1
+    command: cargo test -p ma-session repeated_stop_is_success_without_effect
+  - id: v-session-crash-in-arming
+    tier: T1
+    command: cargo test -p ma-session recovery_from_arming_lands_in_idle
+  discretion:
+  - id: discretion-state-machine-representation
+    unit_ref: session-state-machine
+    question: Is the state machine represented as an interpreted transition table or as typestate-style enums internally?
+    scope:
+      files:
+      - crates/ma-session/src/state.rs
+      - crates/ma-session/src/transition_table.rs
+      component: component-session-model
+      visibility: private
+    escalate_when:
+    - the exported transition table would no longer be derivable from the code
+    - any declared transition would become unreachable from step
+    - a transition could be applied without recording its cause
+    authority:
+      may_choose:
+      - interpreted transition table
+      - typestate enums with a derived table export
+    preserves:
+      contract_refs:
+      - contract-session-state-machine
+      invariant_refs:
+      - no state is reachable except through a declared transition
+      - every accepted transition records a typed cause
+    verification_refs:
+    - v-session-table-conformance
+    - v-session-exhaustive-step
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: lifecycle
+      coupling: coupled_within_unit
+      grounding: evidenced
+- id: contract-recording-mode-policy
+  dimension: control_flow
+  owner: component-session-model
+  requirement_refs:
+  - FR-010
+  - FR-012
+  - NFR-005
+  - FR-028
+  unit_refs:
+  - session-state-machine
+  adr_refs:
+  - adr-20260903-automatic-recording-modes
+  verification:
+  - id: v-mode-resolution-order
+    tier: T1
+    command: cargo test -p ma-session mode_resolution_override_class_global
+  - id: v-mode-countdown-cancel-suppression
+    tier: T1
+    command: cargo test -p ma-session cancel_suppresses_rearm_for_identity
+  - id: v-mode-suspend-resume-reevaluation
+    tier: T1
+    command: cargo test -p ma-session suspend_during_countdown_reevaluates
+  - id: v-mode-hysteresis-flap
+    tier: T1
+    command: cargo test -p ma-session flapping_end_signal_yields_one_session
+- id: contract-consent-surface-precondition
+  dimension: user_observability
+  owner: component-session-model
+  requirement_refs:
+  - FR-011
+  - FR-004
+  - FR-027
+  - FR-028
+  unit_refs:
+  - session-state-machine
+  - ui-shell-consent-surface
+  adr_refs:
+  - adr-20260903-automatic-recording-modes
+  - adr-20260903-capture-engine-process-isolation
+  verification:
+  - id: v-consent-engine-notification-starts-without-client
+    tier: T2
+    command: cargo test -p ma-engine --test consent auto_start_with_no_client_attached
+  - id: v-consent-no-surface-no-start
+    tier: T2
+    command: cargo test -p ma-engine --test consent no_surface_no_capture
+  - id: v-consent-surface-loss-keeps-recording
+    tier: T2
+    command: cargo test -p ma-engine --test consent surface_loss_keeps_recording
+  - id: v-consent-cancel-leaves-no-audio-byte
+    tier: T2
+    command: cargo test -p ma-engine --test consent cancelled_countdown_writes_no_audio
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    default_policy: an automatic start requires at least one live consent surface — the engine's own notification channel
+      or an attached indicator-and-cancel client; the absence of both suppresses the start and records the suppression with
+      its cause, while the absence of both during an existing recording never stops it
+  discretion:
+  - id: discretion-ui-state-store
+    unit_ref: ui-shell-consent-surface
+    question: Which frontend state-management approach holds the rendered session view inside the webview?
+    scope:
+      files:
+      - app/ui/src/**
+      component: component-ui-shell
+      visibility: private
+    escalate_when:
+    - the UI would derive session state locally instead of rendering the engine snapshot
+    - the indicator or the cancel affordance would depend on frontend state that can diverge from the engine
+    - reconnect or resync logic would move out of the testable Rust engine client into the webview
+    preserves:
+      contract_refs:
+      - contract-consent-surface-precondition
+      - contract-ipc-protocol
+      invariant_refs:
+      - the client renders only engine-supplied state
+    verification_refs:
+    - v-consent-surface-loss-keeps-recording
+    - v-ipc-resync-after-stall
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: trivial
+      verification_strength: review_only
+      runtime_risk: normal
+      coupling: independent
+      grounding: evidenced
+- id: contract-signal-envelope
+  dimension: data_model
+  owner: component-signal-contract
+  requirement_refs:
+  - FR-007
+  - NFR-005
+  unit_refs:
+  - signal-and-detector-contracts
+  adr_refs:
+  - adr-20260903-detector-signal-replay-contract
+  verification:
+  - id: v-signal-schema-conformance
+    tier: T0
+    command: cargo test -p ma-signal schema_golden_roundtrip
+  - id: v-signal-no-ui-text-fields
+    tier: T0
+    command: cargo test -p ma-signal schema_contains_no_free_text_subject
+  - id: v-signal-resync-no-autostart
+    tier: T1
+    command: cargo test -p ma-detect resync_signal_never_arms
+  - id: v-signal-wall-clock-jump
+    tier: T1
+    command: cargo test -p ma-detect wall_clock_jump_does_not_reorder
+- id: contract-detector-determinism
+  dimension: control_flow
+  owner: component-detector-core
+  requirement_refs:
+  - FR-007
+  - NFR-005
+  - NFR-008
+  unit_refs:
+  - signal-and-detector-contracts
+  - workspace-and-boundary-scaffold
+  adr_refs:
+  - adr-20260903-detector-signal-replay-contract
+  - adr-20260903-workspace-boundary-enforcement
+  verification:
+  - id: v-detect-purity-lint
+    tier: T0
+    command: cargo xtask boundary --check forbidden-imports
+  - id: v-detect-replay-determinism
+    tier: T1
+    command: cargo test -p ma-detect replay_is_byte_identical
+  - id: v-detect-evidence-present
+    tier: T1
+    command: cargo test -p ma-detect every_decision_cites_evidence
+- id: contract-detector-outcome-partition
+  dimension: control_flow
+  owner: component-detector-core
+  requirement_refs:
+  - FR-008
+  - FR-009
+  - NFR-005
+  unit_refs:
+  - signal-and-detector-contracts
+  - service-adapter-skeletons
+  adr_refs:
+  - adr-20260903-detector-signal-replay-contract
+  - adr-20260903-extension-localhost-channel-trust
+  verification:
+  - id: v-detect-partition-exhaustive
+    tier: T1
+    command: cargo test -p ma-detect outcome_partition_is_total
+  - id: v-detect-conflict-precedence
+    tier: T1
+    command: cargo test -p ma-detect concurrent_candidates_yield_one_session
+  - id: v-detect-extension-alone-inconclusive
+    tier: T1
+    command: cargo test -p ma-detect extension_signal_alone_is_inconclusive
+  - id: v-detect-adapter-panic-isolated
+    tier: T1
+    command: cargo test -p ma-detect panicking_adapter_is_disabled_not_fatal
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    - conflicting
+    default_policy: absence of a determinate outcome never starts capture; unknown falls back to manual control and conflicting
+      activates at most one session with the losers recorded as suppressed candidates
+- id: contract-module-boundary-enforcement
+  dimension: integration_contract
+  owner: component-boundary-check
+  requirement_refs:
+  - FR-002
+  - FR-003
+  - NFR-008
+  - FR-001
+  unit_refs:
+  - workspace-and-boundary-scaffold
+  - service-adapter-skeletons
+  adr_refs:
+  - adr-20260903-workspace-boundary-enforcement
+  verification:
+  - id: v-boundary-clean-workspace
+    tier: T0
+    command: cargo xtask boundary
+  - id: v-boundary-negative-fixture
+    tier: T1
+    command: cargo test -p xtask boundary_negative_fixture_reports_three_violations
+  - id: v-boundary-feature-gated-leak
+    tier: T1
+    command: cargo test -p xtask feature_gated_adapter_edge_is_detected
+  - id: v-boundary-ci-gate
+    tier: T0
+    command: cargo test -p xtask ci_workflow_invokes_boundary_and_deny
+  discretion:
+  - id: discretion-boundary-check-graph-source
+    unit_ref: workspace-and-boundary-scaffold
+    question: How does the checker obtain and traverse the crate graph and tokenize sources into identifiers, string literals
+      and comments?
+    scope:
+      files:
+      - xtask/src/boundary.rs
+      component: component-boundary-check
+      visibility: private
+    escalate_when:
+    - any violation class present in the negative fixture would become undetectable
+    - the graph would be resolved with anything other than all features enabled
+    - transitive edges would stop being checked
+    - the declared scan surface would change (class A identifier tokens, class B whole string literals, comments never)
+    - any decoy in the negative fixture would start being reported
+    preserves:
+      contract_refs:
+      - contract-module-boundary-enforcement
+      invariant_refs:
+      - adapter crates remain graph sinks reachable only from composition roots
+      - the checker's own detection power is proven by the negative fixture
+      - comments and doc comments are never scanned by either literal class
+    verification_refs:
+    - v-boundary-negative-fixture
+    - v-boundary-feature-gated-leak
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: repository
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: normal
+      coupling: independent
+      grounding: evidenced
+- id: contract-extension-channel-trust
+  dimension: security_boundary
+  owner: component-extension-channel
+  requirement_refs:
+  - FR-009
+  - NFR-001
+  - NFR-005
+  unit_refs:
+  - extension-channel-contract
+  adr_refs:
+  - adr-20260903-extension-localhost-channel-trust
+  - adr-20260903-threat-model-and-credential-policy
+  verification:
+  - id: v-ext-token-required
+    tier: T1
+    command: cargo test -p ma-ext-channel request_without_token_rejected
+  - id: v-ext-origin-rejects-web
+    tier: T1
+    command: cargo test -p ma-ext-channel web_origin_rejected
+  - id: v-ext-replay-rejected
+    tier: T1
+    command: cargo test -p ma-ext-channel stale_sequence_rejected
+  - id: v-ext-alone-cannot-start
+    tier: T1
+    command: cargo test -p ma-detect forged_extension_signal_does_not_start_capture
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    default_policy: an unauthenticated, stale or uncorroborated extension message produces no signal or at most a non-authoritative
+      one, and never a determinate start
+- id: contract-chunk-durability
+  dimension: failure_recovery
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-013
+  - FR-014
+  - NFR-003
+  unit_refs:
+  - capture-recording-durability
+  adr_refs:
+  - adr-20260903-audio-format-and-chunking
+  verification:
+  - id: v-chunk-kill-recovery
+    tier: T2
+    command: cargo test -p ma-engine --test durability kill_mid_chunk_bounded_loss
+  - id: v-chunk-manifest-vs-directory
+    tier: T1
+    command: cargo test -p ma-capture directory_is_truth_manifest_is_cache
+  - id: v-chunk-backpressure-gap
+    tier: T1
+    command: cargo test -p ma-capture stalling_filesystem_yields_gap_not_stall
+  - id: v-chunk-2h-scale
+    tier: T2
+    command: cargo test -p ma-engine --test durability two_hour_recovery_within_bound
+  discretion:
+  - id: discretion-chunk-writer-buffering
+    unit_ref: capture-recording-durability
+    question: How does the chunk writer buffer samples between the capture callback and the filesystem?
+    scope:
+      files:
+      - crates/ma-capture/src/chunk_writer.rs
+      component: component-capture-engine
+      visibility: private
+    escalate_when:
+    - the bounded loss window would exceed one in-progress chunk
+    - the declared backpressure queue depth or the gap-record semantics would change
+    - the capture callback could block on the filesystem
+    authority:
+      may_choose:
+      - write-through from the callback
+      - double buffer handed to a dedicated writer thread
+      - lock-free ring consumed by a writer thread
+    preserves:
+      contract_refs:
+      - contract-chunk-durability
+      - contract-session-timeline
+      invariant_refs:
+      - data file rename precedes its manifest record
+      - dropped audio is always represented by an explicit gap record
+    verification_refs:
+    - v-chunk-kill-recovery
+    - v-chunk-backpressure-gap
+    difficulty_inputs:
+      decision_reasoning: multi_constraint
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: data_loss
+      coupling: coupled_within_unit
+      grounding: unevidenced
+- id: contract-session-timeline
+  dimension: data_model
+  owner: component-core-types
+  requirement_refs:
+  - FR-015
+  - FR-017
+  - FR-013
+  unit_refs:
+  - core-types-and-identity
+  - capture-recording-durability
+  adr_refs:
+  - adr-20260903-audio-format-and-chunking
+  verification:
+  - id: v-timeline-gap-preserving-timestamps
+    tier: T1
+    command: cargo test -p ma-core-types timestamps_survive_missing_chunk
+  - id: v-timeline-coverage-invariant
+    tier: T1
+    command: cargo test -p ma-core-types chunks_and_gaps_tile_without_overlap
+  - id: v-timeline-track-independence
+    tier: T1
+    command: cargo test -p ma-core-types tracks_have_independent_origins
+  - id: v-timeline-format-change-segment
+    tier: T1
+    command: cargo test -p ma-capture device_format_change_opens_new_segment
+- id: contract-track-consolidation
+  dimension: data_model
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-016
+  - FR-013
+  unit_refs:
+  - capture-recording-durability
+  adr_refs:
+  - adr-20260903-audio-format-and-chunking
+  verification:
+  - id: v-consolidate-lossless
+    tier: T1
+    command: cargo test -p ma-capture flac_decodes_sample_identical
+  - id: v-consolidate-crash-idempotent
+    tier: T1
+    command: cargo test -p ma-capture crash_between_verify_and_delete_is_idempotent
+  - id: v-consolidate-mismatch-keeps-chunks
+    tier: T1
+    command: cargo test -p ma-capture verification_mismatch_preserves_chunks
+  discretion:
+  - id: discretion-flac-encoder-binding
+    unit_ref: capture-recording-durability
+    question: Which FLAC encoder implementation is used for track consolidation?
+    scope:
+      files:
+      - crates/ma-capture/src/consolidate.rs
+      - crates/ma-capture/Cargo.toml
+      component: component-capture-engine
+      visibility: private
+    escalate_when:
+    - the choice adds a C toolchain requirement to the standard build
+    - the dependency's licence class is not already permitted by deny.toml
+    - the encoder cannot encode 16 kHz mono losslessly
+    preserves:
+      contract_refs:
+      - contract-track-consolidation
+      invariant_refs:
+      - decoded output is sample-identical to the chunk sequence before any chunk is deleted
+    verification_refs:
+    - v-consolidate-lossless
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: data_loss
+      coupling: independent
+      grounding: unevidenced
+- id: contract-artifact-addressing
+  dimension: data_model
+  owner: component-store
+  requirement_refs:
+  - FR-024
+  - NFR-007
+  - FR-017
+  unit_refs:
+  - persistence-and-artifact-layout
+  - core-types-and-identity
+  adr_refs:
+  - adr-20260903-local-store-and-artifact-layout
+  verification:
+  - id: v-addressing-no-absolute-paths
+    tier: T0
+    command: cargo test -p ma-store no_absolute_artifact_path_is_stored
+  - id: v-addressing-relocation
+    tier: T1
+    command: cargo test -p ma-store root_relocation_preserves_references
+  - id: v-addressing-identifier-only-segments
+    tier: T1
+    command: cargo test -p ma-store hostile_titles_never_reach_the_filesystem
+  - id: v-addressing-db-not-relocatable
+    tier: T0
+    command: cargo test -p ma-store database_path_is_pinned_to_local_appdata
+- id: contract-store-ownership
+  dimension: concurrency
+  owner: component-store
+  requirement_refs:
+  - FR-017
+  - FR-018
+  - NFR-007
+  unit_refs:
+  - persistence-and-artifact-layout
+  adr_refs:
+  - adr-20260903-local-store-and-artifact-layout
+  - adr-20260903-workflow-runtime-process-topology
+  verification:
+  - id: v-store-role-enforcement
+    tier: T1
+    command: cargo test -p ma-store write_outside_role_family_is_rejected
+  - id: v-store-busy-does-not-stall-capture
+    tier: T2
+    command: cargo test -p ma-engine --test durability wedged_writer_does_not_stall_capture
+  - id: v-store-migration-forward-from-every-version
+    tier: T1
+    command: cargo test -p ma-store migrate_from_every_released_version
+  - id: v-store-wal-config
+    tier: T0
+    command: cargo test -p ma-store wal_and_busy_timeout_configured
+  discretion:
+  - id: discretion-migration-runner
+    unit_ref: persistence-and-artifact-layout
+    question: Which embedded migration runner applies the ordered SQL migrations?
+    scope:
+      files:
+      - crates/ma-store/src/migration.rs
+      - crates/ma-store/migrations/*.sql
+      component: component-store
+      visibility: private
+    escalate_when:
+    - migrations would stop being forward-only
+    - user_version would stop being the schema version carrier
+    - the migrate-from-every-released-version test could not be expressed
+    preserves:
+      contract_refs:
+      - contract-store-ownership
+      invariant_refs:
+      - a database newer than the binary understands is refused, never partially read
+    verification_refs:
+    - v-store-migration-forward-from-every-version
+    difficulty_inputs:
+      decision_reasoning: mechanical
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: migration
+      coupling: independent
+      grounding: evidenced
+- id: contract-retention-purge
+  dimension: data_model
+  owner: component-store
+  requirement_refs:
+  - FR-029
+  - FR-024
+  - NFR-002
+  unit_refs:
+  - persistence-and-artifact-layout
+  - workflow-core-contract
+  adr_refs:
+  - adr-20260903-local-store-and-artifact-layout
+  verification:
+  - id: v-purge-completeness
+    tier: T1
+    command: cargo test -p ma-store purge_leaves_only_tombstone
+  - id: v-purge-idempotent
+    tier: T1
+    command: cargo test -p ma-store purge_rerun_is_idempotent
+  - id: v-purge-cancels-inflight-steps
+    tier: T1
+    command: cargo test -p ma-workflow delete_cancels_inflight_steps
+  - id: v-purge-interrupted-resumes
+    tier: T2
+    command: cargo test -p ma-engine --test durability killed_purge_resumes_to_completion
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    default_policy: only a completed walk of a reachable artifact root writes a tombstone; an interrupted purge is unknown
+      and an unreachable root is inconclusive, and both leave the meeting hidden, un-tombstoned and scheduled for retry, so
+      the user is never told a meeting is gone while any byte of it remains
+  discretion:
+  - id: discretion-purge-walk-strategy
+    unit_ref: persistence-and-artifact-layout
+    question: How does the purge job walk and remove the meeting directory and its derived rows?
+    scope:
+      files:
+      - crates/ma-store/src/purge.rs
+      component: component-store
+      visibility: private
+    escalate_when:
+    - the purge would stop being resumable from deleted_at alone
+    - a tombstone could be written while any byte of the meeting remains
+    - a partially purged meeting could become visible again
+    - the walk would proceed past an unresolved intended effect-ledger row
+    authority:
+      may_choose:
+      - single recursive pass
+      - delete leaves then directories
+      - rename to a trash directory then remove
+    preserves:
+      contract_refs:
+      - contract-retention-purge
+      invariant_refs:
+      - after a tombstone exists no path or row outside tombstone names the meeting
+      - purge is idempotent and convergent across restarts
+    verification_refs:
+    - v-purge-completeness
+    - v-purge-idempotent
+    - v-purge-interrupted-resumes
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: data_loss
+      coupling: coupled_within_unit
+      grounding: evidenced
+- id: contract-stable-identity
+  dimension: data_model
+  owner: component-core-types
+  requirement_refs:
+  - FR-017
+  - FR-018
+  - FR-023
+  unit_refs:
+  - core-types-and-identity
+  - persistence-and-artifact-layout
+  - workflow-core-contract
+  adr_refs:
+  - adr-20260903-workflow-identity-and-idempotency
+  verification:
+  - id: v-identity-recovery-reuse
+    tier: T2
+    command: cargo test -p ma-engine --test durability recovery_reuses_session_id
+  - id: v-identity-cross-surface-equality
+    tier: T1
+    command: cargo test -p ma-store identifier_identical_across_db_path_and_export
+  - id: v-identity-ordering
+    tier: T1
+    command: cargo test -p ma-core-types uuidv7_is_time_ordered
+- id: contract-workflow-step-idempotency
+  dimension: state_lifecycle
+  owner: component-workflow-core
+  requirement_refs:
+  - FR-018
+  - FR-019
+  - FR-021
+  unit_refs:
+  - workflow-core-contract
+  adr_refs:
+  - adr-20260903-workflow-identity-and-idempotency
+  verification:
+  - id: v-workflow-duplicate-enqueue-noop
+    tier: T1
+    command: cargo test -p ma-workflow duplicate_enqueue_is_noop
+  - id: v-workflow-lease-recovery-no-duplicate
+    tier: T1
+    command: cargo test -p ma-workflow lease_recovery_creates_no_duplicate_artifact
+  - id: v-workflow-config-change-new-step
+    tier: T1
+    command: cargo test -p ma-workflow config_change_creates_new_step
+  - id: v-workflow-edit-preservation
+    tier: T1
+    command: cargo test -p ma-workflow regeneration_preserves_user_edits
+- id: contract-processor-interface
+  dimension: integration_contract
+  owner: component-processor-contract
+  requirement_refs:
+  - FR-020
+  - FR-021
+  - NFR-001
+  - NFR-006
+  - FR-030
+  unit_refs:
+  - processor-contract
+  adr_refs:
+  - adr-20260903-initial-processor-adapters
+  - adr-20260903-threat-model-and-credential-policy
+  - adr-20260903-workflow-runtime-process-topology
+  verification:
+  - id: v-processor-argv-no-shell
+    tier: T1
+    command: cargo test -p ma-processor config_value_never_reaches_a_shell
+  - id: v-processor-staging-exact-contents
+    tier: T1
+    command: cargo test -p ma-processor staging_dir_contains_only_declared_inputs
+  - id: v-processor-capability-refusal
+    tier: T1
+    command: cargo test -p ma-processor unsupported_language_is_typed_refusal
+  - id: v-processor-model-digest
+    tier: T1
+    command: cargo test -p ma-processor model_digest_mismatch_is_permanent_failure
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    - conflicting
+    default_policy: a request outside declared capability, an unverified model, or an unavailable credential produces a typed
+      refusal before any work begins, never a best-effort run
+  discretion:
+  - id: discretion-processor-host-framing
+    unit_ref: processor-contract
+    question: How are requests, progress frames and the result framed between the engine supervisor and the processor host
+      child?
+    scope:
+      files:
+      - crates/ma-processor/src/host.rs
+      - crates/ma-processor-host/src/main.rs
+      component: component-processor-contract
+      visibility: private
+    escalate_when:
+    - a host crash would become indistinguishable from a normal exit
+    - cancellation could exceed the five-second bound
+    - progress could regress or stop being observable at least once per work item
+    - any secret would move into the child's argument vector
+    - the engine supervisor and ma-processor-host would stop shipping and updating as one installed unit, which is the
+      premise that makes this framing interior rather than a versioned surface
+    constraints:
+    - Delegable only because both endpoints ship in one installer and are replaced together, so no differently versioned
+      peer ever reads these frames. contract-processor-interface fixes what a frame carries (a single verified request
+      in, progress frames and one result frame out); this discretion fixes only how those frames are encoded.
+    authority:
+      may_choose:
+      - length-prefixed JSON frames
+      - newline-delimited JSON
+      - a compact binary framing
+    preserves:
+      contract_refs:
+      - contract-processor-interface
+      - contract-processing-isolation
+      invariant_refs:
+      - an abnormal child exit is always classified HostCrashed, never success
+      - no secret appears in the child's argument vector
+    verification_refs:
+    - v-processor-argv-no-shell
+    - v-isolation-processor-abort-keeps-recording
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: discriminating
+      runtime_risk: lifecycle
+      coupling: coupled_within_unit
+      grounding: evidenced
+- id: contract-processor-budget
+  dimension: performance_budget
+  owner: component-processor-contract
+  requirement_refs:
+  - FR-021
+  - FR-022
+  - NFR-004
+  unit_refs:
+  - processor-contract
+  adr_refs:
+  - adr-20260903-local-transcription-budget
+  verification:
+  - id: v-budget-progress-monotonic
+    tier: T1
+    command: cargo test -p ma-processor progress_is_monotonic
+  - id: v-budget-cancellation-bound
+    tier: T1
+    command: cargo test -p ma-processor cancellation_observed_within_bound
+  - id: v-budget-cost-convergence
+    tier: T1
+    command: cargo test -p ma-processor per_item_cost_does_not_grow
+  - id: v-budget-overrun-is-warning
+    tier: T1
+    command: cargo test -p ma-processor budget_overrun_emits_warning_not_failure
+- id: contract-destination-export-idempotency
+  dimension: integration_contract
+  owner: component-destination-contract
+  requirement_refs:
+  - FR-023
+  - NFR-001
+  - NFR-006
+  unit_refs:
+  - destination-contract
+  adr_refs:
+  - adr-20260903-workflow-identity-and-idempotency
+  verification:
+  - id: v-export-crash-before-identity-record
+    tier: T1
+    command: cargo test -p ma-destination crash_before_identity_record_reconciles
+  - id: v-export-duplicate-retry-no-duplicate
+    tier: T1
+    command: cargo test -p ma-destination retry_creates_no_duplicate_remote_object
+  - id: v-export-auth-failure-classification
+    tier: T1
+    command: cargo test -p ma-destination auth_failure_is_needs_reauthentication
+  - id: v-export-offline-queue-survives-restart
+    tier: T2
+    command: cargo test -p ma-workflow --test export_queue queue_survives_restart
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    - conflicting
+    default_policy: when the remote identity is unknown after a crash, the external-identifier lookup runs before any create,
+      and an unresolvable state is surfaced as a typed attempt failure rather than resolved by creating a second object
+- id: contract-credential-custody
+  dimension: security_boundary
+  owner: component-security-policy
+  requirement_refs:
+  - NFR-001
+  - FR-020
+  - FR-023
+  unit_refs:
+  - security-and-credential-policy
+  adr_refs:
+  - adr-20260903-threat-model-and-credential-policy
+  verification:
+  - id: v-credential-no-secret-in-any-written-file
+    tier: T2
+    command: cargo test -p ma-secure --test leak_scan planted_secret_absent_from_all_written_files
+  - id: v-credential-type-not-displayable
+    tier: T0
+    command: cargo test -p ma-secure --test compile_fail secret_cannot_be_displayed
+  - id: v-credential-argv-free
+    tier: T1
+    command: cargo test -p ma-processor secret_never_appears_in_child_argv
+  - id: v-credential-missing-is-typed
+    tier: T1
+    command: cargo test -p ma-secure missing_credential_is_needs_authentication
+  discretion:
+  - id: discretion-secret-zeroization
+    unit_ref: security-and-credential-policy
+    question: Which zeroization mechanism does the secret wrapper use on drop?
+    scope:
+      files:
+      - crates/ma-secure/src/secret.rs
+      component: component-security-policy
+      visibility: private
+    escalate_when:
+    - the type would gain a Display, Debug or Serialize implementation that reveals the value
+    - exposing the inner value would stop being an explicit call at the transmission site
+    - the mechanism would require the secret to be copied into an additional buffer that outlives the wrapper
+    preserves:
+      contract_refs:
+      - contract-credential-custody
+      invariant_refs:
+      - no secret value is serialized by any general-purpose serializer
+    verification_refs:
+    - v-credential-type-not-displayable
+    - v-credential-no-secret-in-any-written-file
+    difficulty_inputs:
+      decision_reasoning: mechanical
+      boundary_reach: private
+      context_scope: files
+      reversibility: trivial
+      verification_strength: discriminating
+      runtime_risk: security
+      coupling: independent
+      grounding: evidenced
+- id: contract-diagnostic-redaction
+  dimension: user_observability
+  owner: component-security-policy
+  requirement_refs:
+  - NFR-002
+  - NFR-006
+  - NFR-005
+  unit_refs:
+  - security-and-credential-policy
+  - destination-contract
+  adr_refs:
+  - adr-20260903-threat-model-and-credential-policy
+  verification:
+  - id: v-redaction-marker-scan
+    tier: T2
+    command: cargo test -p ma-secure --test leak_scan diagnostic_bundle_contains_no_markers
+  - id: v-redaction-content-type-not-loggable
+    tier: T0
+    command: cargo test -p ma-secure --test compile_fail content_type_cannot_be_logged
+  - id: v-redaction-error-display-elides-payload
+    tier: T1
+    command: cargo test -p ma-secure parse_error_display_elides_payload
+- id: contract-egress-inventory
+  dimension: security_boundary
+  owner: component-security-policy
+  requirement_refs:
+  - NFR-006
+  - NFR-003
+  unit_refs:
+  - security-and-credential-policy
+  - destination-contract
+  adr_refs:
+  - adr-20260903-threat-model-and-credential-policy
+  - adr-20260903-update-and-manifest-distribution
+  verification:
+  - id: v-egress-inventory-complete
+    tier: T0
+    command: cargo test -p ma-secure --test egress_inventory every_source_host_is_declared
+  - id: v-egress-inventory-no-first-party
+    tier: T0
+    command: cargo test -p ma-secure --test egress_inventory owners_are_closed_and_entries_are_reachable
+  - id: v-egress-inventory-negative-fixture
+    tier: T1
+    command: cargo test -p ma-secure --test egress_inventory undeclared_host_is_named
+  - id: v-egress-audit-matches-inventory
+    tier: T1
+    command: cargo test -p ma-destination audit_host_is_in_inventory
+- id: contract-release-manifest-trust
+  dimension: security_boundary
+  owner: component-release-supply-chain
+  requirement_refs:
+  - FR-025
+  - NFR-003
+  unit_refs:
+  - release-supply-chain
+  adr_refs:
+  - adr-20260903-update-and-manifest-distribution
+  verification:
+  - id: v-manifest-tampered-rejected
+    tier: T1
+    command: cargo test -p ma-manifest tampered_manifest_rejected
+  - id: v-manifest-downgrade-rejected
+    tier: T1
+    command: cargo test -p ma-manifest replayed_older_manifest_rejected
+  - id: v-manifest-unknown-key-rejected
+    tier: T1
+    command: cargo test -p ma-manifest unknown_key_rejected_rollover_accepted
+  - id: v-manifest-digest-mismatch-no-activation
+    tier: T1
+    command: cargo test -p ma-manifest digest_mismatch_blocks_adapter_activation
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - conflicting
+    default_policy: any manifest that does not verify, or whose version does not strictly increase, has no effect of any kind
+      including logging of its declared values
+- id: contract-docs-conformance
+  dimension: integration_contract
+  owner: component-docs-artifacts
+  requirement_refs:
+  - FR-026
+  unit_refs:
+  - docs-and-adr-materialization
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  verification:
+  - id: v-docs-schema-conformance
+    tier: T0
+    command: dev-docs conformance --root docs
+  - id: v-docs-adr-placement
+    tier: T0
+    command: dev-docs lint --kind adr
+  - id: v-docs-change-members-nonempty
+    tier: T0
+    command: dev-docs conformance --change change-20260903-phase0-repository-and-contracts
+  - id: v-docs-invariant-enforcement-named
+    tier: T0
+    command: dev-docs lint --kind design
+- id: contract-verification-tiering
+  dimension: integration_contract
+  owner: component-boundary-check
+  requirement_refs:
+  - NFR-010
+  - NFR-008
+  unit_refs:
+  - workspace-and-boundary-scaffold
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  verification:
+  - id: v-tier-portable-suite-on-non-windows
+    tier: T0
+    command: cargo xtask verify --tier portable
+  - id: v-tier-every-t2-registered
+    tier: T0
+    command: cargo xtask verify --check-registration
+  - id: v-tier-ci-defines-both-gates
+    tier: T0
+    command: cargo test -p xtask ci_defines_portable_and_windows_gates
+  - id: v-tier-windows-suite-green
+    tier: T2
+    command: cargo xtask verify --tier windows
+adrs:
+- id: adr-20260903-capture-engine-process-isolation
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-capture-engine-separate-process
+  - decision-input-desktop-stack
+- id: adr-20260903-workflow-runtime-process-topology
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-capture-engine-separate-process
+  - decision-input-desktop-stack
+  - decision-input-initial-adapters
+- id: adr-20260903-desktop-stack-and-ipc
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-desktop-stack
+  - decision-input-ipc-mechanism
+- id: adr-20260903-workspace-boundary-enforcement
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-boundary-toolchain
+  - decision-input-no-dom-detection
+- id: adr-20260903-local-store-and-artifact-layout
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-db-artifact-layout
+- id: adr-20260903-audio-format-and-chunking
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-audio-format
+- id: adr-20260903-automatic-recording-modes
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-recording-modes
+- id: adr-20260903-detector-signal-replay-contract
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-no-dom-detection
+  - decision-input-meet-extension-detection-only
+- id: adr-20260903-extension-localhost-channel-trust
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-meet-extension-detection-only
+- id: adr-20260903-workflow-identity-and-idempotency
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-drive-oauth-pkce
+  - decision-input-notion-internal-token
+- id: adr-20260903-initial-processor-adapters
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-initial-adapters
+  - decision-input-transcription-languages
+  - decision-input-cli-adapter-postmvp
+- id: adr-20260903-local-transcription-budget
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-transcription-budget
+- id: adr-20260903-update-and-manifest-distribution
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-update-manifest-distribution
+  - decision-input-no-proprietary-backend
+- id: adr-20260903-threat-model-and-credential-policy
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-no-proprietary-backend
+  - decision-input-drive-oauth-pkce
+  - decision-input-notion-internal-token
+- id: adr-20260903-phase0-executable-contract-skeleton
+  status: accepted
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - AskUserQuestion 2026-09-03 'ADR verdict' -> '15 件すべて accept (Recommended)'
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/recovery-decisions.json
+    - /home/take/.dev-skills/design/phase0-repository-and-contracts/artifacts/minimality-decisions.json
+    rationale: User bulk-accepted all fifteen proposed Phase 0 ADRs; each encodes a decision the user already made in the recovery or minimality packets or that PLAN.md section 8 records as decided.
+    consultation_id: consultation-phase0-20260903-1
+  decision_input_refs:
+  - decision-input-change-package-members
+  - decision-input-design-doc-schema
+  - decision-input-adr-schema-shape
+  - decision-input-docs-lint-target-placement
+  - decision-input-status-transition-whitelist
+units:
+- title: workspace-and-boundary-scaffold
+  chunk: foundation
+  contract_refs:
+  - contract-module-boundary-enforcement
+  - contract-detector-determinism
+  - contract-processing-isolation
+  - contract-verification-tiering
+  files:
+  - Cargo.toml
+  - rust-toolchain.toml
+  - boundary.toml
+  - verification-tiers.toml
+  - deny.toml
+  - xtask/Cargo.toml
+  - xtask/src/main.rs
+  - xtask/src/boundary.rs
+  - xtask/src/verify.rs
+  - xtask/tests/boundary_negative.rs
+  - xtask/tests/isolation_negative.rs
+  - xtask/tests/fixtures/violating-workspace/**
+  - .github/workflows/ci.yml
+  acceptance:
+  - cargo xtask boundary exits 0 on the clean workspace and reports the number of edges checked
+  - the negative fixture produces a non-zero exit naming exactly the planted forbidden edge, forbidden literal and forbidden
+    import, and reports none of the three planted decoys (a doc comment containing 'must meet', a graph_edge binding, a "meeting
+    ended" literal)
+  - a feature-gated dependency from a non-composition-root crate onto an adapter crate is detected, and so are a capture-path
+    edge onto ma-workflow and a native-inference dependency on ma-engine
+  - cargo xtask verify --check-registration fails when a T2 verification id is absent from verification-tiers.toml, and CI
+    defines both the portable and the windows required jobs
+  objective: Create the cargo workspace with declared layers, make the module boundary and processing-isolation rules mechanically
+    enforced and provably non-vacuous, and make verification tiering a build-time obligation rather than a convention.
+  output_format: Rust workspace manifests, a declarative boundary.toml and verification-tiers.toml, an xtask binary with boundary
+    and verify subcommands, a fixture workspace carrying violations and decoys, and a CI workflow with two required jobs.
+  tool_guidance: Resolve the graph from cargo metadata with all features enabled; check transitive edges, not only direct
+    ones; tokenize sources so identifiers, string literals and comments are distinguishable rather than grepping raw bytes;
+    report all violations in one pass rather than stopping at the first.
+  task_boundaries: Do not implement any product behaviour; do not add crates beyond empty layer placeholders needed for the
+    graph; do not weaken the negative fixture to make the checker pass.
+- title: core-types-and-identity
+  chunk: foundation
+  contract_refs:
+  - contract-stable-identity
+  - contract-session-timeline
+  - contract-artifact-addressing
+  files:
+  - crates/ma-core-types/Cargo.toml
+  - crates/ma-core-types/src/id.rs
+  - crates/ma-core-types/src/timeline.rs
+  - crates/ma-core-types/src/artifact_ref.rs
+  - crates/ma-core-types/src/error.rs
+  acceptance:
+  - identifier types are UUIDv7, time-ordered, and serialize identically in database, path and payload contexts
+  - chunks and gaps provably tile each track range with no overlap under a property test
+  - a timestamp computed after a missing chunk retains its true session position
+  - track descriptors carry capture_mode and contamination_risk
+  objective: Fix the shared vocabulary of identifiers, session timeline arithmetic, artifact references and errors that every
+    other crate depends on.
+  output_format: A dependency-free Rust library crate with property tests.
+  tool_guidance: Use proptest for the tiling and ordering invariants; keep the crate free of platform and I/O dependencies.
+  task_boundaries: Do not add persistence, capture or IPC concerns here; do not introduce types that only one component uses.
+- title: persistence-and-artifact-layout
+  chunk: foundation
+  contract_refs:
+  - contract-artifact-addressing
+  - contract-store-ownership
+  - contract-stable-identity
+  - contract-retention-purge
+  depends_on:
+  - core-types-and-identity
+  files:
+  - crates/ma-store/Cargo.toml
+  - crates/ma-store/src/schema.rs
+  - crates/ma-store/src/migration.rs
+  - crates/ma-store/migrations/*.sql
+  - crates/ma-store/src/repo/**
+  - crates/ma-store/src/purge.rs
+  acceptance:
+  - no inserted row contains an absolute artifact path or a drive or UNC prefix
+  - relocating the artifact root updates one row and leaves every reference resolvable
+  - a write to a table outside the connection role's family is rejected
+  - migrations apply forward from every released version and a newer database is refused with a typed error
+  - deleting a meeting hides it in one transaction and, after the purge job runs, the meeting_id appears nowhere under the
+    artifact root and in no row outside tombstone
+  - a purge killed mid-walk resumes on restart and a second run is a no-op returning success
+  objective: Define the relational state, its migration discipline, writer ownership and the relocatable artifact addressing
+    model.
+  output_format: A Rust crate with embedded SQL migrations and repository modules, plus tests against temporary directories.
+  tool_guidance: Configure WAL, busy_timeout and foreign keys explicitly and assert the configuration in a test; use BEGIN
+    IMMEDIATE for read-modify-write.
+  task_boundaries: Do not implement workflow or export logic here; do not store any absolute path; do not make the database
+    path configurable.
+- title: session-state-machine
+  chunk: runtime
+  contract_refs:
+  - contract-session-state-machine
+  - contract-recording-mode-policy
+  - contract-consent-surface-precondition
+  depends_on:
+  - core-types-and-identity
+  files:
+  - crates/ma-session/Cargo.toml
+  - crates/ma-session/src/state.rs
+  - crates/ma-session/src/transition_table.rs
+  - crates/ma-session/src/mode.rs
+  - crates/ma-session/src/deadline.rs
+  - contracts/session/transitions.json
+  acceptance:
+  - the exported transition table equals contracts/session/transitions.json
+  - step is total over the state and event space, returning Rejected where no transition is declared
+  - a suspend and resume spanning a countdown re-evaluates instead of firing
+  - an automatic start decision with no consent surface of either kind - no deliverable engine notification and no attached
+    client - produces a suppression record and no capture effect, while a deliverable notification alone is sufficient to
+    arm
+  - no audio sample is written under the artifact root while the session is in candidate or arming, and a cancelled countdown
+    leaves the meeting directory with zero chunk files
+  - a detection in ask mode returns a notify effect whose action set carries start, so ask mode is satisfiable with no client
+    attached, and returns a suppression with cause no_consent_surface when neither surface can present it
+  objective: Fix the meeting-session lifecycle, the automatic recording mode policy, deadline semantics and the consent precondition
+    as a pure, exhaustively testable function.
+  output_format: A pure Rust crate plus a JSON transition table used as the conformance source of truth.
+  tool_guidance: Pass time in as an argument rather than reading a clock; keep every effect a returned value rather than a
+    side effect.
+  task_boundaries: Do not perform I/O, start capture, or talk to the store or IPC from this crate; do not encode any service-specific
+    knowledge.
+- title: signal-and-detector-contracts
+  chunk: runtime
+  contract_refs:
+  - contract-signal-envelope
+  - contract-detector-determinism
+  - contract-detector-outcome-partition
+  depends_on:
+  - core-types-and-identity
+  files:
+  - crates/ma-signal/Cargo.toml
+  - crates/ma-signal/src/envelope.rs
+  - crates/ma-signal/src/source.rs
+  - crates/ma-signal/src/timeline.rs
+  - contracts/signal/signal-envelope.schema.json
+  - crates/ma-detect/Cargo.toml
+  - crates/ma-detect/src/detector.rs
+  - crates/ma-detect/src/adapter.rs
+  - crates/ma-detect/src/decision.rs
+  - crates/ma-detect/src/outcome.rs
+  - fixtures/signal-timelines/**
+  acceptance:
+  - the signal schema contains no free-text subject field capable of carrying UI-derived text
+  - replaying a fixture yields byte-identical decisions across repeated runs and a fresh process
+  - every decision cites at least one signal identifier and a rule identifier
+  - the outcome partition is exhaustive and an extension-authority signal alone never yields a determinate start
+  objective: Fix what a signal is, how timelines are recorded and replayed, and make the detector a pure evidence-citing function
+    with a closed outcome partition.
+  output_format: Two Rust crates, a JSON Schema, and a set of committed replayable timeline fixtures.
+  tool_guidance: Enforce detector purity through the boundary check's forbidden-import list rather than review; use ordered
+    collections or explicit sorts everywhere a decision order is observable.
+  task_boundaries: Do not implement Windows collectors or detection heuristics here; do not put any service name in either
+    crate.
+- title: service-adapter-skeletons
+  chunk: runtime
+  contract_refs:
+  - contract-module-boundary-enforcement
+  - contract-detector-outcome-partition
+  depends_on:
+  - signal-and-detector-contracts
+  files:
+  - crates/ma-adapter-teams/**
+  - crates/ma-adapter-slack/**
+  - crates/ma-adapter-zoom/**
+  - crates/ma-adapter-meet/**
+  acceptance:
+  - each adapter crate is a graph sink depended on only by composition roots
+  - a shared adapter conformance suite passes for all four adapters
+  - a panicking adapter is disabled with a diagnostic and does not fail the detection pipeline
+  - all service identifiers appear only inside these crates and their fixtures
+  objective: Establish the adapter seam and four service-specific data-only adapters that hold every service identifier.
+  output_format: Four small Rust crates implementing one trait, with a shared conformance test suite.
+  tool_guidance: Keep each adapter a declarative table plus a match function; do not let adapters depend on each other.
+  task_boundaries: Do not add detection heuristics or version-specific workarounds beyond placeholders; do not import platform
+    APIs here.
+- title: extension-channel-contract
+  chunk: runtime
+  contract_refs:
+  - contract-extension-channel-trust
+  depends_on:
+  - signal-and-detector-contracts
+  files:
+  - crates/ma-ext-channel/Cargo.toml
+  - crates/ma-ext-channel/src/server.rs
+  - crates/ma-ext-channel/src/auth.rs
+  - crates/ma-ext-channel/src/message.rs
+  - contracts/extension-channel/message.schema.json
+  acceptance:
+  - a request without the token, with a web origin, or with a stale sequence is rejected and produces no signal
+  - the endpoint descriptor file is created with an owner-only ACL and the token is regenerated per engine start
+  - accepted messages become signals carrying host and tab key only, never a full URL or title
+  - a forged extension signal without a corroborating microphone signal does not start capture
+  objective: Fix the detection-only browser channel's message schema, authentication and non-authoritative status.
+  output_format: A Rust crate with an injected transport, plus a JSON Schema for the message.
+  tool_guidance: Make the transport injectable so authentication and rejection paths are testable without a browser; record
+    the native-messaging alternative in the ADR before committing to loopback.
+  task_boundaries: Do not build the browser extension itself; do not accept any audio or DOM content over this channel.
+- title: ipc-contract-and-engine-process
+  chunk: runtime
+  contract_refs:
+  - contract-ipc-protocol
+  - contract-ipc-transport-authz
+  - contract-process-topology
+  depends_on:
+  - persistence-and-artifact-layout
+  - session-state-machine
+  files:
+  - crates/ma-ipc/Cargo.toml
+  - crates/ma-ipc/src/protocol.rs
+  - crates/ma-ipc/src/method.rs
+  - crates/ma-ipc/src/event.rs
+  - crates/ma-ipc/src/transport.rs
+  - crates/ma-ipc/src/dispatch.rs
+  - crates/ma-ipc/src/authz.rs
+  - contracts/ipc/protocol.schema.json
+  - contracts/ipc/methods.schema.json
+  - crates/ma-engine/Cargo.toml
+  - crates/ma-engine/src/main.rs
+  - crates/ma-engine/src/supervisor.rs
+  acceptance:
+  - Rust types and JSON Schemas round-trip every golden fixture
+  - a major protocol mismatch refuses the connection with a typed error naming the required version
+  - a stalled client is either disconnected or detects the sequence gap and re-snapshots, and never renders stale state
+  - a connection from a different user SID is refused before method dispatch, and a pre-squatted pipe name causes engine exit
+    rather than silent joining
+  - an update offered while a session is non-terminal leaves the running engine binary in place and applies only after the
+    session terminates
+  objective: Fix the engine control channel and stand up the engine process as the single per-user authority for session state.
+  output_format: A transport-agnostic protocol crate, JSON Schemas with golden fixtures, and an engine binary with a single-instance
+    lock.
+  tool_guidance: Drive both sides over an in-memory duplex for protocol tests and use a real named pipe only for the ACL and
+    squat tests.
+  task_boundaries: Do not implement capture or detection inside the engine binary beyond wiring the seams; do not add any
+    method whose effect is not observable in a subsequent snapshot.
+- title: capture-recording-durability
+  chunk: runtime
+  contract_refs:
+  - contract-chunk-durability
+  - contract-session-timeline
+  - contract-track-consolidation
+  - contract-process-topology
+  - contract-processing-isolation
+  depends_on:
+  - persistence-and-artifact-layout
+  - ipc-contract-and-engine-process
+  files:
+  - crates/ma-capture/Cargo.toml
+  - crates/ma-capture/src/source.rs
+  - crates/ma-capture/src/chunk_writer.rs
+  - crates/ma-capture/src/manifest.rs
+  - crates/ma-capture/src/recovery.rs
+  - crates/ma-capture/src/consolidate.rs
+  - contracts/artifact/chunk-manifest.schema.json
+  acceptance:
+  - killing the engine mid-chunk loses at most the in-progress chunk and recovery repairs or gaps the partial file
+  - the chunk directory is treated as truth and the manifest is reconciled in both directions
+  - a stalling filesystem produces an explicit gap and a degraded event rather than stalling the capture callback
+  - consolidated FLAC decodes sample-identically before any chunk is deleted, and a crash between verification and deletion
+    re-runs idempotently
+  - aborting a scripted processor host child mid-job during a synthetic recording leaves chunk cadence unchanged and the session
+    in recording
+  objective: Make durable recording, honest recovery and lossless consolidation real and testable behind a synthetic capture
+    source.
+  output_format: A Rust crate with a CaptureSource seam, a deterministic synthetic source, and integration tests that kill
+    processes.
+  tool_guidance: Order durability as flush, rename, manifest append, fsync; use a fault-injecting filesystem fake for backpressure
+    and disk-full paths.
+  task_boundaries: Do not implement WASAPI or any real device access; do not let the writer touch the database, IPC or the
+    network.
+- title: workflow-core-contract
+  chunk: processing
+  contract_refs:
+  - contract-workflow-step-idempotency
+  - contract-stable-identity
+  - contract-retention-purge
+  depends_on:
+  - persistence-and-artifact-layout
+  files:
+  - crates/ma-workflow/Cargo.toml
+  - crates/ma-workflow/src/step.rs
+  - crates/ma-workflow/src/queue.rs
+  - crates/ma-workflow/src/retry.rs
+  - crates/ma-workflow/src/lifecycle.rs
+  - crates/ma-workflow/src/edits.rs
+  - crates/ma-workflow/src/effect_ledger.rs
+  acceptance:
+  - enqueueing a completed step key returns the recorded result and executes nothing
+  - a lease-expired running step is re-run without producing a duplicate artifact
+  - changing processor version or configuration produces a new step and retains the previous result
+  - an effect ledger row left at intended by a kill is resolved by lookup or by an explicit user decision on restart, never
+    by a silent recreate
+  - regeneration adds a generation row and never mutates edit_overlay; an edit whose anchor is gone is retained with orphaned
+    = true and is enumerable, and an edit offered with no anchor basis is refused
+  objective: Fix step identity, idempotency, retry classification, artifact lifecycle and the separation of generated content
+    from user edits.
+  output_format: A Rust crate driven in tests by recording fake processors and destinations.
+  tool_guidance: Commit the effect ledger's intended row before any effect outside the state database and update it to applied
+    afterwards; compose generation plus overlay at read time rather than materialising the merged text; decompose transcription
+    into per-chunk work items with stable identifiers.
+  task_boundaries: Do not implement any processor or destination here; do not let a processing failure reach the capture path.
+- title: processor-contract
+  chunk: processing
+  contract_refs:
+  - contract-processor-interface
+  - contract-processor-budget
+  - contract-processing-isolation
+  depends_on:
+  - workflow-core-contract
+  files:
+  - crates/ma-processor/Cargo.toml
+  - crates/ma-processor/src/lib.rs
+  - crates/ma-processor/src/capability.rs
+  - crates/ma-processor/src/staging.rs
+  - crates/ma-processor/src/progress.rs
+  - crates/ma-processor/src/failure.rs
+  - contracts/processor/processor-manifest.schema.json
+  - crates/ma-processor/src/host.rs
+  - crates/ma-processor-host/Cargo.toml
+  - crates/ma-processor-host/src/main.rs
+  acceptance:
+  - a hostile configuration value is either type-rejected or passed as a single literal argument, and no shell is ever invoked
+  - the staging directory contains exactly the declared inputs and is removed after the job
+  - progress is monotonic, cancellation is observed within the declared bound, and per-item cost does not grow across a 240-item
+    run
+  - a budget overrun emits a warning and the step still succeeds; a model digest mismatch is a permanent failure
+  - a processor that loads a native library or runs an external program executes inside ma-processor-host, and a scripted
+    host that aborts yields HostCrashed rather than affecting the engine
+  - a scripted host that stays alive but emits no progress frame for 150 seconds is killed and the step is Retryable{no_progress}
+    with its completed work items preserved, which is a different outcome from HostCrashed
+  objective: Fix the replaceable processing seam including capability declaration, input isolation, invocation safety, provenance,
+    progress and the time budget.
+  output_format: A Rust crate with a scripted fake processor able to simulate slowness, uncancellable work, growth in per-item
+    cost and budget overrun.
+  tool_guidance: Assert the child process command line in tests rather than trusting the construction code; measure cancellation
+    as an interval, not as a flag being set.
+  task_boundaries: Do not implement whisper.cpp, OpenAI, sherpa-onnx or Claude adapters in this phase; do not accept a shell
+    command as configuration.
+- title: destination-contract
+  chunk: processing
+  contract_refs:
+  - contract-destination-export-idempotency
+  - contract-diagnostic-redaction
+  - contract-egress-inventory
+  depends_on:
+  - workflow-core-contract
+  files:
+  - crates/ma-destination/Cargo.toml
+  - crates/ma-destination/src/lib.rs
+  - crates/ma-destination/src/identity.rs
+  - crates/ma-destination/src/retry.rs
+  - crates/ma-destination/src/audit.rs
+  - contracts/destination/destination-descriptor.schema.json
+  acceptance:
+  - a crash between remote creation and identity recording is reconciled by external-identifier lookup and creates no duplicate
+  - authentication failures are classified as needs-reauthentication rather than retried blindly
+  - the persistent export queue survives restart and has a declared backlog cap with a surfaced state
+  - every send appends an audit record containing identifiers and counts only
+  - a send to a host absent from egress-inventory.toml is rejected before the request and recorded, and the backlog cap of
+    500 surfaces the dropped export rather than silently refusing work
+  objective: Fix the replaceable export seam, export identity, retry classification and the local egress audit.
+  output_format: A Rust crate with a fake destination that can simulate the crash window and authentication failures.
+  tool_guidance: Persist the resumable session or external identifier before the create completes; treat the recorded identity
+    as the only discovery mechanism under the drive.file scope.
+  task_boundaries: Do not implement Google Drive or Notion clients in this phase; never delete or degrade a local artifact
+    because an export failed.
+- title: security-and-credential-policy
+  chunk: security
+  contract_refs:
+  - contract-credential-custody
+  - contract-diagnostic-redaction
+  - contract-ipc-transport-authz
+  - contract-egress-inventory
+  depends_on:
+  - core-types-and-identity
+  files:
+  - crates/ma-secure/Cargo.toml
+  - crates/ma-secure/src/secret.rs
+  - crates/ma-secure/src/credential_store.rs
+  - crates/ma-secure/src/redaction.rs
+  - crates/ma-secure/src/acl.rs
+  - docs/design/threat-model.md
+  - docs/design/credential-policy.md
+  - egress-inventory.toml
+  - crates/ma-secure/tests/egress_inventory.rs
+  acceptance:
+  - a planted secret and planted meeting content appear in no file the application writes, including panic output and parse
+    errors
+  - the secret type provably cannot be displayed or serialized in raw form, enforced by a compile-fail test
+  - constructed pipe and file security descriptors grant the owning user only
+  - a missing credential produces a typed needs-authentication result with the feature disabled and surfaced
+  - every host reachable from workspace source or from a contracts/ manifest appears in egress-inventory.toml, every entry
+    declares a closed integration_owner, and both an undeclared host and a stale entry fail with distinct codes
+  objective: Fix secret custody, log redaction, ACL construction and the documented threat model and trust boundaries.
+  output_format: A Rust crate with compile-fail tests and a leak-scanning system test, plus two design documents.
+  tool_guidance: Make redaction a type-level property rather than a logging convention; scan the whole written-file set for
+    planted markers rather than inspecting selected logs.
+  task_boundaries: Do not add a secondary secret cache anywhere; do not pass secrets through process arguments.
+- title: release-supply-chain
+  chunk: security
+  contract_refs:
+  - contract-release-manifest-trust
+  depends_on:
+  - security-and-credential-policy
+  files:
+  - crates/ma-manifest/Cargo.toml
+  - crates/ma-manifest/src/manifest.rs
+  - crates/ma-manifest/src/verify.rs
+  - crates/ma-manifest/src/rollback.rs
+  - crates/ma-manifest/src/keys.rs
+  - contracts/manifest/update-manifest.schema.json
+  - contracts/manifest/adapter-manifest.schema.json
+  - .github/workflows/release.yml
+  acceptance:
+  - tampered, downgraded, unknown-key and digest-mismatched manifests are all rejected with distinct typed codes
+  - no manifest-declared value is used, including in logs, before verification succeeds
+  - a key rollover block signed by the current key introduces the next key and an unknown-key-only manifest is refused
+  - an engine replacement is deferred while any session is non-terminal
+  objective: Fix the signed update and adapter manifest trust model, including rollback protection and key rotation, with
+    no server-side trust decision.
+  output_format: A Rust crate taking bytes and a key set as arguments, JSON Schemas, and a release workflow.
+  tool_guidance: Verify first and parse second so an unverified document cannot influence control flow; test the captive-portal
+    HTML response case explicitly.
+  task_boundaries: Do not introduce any first-party service for update metadata or token exchange; do not auto-approve downgrades.
+- title: ui-shell-consent-surface
+  chunk: runtime
+  contract_refs:
+  - contract-consent-surface-precondition
+  - contract-ipc-protocol
+  depends_on:
+  - ipc-contract-and-engine-process
+  files:
+  - app/ui/src-tauri/Cargo.toml
+  - app/ui/src-tauri/src/main.rs
+  - app/ui/src-tauri/src/engine_client.rs
+  - app/ui/src-tauri/tauri.conf.json
+  - app/ui/src/**
+  acceptance:
+  - the UI renders only engine-supplied state and re-snapshots after any disconnect or sequence gap
+  - the countdown and its cancel affordance are driven by engine events, not by a local timer
+  - the client declares indicator and cancel capabilities at handshake, and automatic recording still starts when no client
+    is running at all
+  - the engine client library is testable headlessly without WebView2
+  objective: Provide the consent and visibility surface as a thin client of the engine, owning no session truth.
+  output_format: A Tauri 2 application skeleton with the engine client factored into a testable Rust module.
+  tool_guidance: Keep all reconnect and resync logic in the Rust client module so it is covered by headless tests.
+  task_boundaries: Do not derive session state in the frontend; do not implement the meeting library, playback or settings
+    beyond what the consent surface requires.
+- title: docs-and-adr-materialization
+  chunk: records
+  contract_refs:
+  - contract-docs-conformance
+  depends_on:
+  - workspace-and-boundary-scaffold
+  - session-state-machine
+  - signal-and-detector-contracts
+  - capture-recording-durability
+  - processor-contract
+  - destination-contract
+  - security-and-credential-policy
+  - release-supply-chain
+  files:
+  - docs/adr/**
+  - docs/design/module-boundaries.md
+  - docs/design/session-lifecycle.md
+  - docs/design/recording-artifact-model.md
+  - docs/design/threat-model.md
+  - docs/design/credential-policy.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/change.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/requirements.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/implementation.md
+  - docs/changes/change-20260903-phase0-repository-and-contracts/verification.md
+  acceptance:
+  - every ADR sits at docs/adr/adr-YYYYMMDD-slug.md, declares non-empty decision_makers, uses the tripolar consequences object
+    with all three lists non-empty, and starts at proposed
+  - exactly five design documents exist - module-boundaries, session-lifecycle, recording-artifact-model, threat-model and
+    credential-policy - each validating against design.schema.json with every invariant naming a mechanical check where one
+    exists
+  - the three required change members are materialized and non-empty
+  - the change root promotion manifest declares none with a reason, and no promotion entry names a target, because promotion
+    upserts stable items of an existing design document and this change creates the repository's first ones
+  objective: Record Phase 0's decisions and durable discipline in the repository's documentation system without duplicating
+    the same content across ADR, design and change package.
+  output_format: Markdown documents with schema-conformant frontmatter.
+  tool_guidance: Let ADRs own the reasons, design documents own the current discipline, and the change package own the generation
+    context; validate with the dev-docs conformance tooling before closing.
+  task_boundaries: Do not set any ADR to accepted; do not move the change status past its whitelisted next state; do not copy
+    implementation file inventories into persistent design documents.
+acceptance:
+- id: A-01
+  requirement_refs:
+  - FR-002
+  - FR-003
+  - NFR-008
+  criteria: cargo xtask boundary and cargo deny check run in CI, exit 0 on the clean workspace, and exit non-zero on the negative
+    fixture listing exactly the three planted violations and none of the three planted decoys.
+- id: A-02
+  requirement_refs:
+  - FR-001
+  - FR-002
+  - FR-003
+  criteria: No crate outside a composition root depends directly, transitively or through a feature gate on any adapter crate,
+    and no core crate contains a class-A service identifier token or a class-B process, package or host literal.
+- id: A-03
+  requirement_refs:
+  - FR-004
+  - FR-013
+  - FR-014
+  - FR-017
+  criteria: Killing the UI during a synthetic recording leaves the session recording with chunks still appearing; killing
+    and restarting the engine recovers the session under the same identifier with at most one in-progress chunk unaccounted
+    for, within ten seconds for a two-hour two-track session.
+- id: A-04
+  requirement_refs:
+  - FR-010
+  - FR-011
+  - FR-012
+  criteria: With no client process running at all, an automatic start decision delivers an engine notification, arms a cancellable
+    ten-second countdown and starts capture; with notification delivery refused and no client attached, the same fixture creates
+    no chunk file and records a suppression with its cause.
+- id: A-05
+  requirement_refs:
+  - FR-007
+  - FR-008
+  - FR-009
+  - NFR-005
+  criteria: Replaying a recorded signal timeline produces byte-identical decisions across runs and processes, every decision
+    cites at least one signal identifier, and an extension-authority signal alone never yields a determinate start.
+- id: A-06
+  requirement_refs:
+  - FR-015
+  - FR-013
+  criteria: Chunks and gaps tile each track range without overlap, and transcript timestamps after a lost chunk retain their
+    true session position.
+- id: A-07
+  requirement_refs:
+  - FR-016
+  criteria: Consolidated FLAC decodes sample-identically to the chunk sequence before any chunk is deleted, and a crash between
+    verification and deletion re-runs idempotently.
+- id: A-08
+  requirement_refs:
+  - FR-017
+  - FR-018
+  - FR-019
+  - FR-023
+  criteria: Every entity identifier is byte-identical across database row, filesystem path and export payload; a duplicate
+    enqueue of a completed step performs no work; and an effect interrupted between its intended and applied ledger rows is
+    resolved by lookup or by an explicit user decision rather than by a silent recreate.
+- id: A-09
+  requirement_refs:
+  - NFR-001
+  - NFR-002
+  - FR-020
+  criteria: A planted secret and planted meeting content appear in no file the application writes, including diagnostic bundles,
+    panic output and parse-error messages, and in no child process argument vector.
+- id: A-10
+  requirement_refs:
+  - FR-025
+  - NFR-003
+  criteria: A tampered, downgraded, unknown-key or digest-mismatched manifest is rejected before any declared value is used,
+    and the engine binary is not replaced while a session is non-terminal.
+- id: A-11
+  requirement_refs:
+  - FR-026
+  criteria: Every ADR and design document validates against the repository documentation schemas at an indexed path and starts
+    at proposed, every design invariant names a mechanical check where one exists, and the three required change members are
+    non-empty.
+- id: A-12
+  requirement_refs:
+  - NFR-003
+  - NFR-006
+  criteria: The egress inventory declares every host reachable from source or from a processor or destination manifest, every
+    entry maps to a user account, a distribution host or the operating system, an added undeclared host fails the check by
+    name, and no audited egress host is absent from the inventory.
+- id: A-13
+  requirement_refs:
+  - FR-021
+  - FR-022
+  - NFR-004
+  criteria: Local transcription reports monotonic progress, observes cancellation within five seconds, keeps per-item cost
+    non-growing across a 240-item run, and treats budget overrun as a warning that still allows the step to succeed.
+- id: A-14
+  requirement_refs:
+  - FR-024
+  - NFR-007
+  - FR-005
+  criteria: The database resides under the local application-data directory, stores no absolute artifact path, rejects writes
+    outside a connection role's table family, and migrates forward from every released version while refusing a newer schema
+    with a typed error.
+- id: A-15
+  requirement_refs:
+  - NFR-009
+  - FR-030
+  - FR-004
+  criteria: A planted feature-gated capture-path edge onto the workflow crate and a planted native-inference dependency on
+    the engine each fail the boundary check by rule name, and aborting the processor host child mid-job during a synthetic
+    recording leaves chunk cadence unchanged, the session recording, and the step retryable.
+- id: A-16
+  requirement_refs:
+  - FR-027
+  - FR-028
+  criteria: In ask mode and after a cancelled countdown the artifact root contains zero audio bytes for that session, the
+    meeting directory holds no chunk file, and a restart leaves no phantom meeting in the library.
+- id: A-17
+  requirement_refs:
+  - FR-029
+  - NFR-002
+  criteria: After deleting a meeting and running the purge, the meeting identifier appears nowhere under the artifact root
+    and in no row outside the tombstone; a second purge run is a no-op; a purge killed mid-walk resumes to completion on restart;
+    and the exported remote objects still exist and are listed from the tombstone.
+- id: A-18
+  requirement_refs:
+  - NFR-010
+  - NFR-008
+  criteria: The portable tier builds and passes the contract-core crates on a non-Windows host, every T2 verification identifier
+    in this plan is registered in the tier manifest, CI defines both required jobs, and adding an unregistered Windows-only
+    T2 test fails the registration check.
+- id: A-19
+  requirement_refs:
+  - FR-006
+  - NFR-001
+  - NFR-002
+  criteria: A client connecting to the engine control channel as a different operating-system user is refused before any
+    method is dispatched, the refusal diagnostic names the rejection code and carries no request payload, the constructed
+    pipe and token-file security descriptors grant the owning user only, and a pipe pre-created by another process is
+    detected rather than adopted.
+dispositions:
+- decision_input_ref: decision-input-no-proprietary-backend
+  disposition: Adopted as a binding constraint and made mechanically checkable rather than asserted. Update metadata and adapter
+    enablement are verified client-side by signature and OAuth uses installed-app PKCE, so no first-party service appears
+    on any workflow path; and egress-inventory.toml enumerates every host reachable from source with a closed owner enum that
+    has no first-party value to write, so adding one fails the build. The rejected baseline (a thin first-party relay for
+    token exchange and update metadata) is recorded in the update ADR.
+  adr_refs:
+  - adr-20260903-update-and-manifest-distribution
+  - adr-20260903-threat-model-and-credential-policy
+  contract_refs:
+  - contract-release-manifest-trust
+  - contract-destination-export-idempotency
+  - contract-egress-inventory
+- decision_input_ref: decision-input-no-dom-detection
+  disposition: Adopted as a binding constraint and made structural rather than aspirational - the signal envelope is a closed
+    schema with no field capable of carrying UI-derived text, so a DOM-derived fact has nowhere to live. The rejected baseline
+    (UI Automation and accessibility-tree probing) is recorded in the detector ADR.
+  adr_refs:
+  - adr-20260903-detector-signal-replay-contract
+  contract_refs:
+  - contract-signal-envelope
+  - contract-detector-determinism
+- decision_input_ref: decision-input-capture-engine-separate-process
+  disposition: 'Adopted and closed further than the decision states. The engine is a per-user single-instance process that
+    owns session truth, hosts the workflow runtime, and outlives every client. The consent-surface tension is resolved in
+    the engine''s favour rather than against it: the engine raises its own OS notification, so automatic recording works with
+    no client attached, and only the absence of every surface suppresses a start. The rejected form (requiring an attached
+    client) is recorded because it would have disabled automatic recording in the exact case this decision exists to enable.'
+  adr_refs:
+  - adr-20260903-capture-engine-process-isolation
+  - adr-20260903-workflow-runtime-process-topology
+  - adr-20260903-automatic-recording-modes
+  contract_refs:
+  - contract-process-topology
+  - contract-consent-surface-precondition
+  - contract-processing-isolation
+- decision_input_ref: decision-input-desktop-stack
+  disposition: 'Adopted as decided (Rust engine with windows-rs, Tauri 2 UI, whisper.cpp and sherpa-onnx bindings). Alternatives
+    (.NET 8 with WinUI 3, Electron with a Rust sidecar) recorded and rejected with reasons in the stack ADR. Two consequences
+    the decision leaves implicit are fixed here: the Windows Credential Manager it names is the sole secret store, discharged
+    by contract-credential-custody (this is where the competing draft''s separate os-credential-store input is subsumed);
+    and the package identity it names is what lets the engine raise its own notification, which the consent-surface rule now
+    depends on.'
+  adr_refs:
+  - adr-20260903-desktop-stack-and-ipc
+  - adr-20260903-workflow-runtime-process-topology
+  contract_refs:
+  - contract-process-topology
+  - contract-ipc-protocol
+  - contract-credential-custody
+  - contract-consent-surface-precondition
+- decision_input_ref: decision-input-ipc-mechanism
+  disposition: Adopted as decided (JSON-RPC over a named pipe). Because a named pipe carries no origin concept and JSON-RPC
+    carries no resync, the plan adds a SID-checked ACL contract and a snapshot-plus-sequence resync rule. Alternatives (loopback
+    TCP, shared-memory ring) recorded and rejected.
+  adr_refs:
+  - adr-20260903-desktop-stack-and-ipc
+  contract_refs:
+  - contract-ipc-protocol
+  - contract-ipc-transport-authz
+- decision_input_ref: decision-input-boundary-toolchain
+  disposition: 'Adopted as decided, and strengthened with three additions required to make the exit criterion falsifiable:
+    a two-class literal scan with a declared surface alongside the dependency-direction check, a negative fixture carrying
+    decoys as well as violations so precision is proven and not only detection power, and the capture-path and native-linkage
+    isolation rules that turn PLAN section 7''s reliability guarantee into a graph property.'
+  adr_refs:
+  - adr-20260903-workspace-boundary-enforcement
+  contract_refs:
+  - contract-module-boundary-enforcement
+  - contract-detector-determinism
+  - contract-processing-isolation
+- decision_input_ref: decision-input-db-artifact-layout
+  disposition: 'Adopted as decided, with three derived constraints made explicit. Because the artifact root is user-configurable
+    and may be a network share or removable drive, the database stays pinned under the local application-data directory and
+    artifacts are addressed as a root identifier plus relative path. Because the workflow runtime now lives in the engine,
+    the writer set is exactly two processes and the alternative of routing every write through the engine is recorded and
+    rejected. And because the database is a projection of a directory that is the truth, deletion needs an owner: contract-retention-purge
+    fixes the two-phase delete, the idempotent purge and the tombstone, while leaving the default grace value to Phase 2 per
+    PLAN section 8.'
+  adr_refs:
+  - adr-20260903-local-store-and-artifact-layout
+  - adr-20260903-workflow-runtime-process-topology
+  contract_refs:
+  - contract-artifact-addressing
+  - contract-store-ownership
+  - contract-retention-purge
+- decision_input_ref: decision-input-audio-format
+  disposition: Adopted as decided (16 kHz mono PCM WAV in 30 second chunks, consolidated to FLAC, optional Opus for sharing).
+    The plan adds the durability ordering, the bounded loss window, and verify-before-delete consolidation. Alternatives (direct
+    Opus capture, 48 kHz stereo archival) recorded and rejected.
+  adr_refs:
+  - adr-20260903-audio-format-and-chunking
+  contract_refs:
+  - contract-chunk-durability
+  - contract-track-consolidation
+  - contract-session-timeline
+- decision_input_ref: decision-input-recording-modes
+  disposition: 'Adopted as decided (auto, ask, manual with per-application override, 10 second countdown, 60 second hysteresis).
+    The plan supplies every timing semantic the decision leaves open, all as fixed numbers rather than placeholders: a suspend-excluding
+    clock, re-evaluation after resume, a 60 second cancel quiet period per meeting identity, a 30 second still-in-the-meeting
+    prompt granting one 300 second extension, and the consent-surface rule in its engine-first form. It also fixes the durable
+    footprint: no audio byte reaches the artifact root before the recording state, so cancelling is observable on disk and
+    not only in the interface.'
+  adr_refs:
+  - adr-20260903-automatic-recording-modes
+  contract_refs:
+  - contract-recording-mode-policy
+  - contract-consent-surface-precondition
+  - contract-session-state-machine
+- decision_input_ref: decision-input-initial-adapters
+  disposition: Adopted as decided. Phase 0 fixes only the contract these adapters must satisfy - capability declaration, staged
+    inputs, argument-vector invocation, provenance, digest-pinned model files, and execution inside a per-job ma-processor-host
+    child bounded by a job object, which is what makes it safe to host the workflow runtime in the engine. The rejected baselines
+    (faster-whisper via a Python sidecar, cloud-only transcription) are recorded.
+  adr_refs:
+  - adr-20260903-initial-processor-adapters
+  - adr-20260903-workflow-runtime-process-topology
+  contract_refs:
+  - contract-processor-interface
+  - contract-processing-isolation
+- decision_input_ref: decision-input-transcription-budget
+  disposition: Adopted as decided (at most 1.0x real time on CPU, mandatory progress and cancellation, overrun is a warning).
+    The plan adds a cost-convergence obligation so a naive accumulating-context implementation cannot pass, and fixes cancellation
+    at five seconds, which is enforceable by construction because the work runs in a killable child process. The rejected
+    baseline (overrun falls back to the external API) is recorded as violating explicit-transmission consent.
+  adr_refs:
+  - adr-20260903-local-transcription-budget
+  contract_refs:
+  - contract-processor-budget
+  - contract-processing-isolation
+- decision_input_ref: decision-input-update-manifest-distribution
+  disposition: Adopted as decided (GitHub Releases, code-signed installer, Ed25519-signed manifests, Tauri updater). The plan
+    adds rollback protection, key rotation, the verify-before-use rule and the deferral of an engine replacement while a
+    session is non-terminal, none of which the decision states. The deferral rule is stated by contract-release-manifest-trust
+    and its check is registered under contract-process-topology, which owns engine process lifetime.
+  adr_refs:
+  - adr-20260903-update-and-manifest-distribution
+  contract_refs:
+  - contract-release-manifest-trust
+  - contract-egress-inventory
+  - contract-process-topology
+- decision_input_ref: decision-input-meet-extension-detection-only
+  disposition: 'Adopted as decided, and the transport is now closed rather than preserved. Consequences fixed: extension signals
+    are non-authoritative and require corroboration by an operating-system microphone signal from the same browser process
+    tree; browser loopback tracks carry a contamination-risk flag; the channel is a loopback listener with a 5 second freshness
+    window and a rate cap. The native messaging alternative is recorded as rejected with the reasons and with the named evidence
+    that would reverse it.'
+  adr_refs:
+  - adr-20260903-extension-localhost-channel-trust
+  - adr-20260903-detector-signal-replay-contract
+  contract_refs:
+  - contract-extension-channel-trust
+  - contract-detector-outcome-partition
+  - contract-session-timeline
+- decision_input_ref: decision-input-drive-oauth-pkce
+  disposition: 'Adopted as decided. Because the drive.file scope cannot discover objects the application did not create, export
+    idempotency is built on the recorded remote identity plus an external-identifier marker rather than a name search, and
+    the identity is committed as an intended effect-ledger row before the remote call so the post-crash lookup has a key to
+    search for. Because those objects are the user''s own files, deletion never removes them: contract-retention-purge lists
+    them from the tombstone instead.'
+  adr_refs:
+  - adr-20260903-workflow-identity-and-idempotency
+  contract_refs:
+  - contract-destination-export-idempotency
+  - contract-credential-custody
+  - contract-retention-purge
+- decision_input_ref: decision-input-notion-internal-token
+  disposition: Adopted as decided. The credential contract accommodates a long-lived non-refreshable secret whose only invalidation
+    signal is a 401, classified as needs-reauthentication rather than retried.
+  adr_refs:
+  - adr-20260903-workflow-identity-and-idempotency
+  - adr-20260903-threat-model-and-credential-policy
+  contract_refs:
+  - contract-credential-custody
+  - contract-destination-export-idempotency
+- decision_input_ref: decision-input-cli-adapter-postmvp
+  disposition: Deferred as decided, but its admissibility preconditions are established now - no shell invocation and explicit
+    file staging - because they are cheaper to establish than to retrofit and are independently required by the cross-cutting
+    security rules.
+  adr_refs:
+  - adr-20260903-initial-processor-adapters
+  contract_refs:
+  - contract-processor-interface
+- decision_input_ref: decision-input-transcription-languages
+  disposition: Adopted as decided. The processor capability declaration carries an explicit language set and an unsupported-language
+    request is a typed refusal rather than a silent best-effort transcription.
+  adr_refs:
+  - adr-20260903-initial-processor-adapters
+  contract_refs:
+  - contract-processor-interface
+- decision_input_ref: decision-input-adr-schema-shape
+  disposition: Adopted as an authoring constraint on all fifteen proposed ADRs - named decision makers and a tripolar consequences
+    object with a genuinely non-empty negative list.
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  contract_refs:
+  - contract-docs-conformance
+- decision_input_ref: decision-input-docs-lint-target-placement
+  disposition: Adopted. ADRs are filed flat at docs/adr/adr-YYYYMMDD-slug.md because the lint glob is non-recursive; design
+    documents may nest.
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  contract_refs:
+  - contract-docs-conformance
+- decision_input_ref: decision-input-design-doc-schema
+  disposition: Adopted. Only the discipline that binds future decisions is promoted to persistent design documents - module
+    boundaries including the isolation rules, session lifecycle including the pre-recording footprint invariant, the recording
+    and artifact model including deletion, and trust boundaries including the egress inventory - and each invariant must name
+    a mechanical check where one exists.
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  contract_refs:
+  - contract-docs-conformance
+- decision_input_ref: decision-input-change-package-members
+  disposition: Adopted. The integrator materializes requirements, implementation and verification members; leaving a required
+    member empty leaves the manifest unfulfilled and blocks closure.
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  contract_refs:
+  - contract-docs-conformance
+- decision_input_ref: decision-input-status-transition-whitelist
+  disposition: 'Adopted. Every ADR is created at proposed and this plan performs no acceptance transition; the change advances
+    only through its whitelisted next state. This is a lifecycle constraint, not an open design question: the decisions themselves
+    are made here, and the change package records the proposed-to-accepted transition as a gate that precedes the units implementing
+    the contracts each ADR binds.'
+  adr_refs:
+  - adr-20260903-phase0-executable-contract-skeleton
+  contract_refs:
+  - contract-docs-conformance
+scope_expansion_signals:
+- id: scope-signal-critic-induced-contracts-processing-isolation
+  kind: critic_induced_contract
+  target_ref: contract-processing-isolation
+  witness: 'Contract added during integration to close a critique finding: the upstream requirement that processing must not be able to stop recording had no owning contract, no requirement id and no mechanical check. Traceable to PLAN section 7 and the MVP completion criteria.'
+  requirement_refs:
+  - NFR-009
+  - FR-030
+  authority_refs:
+  - critique.json issue-processing-recording-isolation-untranslated
+  - PLAN.md section 7
+- id: scope-signal-critic-induced-contracts-retention-purge
+  kind: critic_induced_contract
+  target_ref: contract-retention-purge
+  witness: 'Contract added during integration to close a critique finding: meeting deletion, retention and the durable tombstone that makes deletion provable had no owning contract, no requirement id and no mechanical check, although PLAN section 3 assigns retention and deletion to the product.'
+  requirement_refs:
+  - FR-029
+  authority_refs:
+  - critique.json issue-retention-deletion-uncontracted
+  - PLAN.md section 3
+- id: scope-signal-critic-induced-contracts-egress-inventory
+  kind: critic_induced_contract
+  target_ref: contract-egress-inventory
+  witness: 'Contract added during integration to close a critique finding: the Phase 0 exit criterion that core boundaries do not require a proprietary backend had no owning contract, no requirement id and no mechanical check that every egress host is declared.'
+  requirement_refs:
+  - NFR-006
+  - NFR-003
+  authority_refs:
+  - critique.json issue-egress-inventory-unowned
+  - PLAN.md section 6 Phase 0
+- id: scope-signal-critic-induced-contracts-verification-tiering
+  kind: critic_induced_contract
+  target_ref: contract-verification-tiering
+  witness: 'Contract added during integration to close a critique finding: two of the four Phase 0 exit criteria are falsifiable only at T2 on Windows, and no contract owned the portable/Windows tier split or the registration that makes an unregistered T2 fail the build.'
+  requirement_refs:
+  - NFR-010
+  - NFR-008
+  authority_refs:
+  - critique.json issue-windows-only-verification-unscheduled
+  - PLAN.md section 9.8
+  - PLAN.md section 6 Phase 0
+- id: scope-signal-logon-task-registration
+  kind: operational_procedure
+  target_ref: contract-process-topology
+  witness: 'The engine is started at user logon through a registered task, and a registration broken by an update is repaired at the next UI start with auto mode unavailable and stated as such until then. No decision input names an install-time or repair-time procedure; it is retained because ''automatic recording works with the UI closed'' is unimplementable without one.'
+  requirement_refs:
+  - FR-004
+  - FR-011
+  authority_refs:
+  - PLAN.md section 2 automatic recording
+  - PLAN.md section 6 Phase 0
+  - recovery-decisions.json unknown-auto-recording-mode-definition
+- id: scope-signal-persistent-state-beyond-decision-store-ownership
+  kind: persistent_state
+  target_ref: contract-store-ownership
+  witness: 'The user decision names session state, workflow queue and export state. The store additionally holds session_transition, gap, egress_audit, roots and edit_overlay rows under the same writer table. Each is required by an observable this contract owns - explainable transitions, honest gaps, auditable egress, relocatable roots and non-destructive edits.'
+  requirement_refs:
+  - FR-014
+  - FR-015
+  - FR-017
+  - FR-024
+  - NFR-006
+  authority_refs:
+  - recovery-decisions.json unknown-db-artifact-layout
+  - PLAN.md section 7
+  - critique.json scope-signal-persistent-state-beyond-decision
+- id: scope-signal-persistent-state-beyond-decision-workflow-step-idempotency
+  kind: persistent_state
+  target_ref: contract-workflow-step-idempotency
+  witness: 'Beyond the workflow queue named by the user decision, the workflow runtime persists effect_ledger and generation records. Both are required by observables this contract owns - intent recorded before an effect, and a new step identity retaining rather than overwriting the previous result.'
+  requirement_refs:
+  - FR-018
+  - FR-019
+  authority_refs:
+  - recovery-decisions.json unknown-db-artifact-layout
+  - PLAN.md section 7
+  - critique.json scope-signal-persistent-state-beyond-decision
+- id: scope-signal-persistent-state-beyond-decision-consent-surface-precondition
+  kind: persistent_state
+  target_ref: contract-consent-surface-precondition
+  witness: 'Beyond the durable state named by the user decision, a suppressed automatic-recording decision is persisted as its own record, because this contract owns the observable that a suppression is visible after the fact rather than silent.'
+  requirement_refs:
+  - FR-011
+  authority_refs:
+  - PLAN.md section 7
+  - critique.json scope-signal-persistent-state-beyond-decision
