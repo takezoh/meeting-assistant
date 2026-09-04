@@ -1,0 +1,1674 @@
+artifact: design-plan-spine
+version: 2
+granularity_profile: boundary-complete
+
+requirements:
+- id: FR-101
+  type: functional
+  priority: must
+  statement: The Windows signal collector shall observe process lifecycle and package identity for Teams Desktop,
+    Slack Huddle, Zoom Desktop, and the browser processes hosting Google Meet, using only OS process- and
+    package-enumeration APIs, and shall emit ProcessStarted, ProcessStopped, and PackageIdentityObserved signals
+    carrying Subject::Process{pid, image_name, package_family_name} with no window title, control label, or
+    DOM-derived text in any field.
+- id: FR-102
+  type: functional
+  priority: must
+  statement: The Windows signal collector shall observe per-process audio-session lifecycle and microphone-capture
+    state for the same four target applications and shall emit AudioSessionCreated, AudioSessionDestroyed,
+    MicCaptureStarted, and MicCaptureStopped signals attributed to the owning process, from the session-manager
+    notification source only, within a one-second observation-latency bound measured on that primary source; the
+    consent-store poll shall corroborate and shall never by itself cause a signal to be emitted.
+- id: FR-103
+  type: functional
+  priority: must
+  statement: When a target application's process is capturing audio and process-specific (including process-tree)
+    loopback activation succeeds, ma-capture shall provide a CaptureSource whose TrackOrigin records
+    capture_mode = ProcessLoopback, contamination_risk = None, sample_rate = 16000 and channels = 1 for that
+    application's meeting-audio track.
+- id: FR-104
+  type: functional
+  priority: must
+  statement: If process-specific loopback activation is unavailable or fails for a target application, ma-capture
+    shall fall back to system (default-endpoint) loopback capture, recording capture_mode = SystemLoopback and
+    contamination_risk = PossibleOtherApps on the resulting track, and a manual-start capture path (Device-mode
+    CaptureSource selected by explicit user action) shall remain available independent of the loopback outcome.
+- id: FR-105
+  type: functional
+  priority: must
+  statement: When a target application has an active audio-capture session on a specific microphone endpoint, the
+    system shall open that same endpoint for the recorded microphone track rather than the system default
+    communications device, taking the endpoint identifier as an explicit input supplied by the composition root
+    from the audio-session collector's observation rather than through the signal envelope, and shall re-evaluate
+    the selection through the existing SourceEvent::FormatChanged / successor-track path when the meeting
+    application's endpoint changes mid-session.
+- id: FR-106
+  type: functional
+  priority: must
+  statement: While a target application is recording on a speaker (non-headphone) audio path, the system shall
+    compute the echo return loss between the loopback track and the concurrently captured microphone track as the
+    difference of their root-mean-square levels in dBFS over one qualifying sixty-second window, and shall record
+    that value per application together with the window's position on both tracks, both level values and the
+    session's alignment uncertainty, or shall record an explicit no-qualifying-window or inconclusive-alignment
+    outcome instead of a number.
+- id: FR-107
+  type: functional
+  priority: must
+  statement: The system shall record, per target application and independent of any single recording, whether
+    process-tree loopback rather than single-process loopback is required to capture that application's meeting
+    audio completely, and that recorded value shall be derived from a measured comparison of the two activation
+    modes against the same application rather than authored by hand.
+- id: FR-108
+  type: functional
+  priority: must
+  statement: Every Phase 1 diagnostic session's signal timeline shall be appended to durable storage as each signal
+    is observed, using the existing TimelineHeader-plus-JSONL fixture shape already committed under
+    fixtures/signal-timelines/, so that a session ended by stop, by cancel or by a crash retains the signals
+    observed before that point, and each persisted fixture shall be replayable by the existing detector-replay
+    test path without modification to that path.
+- id: FR-109
+  type: functional
+  priority: must
+  statement: The system shall provide the person conducting a Phase 1 diagnostic session an explicit command that
+    records a "was this a meeting?" confirmation for one or more time ranges of a captured timeline, persisted
+    using the existing <timeline>.labels.json sidecar shape (timeline, labels[{from_monotonic_ns, to_monotonic_ns,
+    was_meeting, note}]).
+- id: FR-110
+  type: functional
+  priority: must
+  statement: The detection-only browser extension shall report the active tab's host and audible state for Google
+    Meet tabs to the desktop application over the existing localhost extension channel, using only the fields
+    already defined by ExtensionMessage and only the browser's tabs API from its background service-worker
+    context, and shall obtain the listener's port and per-start token from an endpoint file that the diagnostic
+    harness writes into the unpacked extension directory, never from a filesystem, nativeMessaging or
+    broad-host permission.
+- id: FR-111
+  type: functional
+  priority: must
+  statement: The detector shall treat an extension tab signal and an operating-system microphone-use signal as
+    corroborating each other only when both carry payload.process_tree_root_pid and the two values are equal, and
+    shall otherwise return Inconclusive with a rule identifier naming whether the join key was absent or
+    mismatched, so that no determinate Google Meet start is produced from extension tab evidence alone or from
+    microphone use in a different browser process tree.
+- id: FR-112
+  type: functional
+  priority: must
+  statement: When a Phase 1 diagnostic session ends, the system shall write the detector's decision output for that
+    session's timeline to a committed <timeline>.decisions.json sidecar citing the signal identifiers and adapter
+    rule id of every decision, so that the diagnostics are inspectable per session without re-running the
+    detector.
+- id: FR-113
+  type: functional
+  priority: must
+  statement: A Phase 1 capture session against any of the four target applications shall complete a two-hour
+    recording through the existing chunk-writer and manifest durability path without data loss, as measured on the
+    Windows verification tier.
+- id: FR-114
+  type: functional
+  priority: must
+  statement: The capture-path-isolation rule in boundary.toml shall name ma-signals-windows and ma-ext-channel as
+    additional sources, alongside the existing ma-core-types, ma-session and ma-capture, so the mechanically
+    enforced rule matches the module-boundaries.md INV-002 wording that no capture-path crate reaches ma-workflow,
+    ma-processor, ma-destination, ma-store, or any adapter crate.
+- id: FR-115
+  type: functional
+  priority: must
+  statement: When a Phase 1 collector starts or restarts while a condition it observes is already true, it shall
+    emit CollectorStarted as its first signal and shall set payload.restart_resync on the first signal it emits
+    for that already-true condition, so the detector's existing resync-no-autostart rule downgrades it instead of
+    treating a collector restart as a fresh meeting start.
+- id: FR-116
+  type: functional
+  priority: must
+  statement: The verification registry shall declare every canonical plan whose verification identifiers it holds
+    and shall treat the union of those plans' declared identifiers as the registered set, so that adding Phase 1's
+    plan does not make any Phase 0 registration stale and no plan's identifier can be registered twice.
+- id: NFR-101
+  type: non_functional
+  priority: must
+  statement: Every Phase 1 verification that requires real Windows OS behavior, a real target application, or real
+    Chrome/Edge extension policy shall be registered with platform = windows in verification-tiers.toml and shall
+    run in the existing CI windows job; no such verification shall be treated as satisfied by a portable-tier run
+    alone.
+- id: NFR-102
+  type: non_functional
+  priority: must
+  statement: Every Windows-only dependency shall be declared under [target.'cfg(windows)'.dependencies] against a
+    single workspace-level pinned version, every WASAPI or COM call site shall be behind a cfg(windows) attribute, with a
+    portable fake backend behind the same trait, and cargo test --workspace and cargo clippy --workspace
+    --all-targets -- -D warnings shall stay green on the ubuntu portable job after Phase 1 lands.
+- id: NFR-103
+  type: non_functional
+  priority: must
+  statement: The endpoint descriptor writer shall apply the owner-only security descriptor it already builds to
+    endpoint.json before the file is used, and Phase 1 shall add Windows-tier verifications that observe (a)
+    whether that applied DACL in fact prevents another same-user process from reading the token and (b) whether
+    Chrome/Edge policy permits the detection-only extension to reach the loopback listener; the localhost-channel
+    design in adr-20260903-extension-localhost-channel-trust shall not be superseded until both observations are
+    recorded, and either observation showing a violation of the intended trust model shall be raised as a decision
+    open for consultation rather than silently continuing.
+- id: NFR-104
+  type: non_functional
+  priority: must
+  statement: Every new Windows-observed datum shall be represented using an existing SignalKind, Subject or Payload
+    field, or shall be carried outside the signal envelope entirely as capture-side or diagnostic data;
+    introducing a new field or variant into the closed schema requires a schema_version bump proposed as an ADR,
+    never an ad hoc addition.
+- id: NFR-105
+  type: non_functional
+  priority: must
+  statement: The Phase 1 diagnostic harness shall start capture only under an explicit operator-supplied
+    subcommand, shall neither construct nor consult ConsentSurfaces, the countdown or the hysteresis path, and
+    shall add no code path by which a detector decision alone can start a recording.
+- id: NFR-106
+  type: non_functional
+  priority: must
+  statement: Every Phase 1 verification whose observation cannot be made by an unattended hosted runner shall
+    declare a manual verification procedure with a named owner, host profile, steps, artifact, pass criterion and
+    the set of observations its record must carry, and its registered command shall fail when the corresponding
+    record is absent, records an outcome other than pass, omits an observation the procedure declares as
+    required, or was produced against a different revision of the procedure.
+
+components:
+- id: component-signals-windows
+  kind: existing
+  contract_refs:
+  - contract-process-package-identity
+  - contract-audio-session-mic-use
+  paths:
+  - crates/ma-signals-windows/**
+- id: component-signal-contract
+  kind: existing
+  contract_refs:
+  - contract-closed-schema-discipline
+  - contract-replayable-timeline-fixtures
+  paths:
+  - crates/ma-signal/src/**
+  - contracts/signal/signal-envelope.schema.json
+- id: component-detector-core
+  kind: existing
+  contract_refs:
+  - contract-meet-corroboration-required
+  - contract-detector-diagnostics-explainability
+  paths:
+  - crates/ma-detect/src/**
+- id: component-capture-engine
+  kind: existing
+  contract_refs:
+  - contract-process-loopback-capture
+  - contract-mic-endpoint-follows-session
+  - contract-echo-leak-measurement
+  - contract-two-hour-durability
+  paths:
+  - crates/ma-capture/src/**
+  - crates/ma-capture/tests/**
+- id: component-engine-composition-root
+  kind: existing
+  contract_refs:
+  - contract-diagnostic-session-harness
+  paths:
+  - crates/ma-engine/**
+- id: component-ext-channel
+  kind: existing
+  contract_refs:
+  - contract-extension-trust-reversal-check
+  paths:
+  - crates/ma-ext-channel/**
+  - contracts/extension-channel/message.schema.json
+- id: component-extension-poc
+  kind: planned
+  contract_refs:
+  - contract-extension-signal-delivery
+  paths:
+  - extension/**
+- id: component-fixture-corpus
+  kind: existing
+  contract_refs:
+  - contract-replayable-timeline-fixtures
+  paths:
+  - fixtures/signal-timelines/**
+- id: component-boundary-policy
+  kind: existing
+  contract_refs:
+  - contract-capture-path-isolation-scope
+  paths:
+  - boundary.toml
+  - xtask/src/boundary.rs
+- id: component-verification-registry
+  kind: existing
+  contract_refs:
+  - contract-windows-tier-verification-registration
+  paths:
+  - verification-tiers.toml
+  - xtask/src/**
+- id: component-manual-verification-record
+  kind: planned
+  contract_refs:
+  - contract-manual-verification-record
+  paths:
+  - manual-verification.toml
+  - docs/changes/change-20260904-phase1-windows-detection-and-capture/manual-verification/**
+
+contracts:
+- id: contract-process-package-identity
+  dimension: signal_observation
+  owner: component-signals-windows
+  requirement_refs:
+  - FR-101
+  - FR-115
+  unit_refs:
+  - windows-process-package-collector
+  adr_refs:
+  - adr-phase1-windows-rs-crate-and-gnu-fidelity
+  verification:
+  - id: v-win1-process-identity-fixture
+    tier: T0
+    command: cargo test -p ma-signals-windows process_identity_from_fake_enumerator
+  - id: v-win1-collector-restart-resync-fixture
+    tier: T0
+    command: cargo test -p ma-signals-windows restart_while_condition_true_sets_restart_resync
+  - id: v-win1-process-identity-live-probe
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-process-identity-live-probe --require pass
+  discretion:
+  - id: discretion-package-identity-probe
+    unit_ref: windows-process-package-collector
+    question: Which exact Windows AppModel call sequence distinguishes a non-packaged process (a classic Win32
+      executable) from a packaged process whose package-identity query failed transiently, so that
+      package_family_name = None always means "not packaged" and never "unknown"?
+    scope:
+      files:
+      - crates/ma-signals-windows/src/package_identity.rs
+      component: component-signals-windows
+      visibility: private
+    escalate_when:
+    - a target application ships both packaged and non-packaged builds and repeated probes cannot tell them apart
+    - the chosen API needs a package-family-name pattern that would force a service identifier literal outside an
+      L4 adapter crate
+    preserves:
+      contract_refs:
+      - contract-process-package-identity
+      invariant_refs:
+      - package_family_name stays Option<String> with None meaning "not packaged", never "unknown"
+    verification_refs:
+    - v-win1-process-identity-fixture
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: mechanical_partial
+      runtime_risk: normal
+      coupling: independent
+      grounding: evidenced
+
+- id: contract-audio-session-mic-use
+  dimension: signal_observation
+  owner: component-signals-windows
+  requirement_refs:
+  - FR-102
+  - FR-115
+  unit_refs:
+  - windows-audio-session-mic-collector
+  adr_refs:
+  - adr-phase1-windows-audio-signal-observation-apis
+  verification:
+  - id: v-win1-mic-use-fixture
+    tier: T0
+    command: cargo test -p ma-signals-windows mic_use_from_fake_session_manager
+  - id: v-win1-mic-use-source-precedence
+    tier: T0
+    command: cargo test -p ma-signals-windows consent_store_never_emits_a_signal_alone
+  - id: v-win1-mic-use-latency-live
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-mic-use-latency-live --require pass
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    - conflicting
+    default_policy: the session-manager notification is the only source that may cause a signal; determinate is a
+      session-state transition observed for a matched process, which emits MicCaptureStarted or MicCaptureStopped
+      within one second; unknown is the absence of both sources for a process, which emits nothing; inconclusive
+      is a consent-store usage window with no corresponding session-manager transition, which emits nothing and
+      increments a named collector diagnostic; conflicting is a consent-store window still open while the session
+      manager reports Inactive or Expired, in which the session manager wins, MicCaptureStopped is emitted and the
+      conflict is counted; and a total failure to register for session notifications is the typed startup failure
+      MicUseUnavailable, reported on CollectorStarted, never a silent degradation to consent-store-only signals
+
+- id: contract-process-loopback-capture
+  dimension: capture_seam
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-103
+  - FR-104
+  - FR-107
+  unit_refs:
+  - process-loopback-capture-source
+  adr_refs:
+  - adr-phase1-windows-audio-signal-observation-apis
+  - adr-20260903-audio-format-and-chunking
+  verification:
+  - id: v-win1-loopback-fallback-fixture
+    tier: T0
+    command: cargo test -p ma-capture process_loopback_falls_back_to_system_loopback_on_activation_failure
+  - id: v-win1-manual-path-available
+    tier: T0
+    command: cargo test -p ma-capture manual_capture_source_available_independent_of_loopback_outcome
+  - id: v-win1-capture-origin-rate-pinned
+    tier: T0
+    command: cargo test -p ma-capture wasapi_origin_is_pinned_to_sample_rate_and_mono
+  - id: v-win1-loopback-live-activation
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-loopback-live-activation --require pass
+
+- id: contract-mic-endpoint-follows-session
+  dimension: capture_seam
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-105
+  unit_refs:
+  - mic-endpoint-follow-session
+  adr_refs:
+  - adr-20260904-mic-endpoint-observed-outside-the-signal-envelope
+  verification:
+  - id: v-win1-mic-endpoint-fixture
+    tier: T0
+    command: cargo test -p ma-capture mic_endpoint_follows_supplied_session_endpoint
+  - id: v-win1-mic-endpoint-successor-track
+    tier: T0
+    command: cargo test -p ma-capture endpoint_change_opens_successor_track
+  - id: v-win1-mic-endpoint-live
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-mic-endpoint-live --require pass
+  discretion:
+  - id: discretion-mic-endpoint-matching-heuristic
+    unit_ref: mic-endpoint-follow-session
+    question: When the supplied endpoint hint changes more than once inside one selection window (a Bluetooth
+      reconnect mid-switch), which of the offered endpoint identifiers does the selector treat as authoritative
+      before the next FormatChanged event?
+    scope:
+      files:
+      - crates/ma-capture/src/wasapi/mic_endpoint.rs
+      component: component-capture-engine
+      visibility: private
+    escalate_when:
+    - the hint never settles on one endpoint long enough to open a source before a FormatChanged event fires
+    - two simultaneously active target-application sessions supply different endpoint identifiers at once
+    preserves:
+      contract_refs:
+      - contract-mic-endpoint-follows-session
+    verification_refs:
+    - v-win1-mic-endpoint-fixture
+    difficulty_inputs:
+      decision_reasoning: local_tradeoff
+      boundary_reach: private
+      context_scope: files
+      reversibility: bounded
+      verification_strength: mechanical_partial
+      runtime_risk: normal
+      coupling: independent
+      grounding: evidenced
+
+- id: contract-echo-leak-measurement
+  dimension: capture_measurement
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-106
+  unit_refs:
+  - echo-leak-measurement
+  adr_refs:
+  - adr-phase1-echo-leak-measurement-representation
+  verification:
+  - id: v-win1-leak-erl-fixture
+    tier: T0
+    command: cargo test -p ma-capture leak_erl_from_paired_fixture_tracks
+  - id: v-win1-leak-no-qualifying-window
+    tier: T0
+    command: cargo test -p ma-capture leak_measurement_reports_no_qualifying_window
+  - id: v-win1-leak-live-per-app
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-leak-live-per-app --require pass
+
+- id: contract-two-hour-durability
+  dimension: capture_seam
+  owner: component-capture-engine
+  requirement_refs:
+  - FR-113
+  unit_refs:
+  - two-hour-durability-harness
+  adr_refs:
+  - adr-20260903-audio-format-and-chunking
+  verification:
+  - id: v-win1-two-hour-chunk-accounting
+    tier: T1
+    command: cargo test -p ma-capture two_hour_chunk_accounting_from_synthetic_source
+  - id: v-win1-two-hour-live
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-two-hour-live --require pass
+
+- id: contract-per-app-loopback-requirement-record
+  dimension: operational_evidence
+  owner: component-manual-verification-record
+  requirement_refs:
+  - FR-107
+  unit_refs:
+  - verification-registry-multi-plan-and-manual-records
+  adr_refs:
+  - adr-phase1-per-application-loopback-requirement-record
+  verification:
+  - id: v-win1-loopback-requirement-record-shape
+    tier: T0
+    command: cargo test -p xtask loopback_requirement_record_covers_every_adapter_table
+  - id: v-win1-loopback-requirement-live-comparison
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-loopback-requirement-live-comparison --require pass
+
+- id: contract-replayable-timeline-fixtures
+  dimension: fixture_format
+  owner: component-fixture-corpus
+  requirement_refs:
+  - FR-108
+  - FR-109
+  unit_refs:
+  - signal-timeline-fixture-corpus
+  adr_refs:
+  - adr-20260903-detector-signal-replay-contract
+  verification:
+  - id: v-win1-fixture-replay-golden
+    tier: T0
+    command: cargo test -p ma-detect windows_fixture_timelines_replay_byte_identical
+  - id: v-win1-fixture-header-shape
+    tier: T0
+    command: cargo test -p ma-signal windows_fixture_header_matches_timeline_header_shape
+  - id: v-win1-fixture-redaction
+    tier: T0
+    command: cargo test -p ma-signal windows_fixtures_carry_no_real_host_identifiers
+  - id: v-win1-confirmation-label-sidecar-shape
+    tier: T0
+    command: cargo test -p ma-signal confirmation_label_matches_labels_json_shape
+
+- id: contract-diagnostic-session-harness
+  dimension: control_flow
+  owner: component-engine-composition-root
+  requirement_refs:
+  - FR-108
+  - FR-109
+  - FR-112
+  - NFR-105
+  unit_refs:
+  - diagnostic-harness-composition-root
+  adr_refs:
+  - adr-20260903-automatic-recording-modes
+  verification:
+  - id: v-win1-harness-requires-explicit-invocation
+    tier: T0
+    command: cargo test -p ma-engine diagnostic_harness_requires_explicit_invocation
+  - id: v-win1-harness-partial-timeline-survives-cancel
+    tier: T0
+    command: cargo test -p ma-engine cancelled_session_keeps_its_partial_timeline
+  - id: v-win1-harness-label-command
+    tier: T0
+    command: cargo test -p ma-engine label_command_writes_labels_sidecar
+  - id: v-win1-harness-decisions-sidecar
+    tier: T0
+    command: cargo test -p ma-engine session_end_writes_decisions_sidecar
+
+- id: contract-extension-signal-delivery
+  dimension: signal_transport
+  owner: component-extension-poc
+  requirement_refs:
+  - FR-110
+  unit_refs:
+  - browser-extension-poc
+  adr_refs:
+  - adr-20260904-extension-endpoint-provisioning-poc
+  - adr-20260903-extension-localhost-channel-trust
+  verification:
+  - id: v-win1-extension-message-shape
+    tier: T0
+    command: cargo test -p ma-ext-channel extension_poc_message_matches_existing_schema
+  - id: v-win1-extension-manifest-permissions
+    tier: T0
+    command: cargo test -p ma-ext-channel extension_manifest_declares_no_content_script_or_broad_host
+  - id: v-win1-extension-live-chrome
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-extension-live-chrome --require pass
+
+- id: contract-meet-corroboration-required
+  dimension: detection_semantics
+  owner: component-detector-core
+  requirement_refs:
+  - FR-111
+  unit_refs:
+  - meet-process-tree-corroboration
+  adr_refs:
+  - adr-20260904-detector-process-tree-corroboration-join
+  - adr-20260903-extension-localhost-channel-trust
+  verification:
+  - id: v-win1-same-tree-mic-corroborates
+    tier: T1
+    command: cargo test -p ma-detect same_process_tree_mic_and_tab_corroborate
+  - id: v-win1-cross-tree-mic-does-not-corroborate
+    tier: T1
+    command: cargo test -p ma-detect mic_use_from_a_different_process_tree_does_not_corroborate
+  - id: v-win1-missing-tree-root-is-inconclusive
+    tier: T1
+    command: cargo test -p ma-detect tab_without_a_process_tree_root_is_inconclusive
+  partition:
+    outcomes:
+    - determinate
+    - unknown
+    - inconclusive
+    - conflicting
+    default_policy: for an adapter whose corroboration requires both tab and microphone evidence, corroboration is
+      met only when the candidate's tab signal and microphone signal both carry payload.process_tree_root_pid and
+      the values are equal; equal keys with no competing active meeting yield Determinate{Start}; equal keys with
+      a competing active meeting yield Conflicting{LowerPrecedence}; a missing key on either side yields
+      Inconclusive with rule_id process-tree-root-absent; unequal keys yield Inconclusive with rule_id
+      process-tree-mismatch; a subject no adapter matches stays Unknown; and no combination of extension-authority
+      signals alone can leave the Inconclusive arm
+
+- id: contract-detector-diagnostics-explainability
+  dimension: detection_semantics
+  owner: component-detector-core
+  requirement_refs:
+  - FR-112
+  unit_refs:
+  - meet-process-tree-corroboration
+  adr_refs:
+  - adr-20260903-detector-signal-replay-contract
+  verification:
+  - id: v-win1-diagnostics-cite-signals
+    tier: T0
+    command: cargo test -p ma-detect decision_cites_signal_ids_for_windows_fixtures
+
+- id: contract-capture-path-isolation-scope
+  dimension: boundary_enforcement
+  owner: component-boundary-policy
+  requirement_refs:
+  - FR-114
+  unit_refs:
+  - boundary-capture-path-scope
+  adr_refs:
+  - adr-20260903-workspace-boundary-enforcement
+  verification:
+  - id: v-win1-capture-path-sources-cover-collectors
+    tier: T0
+    command: cargo test -p xtask capture_path_isolation_names_every_capture_path_crate
+
+- id: contract-windows-tier-verification-registration
+  dimension: boundary_enforcement
+  owner: component-verification-registry
+  requirement_refs:
+  - FR-116
+  - NFR-101
+  - NFR-102
+  unit_refs:
+  - verification-registry-multi-plan-and-manual-records
+  adr_refs:
+  - adr-20260904-verification-registry-multi-plan-and-manual-records
+  - adr-phase1-windows-rs-crate-and-gnu-fidelity
+  verification:
+  - id: v-win1-registration-unions-plans
+    tier: T0
+    command: cargo test -p xtask registration_unions_every_declared_plan
+  - id: v-win1-windows-code-is-cfg-gated
+    tier: T0
+    command: cargo test -p xtask windows_only_dependencies_are_target_gated
+  - id: v-win1-portable-workspace-clippy
+    tier: T0
+    command: cargo clippy --workspace --all-targets -- -D warnings
+
+- id: contract-manual-verification-record
+  dimension: operational_evidence
+  owner: component-manual-verification-record
+  requirement_refs:
+  - NFR-106
+  unit_refs:
+  - verification-registry-multi-plan-and-manual-records
+  adr_refs:
+  - adr-20260904-verification-registry-multi-plan-and-manual-records
+  verification:
+  - id: v-win1-manual-procedures-declared
+    tier: T0
+    command: cargo test -p xtask every_manual_verification_id_has_a_procedure
+  - id: v-win1-manual-record-staleness
+    tier: T0
+    command: cargo test -p xtask a_record_whose_procedure_changed_is_rejected
+
+- id: contract-extension-trust-reversal-check
+  dimension: security_boundary
+  owner: component-ext-channel
+  requirement_refs:
+  - NFR-103
+  unit_refs:
+  - extension-endpoint-acl-and-trust-checks
+  adr_refs:
+  - adr-20260903-extension-localhost-channel-trust
+  verification:
+  - id: v-win1-endpoint-descriptor-acl-applied
+    tier: T1
+    command: cargo test -p ma-ext-channel endpoint_write_applies_the_owner_only_descriptor
+  - id: v-win1-endpoint-dacl-readability-observed
+    tier: T2
+    command: cargo test -p ma-ext-channel --test trust_reversal endpoint_json_not_readable_by_other_same_user_process
+      -- --ignored
+  - id: v-win1-browser-loopback-policy-observed
+    tier: T2
+    command: cargo xtask manual-record --id v-win1-browser-loopback-policy-observed --require pass
+
+- id: contract-closed-schema-discipline
+  dimension: data_contract
+  owner: component-signal-contract
+  requirement_refs:
+  - NFR-104
+  unit_refs:
+  - closed-schema-fixture-guardrail
+  verification:
+  - id: v-win1-fixture-schema-conformance
+    tier: T0
+    command: cargo test -p ma-signal windows_fixtures_conform_to_signal_schema
+  - id: v-win1-no-new-signal-fields
+    tier: T0
+    command: cargo test -p ma-signal payload_and_subject_field_sets_are_unchanged
+
+adrs:
+- id: adr-phase1-windows-audio-signal-observation-apis
+  status: accepted
+  decision_input_refs:
+  - decision-input-wasapi-process-loopback-api
+  - decision-input-microphone-use-observation-api
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Encodes a decision already fixed by the conductor's user-delegated dispositions (unknown-dispositions.json),
+      a critique blocker closure verified at verify/verify-final, or the minimality decision packet; no
+      accepted ADR or invariant is changed.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-20260904-mic-endpoint-observed-outside-the-signal-envelope
+  status: accepted
+  decision_input_refs:
+  - decision-input-mic-endpoint-representation
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Encodes a decision already fixed by the conductor's user-delegated dispositions (unknown-dispositions.json),
+      a critique blocker closure verified at verify/verify-final, or the minimality decision packet; no
+      accepted ADR or invariant is changed.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-phase1-echo-leak-measurement-representation
+  status: accepted
+  decision_input_refs:
+  - decision-input-echo-leak-measurement-representation
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Encodes a decision already fixed by the conductor's user-delegated dispositions (unknown-dispositions.json),
+      a critique blocker closure verified at verify/verify-final, or the minimality decision packet; no
+      accepted ADR or invariant is changed.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-phase1-per-application-loopback-requirement-record
+  status: accepted
+  decision_input_refs:
+  - decision-input-per-app-loopback-requirement-location
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Encodes a decision already fixed by the conductor's user-delegated dispositions (unknown-dispositions.json),
+      a critique blocker closure verified at verify/verify-final, or the minimality decision packet; no
+      accepted ADR or invariant is changed.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-phase1-windows-rs-crate-and-gnu-fidelity
+  status: accepted
+  decision_input_refs:
+  - decision-input-windows-rs-crate-and-gnu-fidelity
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Encodes a decision already fixed by the conductor's user-delegated dispositions (unknown-dispositions.json),
+      a critique blocker closure verified at verify/verify-final, or the minimality decision packet; no
+      accepted ADR or invariant is changed.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-20260904-extension-endpoint-provisioning-poc
+  status: accepted
+  decision_input_refs:
+  - decision-input-extension-endpoint-acquisition
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Keeps the accepted localhost channel (adr-20260903-extension-localhost-channel-trust, user-approved
+      Meet detection-only extension) and collects the reversal observations in-phase instead of moving to
+      native messaging now; consultation question 1 resolved as keep-loopback.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-20260904-verification-registry-multi-plan-and-manual-records
+  status: accepted
+  decision_input_refs:
+  - decision-input-verification-registry-multi-plan
+  - decision-input-manual-vs-ci-verification-split
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Manual verification records remain the Phase 1 merge gate for the nine exit criteria that
+      need real applications; no self-hosted Windows runner is assumed (none exists in the repository or
+      CI config). Consultation question 2 resolved as manual records; a self-hosted runner can later convert
+      six of nine into registered commands without a design change.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-20260904-detector-process-tree-corroboration-join
+  status: accepted
+  decision_input_refs:
+  - decision-input-process-tree-join-owner
+  status_provenance:
+    source: user_consultation
+    confidence: confirmed
+    evidence_refs:
+    - user message 2026-09-04 '本当に必要なものだけ確認して、決められるところは決めて' (technical dispositions delegated to the conductor)
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/unknown-dispositions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/minimality-decisions.json
+    - /home/take/.dev-skills/design/phase1-windows-detection-and-capture/artifacts/verify-final-findings.json
+    rationale: Encodes a decision already fixed by the conductor's user-delegated dispositions (unknown-dispositions.json),
+      a critique blocker closure verified at verify/verify-final, or the minimality decision packet; no
+      accepted ADR or invariant is changed.
+    consultation_id: consultation-phase1-20260904-1
+- id: adr-20260903-detector-signal-replay-contract
+  status: accepted
+  decision_input_refs: []
+- id: adr-20260903-extension-localhost-channel-trust
+  status: accepted
+  decision_input_refs:
+  - decision-input-extension-trust-reversal-trigger-status
+- id: adr-20260903-workspace-boundary-enforcement
+  status: accepted
+  decision_input_refs:
+  - decision-input-capture-path-isolation-scope
+- id: adr-20260903-automatic-recording-modes
+  status: accepted
+  decision_input_refs: []
+- id: adr-20260903-audio-format-and-chunking
+  status: accepted
+  decision_input_refs: []
+
+units:
+- title: windows-process-package-collector
+  chunk: signal-collectors
+  contract_refs:
+  - contract-process-package-identity
+  files:
+  - crates/ma-signals-windows/src/lib.rs
+  - crates/ma-signals-windows/src/process.rs
+  - crates/ma-signals-windows/src/package_identity.rs
+  - crates/ma-signals-windows/Cargo.toml
+  acceptance:
+  - Given a fake process/package enumerator holding the four target applications' processes, ProcessStarted,
+    ProcessStopped and PackageIdentityObserved are emitted with the expected Subject::Process fields and no other
+    field, and the collector's first emitted signal is CollectorStarted.
+  - Given a fake enumerator in which a target process is already running when the collector starts, the first
+    ProcessStarted the collector emits for that process carries payload.restart_resync = true.
+  - Given a fixture where the package-identity query fails transiently versus a process that was never packaged,
+    the emitted package_family_name is None in both cases and only the collector's internal diagnostic
+    distinguishes them.
+  - Given cargo test --workspace and cargo clippy --workspace --all-targets -- -D warnings on a non-Windows host,
+    both pass with the new module present, because every windows-rs dependency is declared under
+    [target.'cfg(windows)'.dependencies] and every COM call site is behind a cfg(windows) attribute, with the fake
+    enumerator as the portable backend.
+  objective: Implement the Windows process-lifecycle and package-identity collector inside the ma-signals-windows
+    scaffold behind the existing SignalSource seam, emitting only the closed Signal/Subject shapes ma-signal
+    already defines.
+  output_format: Rust modules under crates/ma-signals-windows/src implementing SignalSource plus an enumerator
+    trait with a live Windows backend and a portable fake, and portable-tier unit tests.
+  tool_guidance: Take every service identifier (process image name, package family name pattern) as constructor
+    input supplied by the composition root from the ma-adapter-* tables; a literal in this crate fails cargo xtask
+    boundary immediately. Declare the windows crate only under [target.'cfg(windows)'.dependencies] and only at
+    the single workspace-pinned version.
+  task_boundaries: Does not implement audio-session or microphone observation, does not implement capture, does
+    not add a SignalKind or Payload field, and does not read adapter.toml files directly.
+
+- title: windows-audio-session-mic-collector
+  chunk: signal-collectors
+  contract_refs:
+  - contract-audio-session-mic-use
+  files:
+  - crates/ma-signals-windows/src/audio_session.rs
+  - crates/ma-signals-windows/src/mic_use.rs
+  - crates/ma-signals-windows/src/endpoint_observation.rs
+  depends_on:
+  - windows-process-package-collector
+  acceptance:
+  - Given a fake session-manager source driving session-state transitions, AudioSessionCreated,
+    AudioSessionDestroyed, MicCaptureStarted and MicCaptureStopped are emitted attributed to the correct process
+    subject, and each MicCaptureStarted for a browser process carries payload.process_tree_root_pid resolved from
+    the process-tree lookup the collector already performs.
+  - Given a fake consent-store source reporting microphone use for a process for which the fake session manager
+    reported nothing, no signal is emitted and the named inconclusive-source diagnostic counter increments; given
+    a consent-store window still open while the session manager reports Expired, MicCaptureStopped is emitted and
+    the conflict counter increments.
+  - Given a fake session manager reporting a session already Active when the collector starts, the first
+    MicCaptureStarted it emits for that session carries payload.restart_resync = true.
+  - Given a fake session manager whose notification registration fails, the collector reports the typed
+    MicUseUnavailable startup failure on CollectorStarted and emits no microphone signal from the consent store.
+  - Given a fake session bound to a non-default capture endpoint, the collector exposes that endpoint identifier
+    through its non-Signal endpoint-observation API and emits no Subject::Device signal for it.
+  objective: Implement microphone-use and audio-session observation from session-manager notifications with
+    consent-store corroboration, and expose the per-process capture endpoint as capture-side data outside the
+    signal envelope.
+  output_format: Rust modules under crates/ma-signals-windows/src implementing SignalSource for audio-session and
+    mic-use signals, a separate endpoint-observation accessor, and fake session-manager and consent-store
+    fixtures.
+  tool_guidance: Reuse the same SignalSource seam as the process collector; do not introduce a second collector
+    trait, do not add an endpoint field to Payload or a Device subject to a mic signal, and keep the one-second
+    latency claim attached to the session-manager path only.
+  task_boundaries: Does not select which microphone endpoint is recorded (mic-endpoint-follow-session consumes the
+    observation), does not open any audio stream, and does not change the detector.
+
+- title: process-loopback-capture-source
+  chunk: capture
+  contract_refs:
+  - contract-process-loopback-capture
+  files:
+  - crates/ma-capture/src/wasapi/mod.rs
+  - crates/ma-capture/src/wasapi/process_loopback.rs
+  - crates/ma-capture/src/wasapi/manual_fallback.rs
+  - crates/ma-capture/Cargo.toml
+  acceptance:
+  - Given a fake activation backend that succeeds for a target application's PID, the resulting CaptureSource's
+    TrackOrigin reports capture_mode = ProcessLoopback and contamination_risk = None.
+  - Given a fake activation backend that fails or reports the activation type unavailable, the CaptureSource falls
+    back to system loopback with capture_mode = SystemLoopback and contamination_risk = PossibleOtherApps, and a
+    manual Device-mode CaptureSource remains constructible in the same test process.
+  - Given a fake backend whose device mix format is 48 kHz stereo, the source resamples to 16 kHz mono before
+    emitting SourceEvent::Samples and its TrackOrigin reports sample_rate = 16000 and channels = 1; given a
+    backend that cannot be resampled, the source returns an activation error instead of opening a track whose
+    origin rate differs from ma_capture::SAMPLE_RATE.
+  - Given the Windows-tier manual procedure for v-win1-loopback-live-activation, the record states per target
+    application whether single-process activation captured the same audio as process-tree activation, and that
+    record is where the per-application requirement FR-107 asks for is written.
+  - Given cargo test --workspace and cargo clippy --workspace --all-targets -- -D warnings on a non-Windows host,
+    both pass, because the WASAPI activation backend is behind a cfg(windows) attribute, and the fake backend is the
+    portable implementation of the same trait.
+  objective: Implement a WASAPI-backed CaptureSource behind the existing trait using ActivateAudioInterfaceAsync
+    with AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK including process-tree mode, with system-loopback fallback,
+    an always-available manual path, and a format pin to the durability path's sample rate.
+  output_format: Rust modules under crates/ma-capture/src/wasapi implementing CaptureSource, an activation-backend
+    trait with live and fake implementations, and portable-tier fixture tests.
+  tool_guidance: Implement strictly behind the existing CaptureSource trait so chunk_writer.rs, consolidate.rs and
+    recovery.rs need no change; do not alter CHUNK_SAMPLES, SAMPLE_RATE, QUEUE_CAP_SAMPLES or the durability write
+    order; surface a mid-session activation loss as SourceEvent::FormatChanged with a new origin, never as silent
+    silence.
+  task_boundaries: Does not decide which microphone endpoint to open, does not compute the leak measurement, and
+    does not own the committed comparison record or its gate (the manual-verification family does).
+
+- title: mic-endpoint-follow-session
+  chunk: capture
+  contract_refs:
+  - contract-mic-endpoint-follows-session
+  files:
+  - crates/ma-capture/src/wasapi/mic_endpoint.rs
+  depends_on:
+  - process-loopback-capture-source
+  acceptance:
+  - Given an endpoint identifier supplied as an explicit function argument by the caller, the microphone
+    CaptureSource opens that endpoint rather than the system default communications device; given None, it opens
+    the system default and records that it did.
+  - Given a supplied endpoint change delivered mid-recording, the existing TrackSegment::open_successor and
+    SourceEvent::FormatChanged path is used and the successor track's origin names the new endpoint.
+  - Given cargo xtask boundary, ma-capture declares no dependency on ma-signals-windows; the endpoint identifier
+    crosses as a string argument from the composition root, not as a crate edge.
+  objective: Select the microphone endpoint the meeting application is using from an endpoint identifier the
+    composition root supplies, and re-evaluate on endpoint change through the existing successor-track mechanism.
+  output_format: One Rust module under crates/ma-capture/src/wasapi implementing endpoint selection over an
+    explicit Option<&str> endpoint argument, plus fixture tests.
+  tool_guidance: Reuse TrackSegment::open_successor and SourceEvent::FormatChanged; do not invent a parallel
+    device-change path and do not add any dependency, type import or trait from ma-signals-windows.
+  task_boundaries: Does not observe the session endpoint (windows-audio-session-mic-collector owns that) and does
+    not wire the two together (diagnostic-harness-composition-root owns that).
+
+- title: echo-leak-measurement
+  chunk: capture
+  contract_refs:
+  - contract-echo-leak-measurement
+  files:
+  - crates/ma-capture/src/wasapi/leak_measure.rs
+  depends_on:
+  - process-loopback-capture-source
+  acceptance:
+  - Given paired loopback and microphone fixture tracks with a synthesised 18 dB echo return loss, the computed
+    value is 18 dB plus or minus 1 dB, and the record carries the window's start sample on each track, both RMS
+    dBFS values and the alignment uncertainty in milliseconds.
+  - Given a fixture in which no sixty-second window satisfies both the loopback-active and no-local-speech
+    conditions, the outcome recorded is no_qualifying_window and no number is produced; given a session whose
+    alignment uncertainty exceeds one second, the outcome recorded is inconclusive_alignment.
+  - Given the measurement, no Signal is emitted and no Payload field is written; the value is carried in the
+    per-application measurement record only.
+  objective: Compute the echo return loss between the paired loopback and microphone tracks by the method
+    adr-phase1-echo-leak-measurement-representation fixes, and emit it as a per-application measurement record.
+  output_format: One Rust module under crates/ma-capture/src/wasapi computing frame RMS, window selection and the
+    difference of levels, plus a serialisable per-application record and fixture tests.
+  tool_guidance: Do not reuse Payload.level_dbfs and do not add a Payload field; the measurement is capture-side
+    data derived from two tracks, not an observation of one subject at one instant.
+  task_boundaries: Does not open any audio stream, does not decide the capture mode, and does not write the
+    Windows-tier record file (the manual procedure does).
+
+- title: two-hour-durability-harness
+  chunk: capture
+  contract_refs:
+  - contract-two-hour-durability
+  files:
+  - crates/ma-capture/tests/two_hour_durability.rs
+  depends_on:
+  - process-loopback-capture-source
+  acceptance:
+  - Given a SyntheticSource driven for 115_200_000 samples at 16 kHz, the chunk manifest names exactly 240 chunks,
+    the chunk directory holds exactly those files, no gap record exists, and the total sample count equals the
+    produced count.
+  - Given the Windows-tier manual procedure for v-win1-two-hour-live, the record states the target application,
+    the wall-clock duration, the final manifest-versus-directory comparison and any gap records.
+  objective: Prove the two-hour durability window on the portable tier with a synthetic source and record the real
+    two-hour run against a target application as a Windows-tier manual observation.
+  output_format: One integration test under crates/ma-capture/tests plus the manual procedure entry the registry
+    unit registers.
+  tool_guidance: Reuse CHUNK_SAMPLES, SAMPLE_RATE and QUEUE_CAP_SAMPLES from ma-capture; do not redefine chunk
+    cadence for Windows sources and do not make the portable test depend on wall-clock time.
+  task_boundaries: Does not implement the capture source and does not change the chunk writer.
+
+- title: diagnostic-harness-composition-root
+  chunk: composition-root
+  contract_refs:
+  - contract-diagnostic-session-harness
+  files:
+  - crates/ma-engine/Cargo.toml
+  - crates/ma-engine/src/diagnostic/mod.rs
+  - crates/ma-engine/src/diagnostic/session.rs
+  - crates/ma-engine/src/bin/ma-diag.rs
+  depends_on:
+  - windows-audio-session-mic-collector
+  - mic-endpoint-follow-session
+  - browser-extension-poc
+  acceptance:
+  - Given ma-diag invoked with no subcommand or with only a listing subcommand, no collector starts, no
+    CaptureSource is constructed and no file is written under the artifact root; capture starts only under the
+    explicit record subcommand.
+  - Given a diagnostic session driven by fake collectors, every observed signal is appended to the session's JSONL
+    file before the next signal is read, so that a session terminated by cancel or by dropping the harness retains
+    every signal observed up to that point; the offline replay path is the only caller of SignalTimeline::merge.
+  - Given a completed session, the harness writes <timeline>.decisions.json from one decide() run over the
+    persisted timeline, and the label subcommand attaches a was_meeting entry for a time range to
+    <timeline>.labels.json in the existing sidecar shape.
+  - Given the wiring, the harness reads the four ma-adapter-* tables under renamed Cargo.toml dependencies, passes
+    their identifiers to the collectors, passes the audio-session collector's observed endpoint identifier into
+    ma-capture's microphone selection, and resolves the extension listener's peer process to a process-tree root
+    that ma-ext-channel copies into the tab signals' payload.
+  - Given cargo xtask boundary and cargo clippy --workspace --all-targets -- -D warnings, both pass, because ma-engine is
+    L5 and may depend on every lower layer, and no service identifier appears in ma-engine source because every
+    adapter crate is renamed in Cargo.toml.
+  objective: Give the Phase 1 composition root and diagnostic harness an owner in the existing ma-engine crate —
+    wire the collectors, the capture sources, the extension channel and the detector, own live session
+    start/stop/cancel and incremental persistence, and expose the label and replay commands.
+  output_format: Cargo.toml dependency additions with renamed adapter crates, a diagnostic module and a second
+    binary target ma-diag under crates/ma-engine, plus portable tests driven by fake collectors and fake capture
+    sources.
+  tool_guidance: Rename every adapter dependency in Cargo.toml (adapter_a = { package = "ma-adapter-teams" } and
+    so on) so no service identifier token appears in ma-engine source; keep every new dependency compiling on a
+    non-Windows host; do not touch supervisor.rs, the instance lock or ma-session.
+  task_boundaries: Does not implement collectors, capture sources, detector logic or the extension; does not build
+    or consult ConsentSurfaces, the countdown or the hysteresis path; does not start capture from a detector
+    decision.
+
+- title: meet-process-tree-corroboration
+  chunk: detector
+  contract_refs:
+  - contract-meet-corroboration-required
+  - contract-detector-diagnostics-explainability
+  files:
+  - crates/ma-detect/src/detector.rs
+  - fixtures/signal-timelines/browser-tab-with-mic.jsonl
+  - fixtures/signal-timelines/browser-tab-cross-tree.jsonl
+  depends_on:
+  - signal-timeline-fixture-corpus
+  acceptance:
+  - Given a browser-class adapter that requires both tab and microphone corroboration, decide() records each
+    candidate's tab and microphone process_tree_root_pid and treats corroboration as met only when both are
+    present and equal; browser-tab-with-mic.jsonl is updated so its mic_capture_started signal carries
+    process_tree_root_pid 6300, matching the tab signal already committed with that value.
+  - Given the new browser-tab-cross-tree.jsonl fixture whose tab signal carries process_tree_root_pid 6300 and
+    whose mic signal carries 7100, decide() emits Inconclusive with rule_id process-tree-mismatch and never a
+    determinate start; given a tab signal with no process_tree_root_pid, decide() emits Inconclusive with rule_id
+    process-tree-root-absent.
+  - Given the existing desktop fixtures, replay_is_byte_identical and the committed
+    desktop-start-end.decisions.json remain unchanged, because a desktop-class adapter requires no tab evidence
+    and the join rule does not apply to it.
+  - Given each Windows-recorded Phase 1 fixture, every emitted decision cites the exact signal ids and the adapter
+    rule id, asserted against the committed decisions sidecar rather than by re-deriving it.
+  objective: Implement the process-tree join FR-111 and the accepted extension-channel ADR require, and assert
+    decision explainability against the real Windows-recorded fixtures.
+  output_format: A change to decide()'s candidate keying and rule selection in crates/ma-detect/src/detector.rs,
+    one updated and one new fixture, and tests in the same crate.
+  tool_guidance: Keep decide() pure and its signature unchanged, keep the Outcome enum and partition() unchanged,
+    and add the join inside candidate evaluation; the two new rule ids are process-tree-mismatch and
+    process-tree-root-absent.
+  task_boundaries: Does not change adapter tables' corroboration flags, the evidence weights, the Outcome enum, or
+    the generic-candidate fallback.
+
+- title: signal-timeline-fixture-corpus
+  chunk: fixtures
+  contract_refs:
+  - contract-replayable-timeline-fixtures
+  files:
+  - fixtures/signal-timelines/teams-desktop-session.jsonl
+  - fixtures/signal-timelines/slack-huddle-session.jsonl
+  - fixtures/signal-timelines/zoom-desktop-session.jsonl
+  - fixtures/signal-timelines/meet-chrome-with-extension.jsonl
+  - fixtures/signal-timelines/meet-chrome-without-extension.jsonl
+  - fixtures/signal-timelines/*.labels.json
+  - fixtures/signal-timelines/*.decisions.json
+  - crates/ma-signal/tests/phase1_fixture_shape.rs
+  depends_on:
+  - diagnostic-harness-composition-root
+  acceptance:
+  - Given a diagnostic session recorded against each of the five targets (four applications, Meet with and without
+    the extension), the merged timeline is written in the existing TimelineHeader-plus-JSONL shape and replays
+    byte-identically through ma-detect's existing replay path against its committed decisions sidecar.
+  - Given every committed Phase 1 fixture, machine_profile is exactly "redacted", every pid is a synthetic value
+    from a documented mapping, and no image name, package family name or tab host is a real service identifier;
+    the real observed identifiers are recorded only in the Windows-tier manual record and asserted by the L4
+    adapter crates' own fixtures.
+  - Given every committed Phase 1 fixture, a .labels.json sidecar exists carrying at least one was_meeting entry
+    in the existing shape.
+  objective: Produce the five Windows-recorded, redacted signal-timeline fixtures with their label and decisions
+    sidecars, and the shape tests that keep them in the existing format.
+  output_format: JSONL timeline files with .labels.json and .decisions.json sidecars under
+    fixtures/signal-timelines/, plus one shape and redaction test file in ma-signal.
+  tool_guidance: Reuse TimelineHeader verbatim; do not add a header field, a fixture format, or a new SignalKind;
+    record the synthetic-identifier mapping in the manual record rather than in the fixture.
+  task_boundaries: Does not change ma-detect's replay path, does not change the detector's join rule, and does not
+    record the confirmation label itself (the harness command does).
+
+- title: browser-extension-poc
+  chunk: extension
+  contract_refs:
+  - contract-extension-signal-delivery
+  files:
+  - extension/manifest.json
+  - extension/background.js
+  - extension/README.md
+  - crates/ma-ext-channel/tests/extension_poc.rs
+  acceptance:
+  - Given the extension loaded unpacked in Chrome with a Google Meet tab open, the background service worker reads
+    the harness-written endpoint file from its own directory, posts host and audible for the active tab using only
+    ExtensionMessage's existing fields, and receives 204.
+  - Given the manifest, permissions are exactly ["tabs"] plus host permission "http://127.0.0.1/*", there is no
+    content_scripts key, no scripting, nativeMessaging, storage or <all_urls> permission, and no code path reads
+    tab.url beyond its hostname; asserted mechanically by the manifest test.
+  - Given a 401 from the listener because the engine restarted and the token rotated, the worker stops posting and
+    records the condition rather than retrying with a dead token.
+  objective: Build the detection-only manifest-v3 extension PoC that speaks the existing extension-channel wire
+    contract using only the tabs API and the harness-provisioned endpoint file.
+  output_format: An unpacked extension source tree under extension/ (manifest.json, background.js, README.md) with
+    no framework and no content script, plus one Rust test in ma-ext-channel that reads the manifest.
+  tool_guidance: Use chrome.tabs.query and chrome.tabs.onUpdated for host and audible only; never send a title, a
+    URL path or a query string; do not add a permission beyond tabs and the loopback host; treat the generated
+    endpoint file as untracked build output.
+  task_boundaries: Does not implement server-side validation, does not capture tab audio (an explicit PLAN
+    non-goal), and does not change ExtensionMessage or the wire schema.
+
+- title: extension-endpoint-acl-and-trust-checks
+  chunk: security
+  contract_refs:
+  - contract-extension-trust-reversal-check
+  files:
+  - crates/ma-ext-channel/src/auth.rs
+  - crates/ma-ext-channel/src/server.rs
+  - crates/ma-ext-channel/tests/trust_reversal.rs
+  acceptance:
+  - Given EndpointDescriptor::write, the owner-only SecurityDescriptor it already builds is applied to
+    endpoint.json through an injected applier before the path is returned; a fake applier in the portable test
+    records the call and the descriptor, and on Windows the applier sets the file's DACL from the descriptor's
+    SDDL.
+  - Given a live Windows run, whether endpoint.json is readable by another same-user process is recorded as a
+    pass or a fail, never skipped; given a live Chrome or Edge run under current policy, whether the
+    detection-only extension can reach the loopback listener is recorded in the manual record, never skipped.
+  - Given Request, an additive peer_process_tree_root_pid field supplied by the transport is copied by
+    signals_for into Payload.process_tree_root_pid on every emitted tab signal; ExtensionMessage,
+    Authenticator.check, the token generation, the rate, freshness and queue limits and the rejection status
+    table are unchanged.
+  objective: Apply the endpoint descriptor's ACL that Phase 0 only built, carry the peer process tree root into
+    tab signals, and record the two trust-reversal observations adr-20260903-extension-localhost-channel-trust
+    assigns to Phase 1 without pre-judging their outcome.
+  output_format: An injected ACL applier and its Windows implementation in auth.rs, an additive Request field
+    copied in server.rs, one integration test file, and the manual procedure entry for the browser-policy
+    observation.
+  tool_guidance: Do not change the descriptor's shape, Authenticator.check, the token lifetime or the wire schema;
+    an observation that violates the intended trust model is recorded and raised as an open decision, not worked
+    around.
+  task_boundaries: Does not decide whether to supersede the ADR, does not add a bootstrap or discovery endpoint,
+    and does not change the extension's provisioning mechanism.
+
+- title: boundary-capture-path-scope
+  chunk: repository-policy
+  contract_refs:
+  - contract-capture-path-isolation-scope
+  files:
+  - boundary.toml
+  - xtask/tests/boundary_policy.rs
+  acceptance:
+  - Given boundary.toml with ma-signals-windows and ma-ext-channel added to [rules.capture-path-isolation].sources,
+    cargo xtask boundary --rule capture-path-isolation stays green on the clean workspace and the negative fixture
+    still reports exactly its planted violations.
+  - Given the xtask test, the rule's sources list is asserted to contain every crate the design documents call a
+    capture-path crate, so shortening the list is a failure rather than a silently smaller scan.
+  objective: Extend the capture-path-isolation rule's source list to match module-boundaries.md INV-002 and make
+    the completeness of that list mechanically checked.
+  output_format: A boundary.toml sources-list edit and one xtask test asserting list completeness.
+  tool_guidance: Do not add a new boundary rule, forbidden target, literal class or layer assignment; extend the
+    existing rule's sources list only.
+  task_boundaries: Does not change xtask/src/boundary.rs logic and does not touch the native-inference rule.
+
+- title: verification-registry-multi-plan-and-manual-records
+  chunk: repository-policy
+  contract_refs:
+  - contract-windows-tier-verification-registration
+  - contract-manual-verification-record
+  - contract-per-app-loopback-requirement-record
+  files:
+  - verification-tiers.toml
+  - manual-verification.toml
+  - xtask/src/verify.rs
+  - xtask/src/manual_record.rs
+  - xtask/src/main.rs
+  - xtask/tests/registration.rs
+  - docs/changes/change-20260904-phase1-windows-detection-and-capture/manual-verification/*.json
+  depends_on:
+  - process-loopback-capture-source
+  acceptance:
+  - Given verification-tiers.toml declaring plans = [Phase 0's spine, Phase 1's spine], cargo xtask verify
+    --check-registration treats the union of their declared ids as the registered set, reports no stale
+    registration for any Phase 0 id, and still rejects an id registered twice or absent.
+  - Given manual-verification.toml declaring one procedure per manual verification id with owner, host profile,
+    steps, artifact path, pass criterion and the observation keys the record must carry, cargo xtask
+    manual-record --id X --require pass exits non-zero when the record is missing, when its outcome is not pass,
+    when it omits a declared required observation, or when its recorded procedure digest differs from the current
+    procedure text.
+  - Given the procedure for v-win1-loopback-requirement-live-comparison, its required observation keys are exactly
+    the adapter table ids discovered under crates/ma-adapter-*/adapter.toml, and a fixture record that omits one
+    of them is rejected; the keys are read from the tables rather than written as literals, so no service
+    identifier enters xtask.
+  - Given the xtask tests, every plan-declared id whose registered command is a manual-record invocation has a
+    matching procedure entry, and every procedure entry names a plan-declared id.
+  - Given cargo xtask verify --check-registration, every Phase 1 T2 id is registered in the windows tier with
+    platform = "windows" and every T0 and T1 id in the portable tier.
+  objective: Extend the verification registry to hold more than one canonical plan and to gate manual
+    observations on a committed, non-stale, observation-complete record, then register every Phase 1
+    verification id and declare the per-application loopback-requirement comparison as one of those procedures.
+  output_format: A plans array in verification-tiers.toml with the single-plan form still accepted, a
+    manual-verification.toml procedure table carrying required-observation keys, a manual_record subcommand in
+    xtask, the registrations, and xtask tests.
+  tool_guidance: Keep the existing single-plan field working so no other repository consumer breaks; keep records
+    as plain JSON outside docs lint targets; do not weaken the existing exactly-once and tier-matching rules;
+    read the adapter table ids from crates/ma-adapter-*/adapter.toml rather than naming any service in xtask
+    source, which boundary.toml's literals rule confines to L4.
+  task_boundaries: Does not change the tier definitions themselves, does not add a CI job, does not perform any
+    manual observation, and does not add a field to adapter.toml, AdapterSpec or any other shared contract.
+
+- title: closed-schema-fixture-guardrail
+  chunk: guardrails
+  contract_refs:
+  - contract-closed-schema-discipline
+  files:
+  - crates/ma-signal/tests/phase1_schema_guard.rs
+  depends_on:
+  - signal-timeline-fixture-corpus
+  acceptance:
+  - Given every committed Phase 1 fixture line, each signal validates against
+    contracts/signal/signal-envelope.schema.json and the existing schema_contains_no_free_text_subject and
+    schema_golden_roundtrip tests still pass unchanged.
+  - Given the Payload and Subject types, the test asserts the exact field set (restart_resync, audible,
+    level_dbfs, command, calendar_event_key, process_tree_root_pid) and the exact four Subject variants, so an
+    added field fails here before it reaches a fixture.
+  objective: Prove that Phase 1's collectors, capture measurements and extension path added no field, variant or
+    free-text value to the closed signal schema.
+  output_format: One test file in ma-signal asserting fixture conformance and the frozen field and variant sets.
+  tool_guidance: This unit adds no production code path; it only asserts the absence of drift.
+  task_boundaries: Does not implement any collector, capture source, harness or detector change.
+
+acceptance:
+- id: A-01
+  requirement_refs:
+  - FR-103
+  - FR-104
+  criteria: For at least one target application, both a meeting-audio CaptureSource (process loopback or the
+    system-loopback fallback) and a microphone CaptureSource produce durable, consolidated tracks from a real
+    Windows recording, recorded in the v-win1-loopback-live-activation manual record.
+- id: A-02
+  requirement_refs:
+  - FR-110
+  - FR-111
+  criteria: Google Meet start and end decisions are produced only when the extension tab signal and the OS
+    microphone-use signal carry the same process_tree_root_pid; a recorded cross-tree fixture yields Inconclusive
+    with rule_id process-tree-mismatch, and no DOM access, content script or URL path occurs anywhere in the path.
+- id: A-03
+  requirement_refs:
+  - FR-113
+  criteria: A two-hour recording against at least one target application completes with the chunk manifest
+    matching the chunk directory and zero unexplained gaps, recorded on the Windows tier, and the same accounting
+    holds for a synthetic two-hour run on the portable tier.
+- id: A-04
+  requirement_refs:
+  - FR-101
+  - FR-102
+  - FR-112
+  criteria: For all four target applications, meeting-start and meeting-end signals are observable in a recorded
+    fixture, and each fixture's committed decisions sidecar cites the signal ids and adapter rule id for every
+    decision without the detector being re-run.
+- id: A-05
+  requirement_refs:
+  - FR-101
+  - NFR-104
+  criteria: No collector, adapter, capture measurement or extension path added by Phase 1 introduces a window
+    title, control label, DOM-derived value or new field anywhere in the closed Signal, Subject or Payload schema.
+- id: A-06
+  requirement_refs:
+  - FR-104
+  - FR-107
+  criteria: For each target application, the recorded capture_mode and contamination_risk outcomes and the
+    per-application process-tree-loopback requirement are documented in the Windows-tier comparison record, and
+    that record carries one observation per adapter table or the manual-record gate rejects it.
+- id: A-07
+  requirement_refs:
+  - FR-105
+  criteria: The recorded microphone track's endpoint matches the endpoint the meeting application's own audio
+    session is using, across at least one observed endpoint change, with no crate edge from ma-capture to
+    ma-signals-windows.
+- id: A-08
+  requirement_refs:
+  - FR-106
+  criteria: A per-application echo return loss in dB, or an explicit no_qualifying_window or
+    inconclusive_alignment outcome, is recorded for at least one speaker-path recording of each target
+    application, computed by the one method the ADR fixes.
+- id: A-09
+  requirement_refs:
+  - FR-108
+  - FR-109
+  criteria: Every recorded Phase 1 fixture replays byte-identically against its committed decisions sidecar,
+    carries at least one confirmation-label entry in the existing sidecar shape, and a session cancelled midway
+    retains the signals observed before the cancel.
+- id: A-10
+  requirement_refs:
+  - FR-115
+  criteria: A collector restarted while a target application is already in a meeting produces a first signal
+    carrying restart_resync, and the detector's existing resync-no-autostart rule downgrades it to Inconclusive
+    rather than emitting a determinate start.
+- id: A-11
+  requirement_refs:
+  - FR-114
+  - FR-116
+  - NFR-101
+  - NFR-106
+  criteria: cargo xtask verify --check-registration passes with every Phase 0 and Phase 1 verification id
+    registered exactly once across both declared plans, every Phase 1 T2 id in the windows tier, every manual id
+    backed by a non-stale passing record, and cargo xtask boundary --rule capture-path-isolation green over the
+    extended source list.
+- id: A-12
+  requirement_refs:
+  - NFR-102
+  criteria: cargo test --workspace and cargo clippy --workspace --all-targets -- -D warnings pass on the ubuntu
+    portable job with every Phase 1 crate present, and the xtask gating test confirms no windows-rs dependency is
+    declared outside a [target.'cfg(windows)'.dependencies] table.
+- id: A-13
+  requirement_refs:
+  - NFR-103
+  criteria: endpoint.json is written with its owner-only descriptor actually applied, and both trust-reversal
+    observations are recorded on the Windows tier with a stated outcome rather than skipped.
+- id: A-14
+  requirement_refs:
+  - NFR-105
+  criteria: The diagnostic harness starts no capture without its explicit record subcommand, references no
+    ConsentSurfaces, countdown or hysteresis symbol, and adds no path by which a detector decision alone starts a
+    recording.
+
+scope_expansion_signals:
+- id: scope-signal-manual-verification-record-family
+  kind: critic_induced_contract
+  target_ref: contract-manual-verification-record
+  witness: Nine Phase 1 T2 identifiers require a real target application, real acoustics, real Chrome policy or
+    two hours of wall clock, none of which the hosted windows-latest runner provides, and two of the draft's
+    entries carried no command at all. Both the normative contract and the operational artefacts it introduces
+    (manual-verification.toml, the required-observation keys a procedure declares, the committed records and the
+    manual-record subcommand) are retained under this one target because verification-tiers.toml's
+    Registration.command is a required non-empty string and check_registration has no notion of an observation a
+    human performs, so without them these checks either pass vacuously or cannot be registered at all. The
+    required-observation keys are the smaller replacement for the folded adapter-table field, keeping FR-107's
+    per-application record falsifiable inside a Phase 1 policy file instead of widening the L1 adapter contract.
+  requirement_refs:
+  - NFR-106
+  - NFR-101
+  - FR-107
+  authority_refs:
+  - planning-source.txt (Windows 実機/実アプリを要する検証は CI の windows job と手動検証手順に振り分ける)
+  - critique issue-t2-checks-need-a-host-the-ci-runner-is-not
+  - critique issue-null-command-verifications-cannot-register
+  - minimality-decisions.json scope-signal-adapter-table-additive-field (fold, conductor under user-delegated
+    authority 2026-09-04)
+- id: scope-signal-composition-root-and-harness
+  kind: critic_induced_contract
+  target_ref: contract-diagnostic-session-harness
+  witness: Four contracts delegated wiring to "the composition root" while crates/ma-engine/Cargo.toml depended
+    on none of ma-signal, ma-detect, ma-capture, ma-signals-windows or any adapter crate and no unit listed a
+    ma-engine file; without an owner, implementations place the harness in different crates, and placing it in
+    ma-signals-windows would itself be an L3 to L3 boundary violation.
+  requirement_refs:
+  - FR-108
+  - FR-109
+  - FR-112
+  - NFR-105
+  authority_refs:
+  - critique issue-composition-root-and-harness-unowned
+  - critique issue-live-timeline-merge-control-flow-unspecified
+  - critique issue-confirmation-label-surface-unowned
+- id: scope-signal-verification-registry-multi-plan
+  kind: compatibility_operation
+  target_ref: contract-windows-tier-verification-registration
+  witness: verify.rs reads a single file.plan path and reports "registered but not declared by the plan (stale
+    registration)" for every id outside it; pointing that field at Phase 1's spine would make all 112 Phase 0
+    registrations stale, including the ids docs/design invariants cite and the design-set docs rule requires to
+    stay registered.
+  requirement_refs:
+  - FR-116
+  authority_refs:
+  - critique issue-verification-registry-is-single-plan
+  - xtask/src/verify.rs check_registration
+- id: scope-signal-recorded-windows-fixtures-committed
+  kind: persistent_state
+  target_ref: contract-replayable-timeline-fixtures
+  witness: Five new fixtures recorded from real Windows sessions become committed repository state carrying real
+    host facts unless redacted; boundary.toml confines service identifiers to L4 crates and the five Phase 0
+    fixtures already use machine_profile "redacted" with synthetic identifiers, so the recordings are retained
+    only under that same convention.
+  requirement_refs:
+  - FR-108
+  - FR-112
+  authority_refs:
+  - PLAN.md section 6 Phase 1 (recorded signal timelines can be replayed as detector test fixtures)
+  - critique issue-real-identifiers-and-host-data-enter-committed-fixtures
+- id: scope-signal-detector-join-adr
+  kind: critic_induced_contract
+  target_ref: adr-20260904-detector-process-tree-corroboration-join
+  witness: The draft carried no ADR for the corroboration join because it asserted the join was "not new logic,
+    already enforced twice". Neither cited enforcement compares process trees, and process_tree_root_pid is read
+    nowhere in ma-detect, so closing the blocker required a new recorded decision that changes a crate Phase 0
+    declared fixed and pure. Without it the change to decide() would be an unattributed behaviour change to the
+    condition under which any browser meeting is detected.
+  requirement_refs:
+  - FR-111
+  authority_refs:
+  - critique issue-meet-process-tree-join-unimplemented
+  - critique issue-process-tree-root-pid-producer-unassigned
+  - adr-20260903-extension-localhost-channel-trust (same browser process tree clause)
+- id: scope-signal-mic-endpoint-representation-adr
+  kind: critic_induced_contract
+  target_ref: adr-20260904-mic-endpoint-observed-outside-the-signal-envelope
+  witness: The draft left the endpoint representation unstated, and the critique showed the three candidate
+    implementations are mutually exclusive and observably different. Subject is a closed four-variant union and a
+    Signal carries one Subject, so the choice between a schema bump, an L3 to L3 crate edge and a non-Signal
+    accessor cannot be left to the implementer; recording it is what keeps NFR-104 intact without a schema
+    version bump.
+  requirement_refs:
+  - FR-105
+  - NFR-104
+  authority_refs:
+  - critique issue-endpoint-process-binding-not-representable
+  - critique issue-mic-endpoint-requires-l3-to-l3-edge
+- id: scope-signal-extension-provisioning-adr
+  kind: critic_induced_contract
+  target_ref: adr-20260904-extension-endpoint-provisioning-poc
+  witness: The draft named no acquisition path for the listener port and per-start token, and an MV3 service
+    worker limited to the tabs API and the loopback host can read neither, so FR-110 and A-02 were unsatisfiable
+    as drafted. The three alternatives all touch an accepted security decision, so the choice is recorded rather
+    than left to the implementer or silently deferred.
+  requirement_refs:
+  - FR-110
+  authority_refs:
+  - critique issue-extension-cannot-obtain-endpoint-token
+  - adr-20260903-extension-localhost-channel-trust (per-start token and pinned origin)
+- id: scope-signal-verification-registry-adr
+  kind: compatibility_operation
+  target_ref: adr-20260904-verification-registry-multi-plan-and-manual-records
+  witness: The draft owned no mechanism for a second canonical plan and registered two verifications with no
+    command at all. Both the plans union and the manual-record gate change how an existing green check behaves
+    across phases, so the compatibility rule and the rejected alternatives are recorded rather than implied by a
+    configuration edit.
+  requirement_refs:
+  - FR-116
+  - NFR-106
+  authority_refs:
+  - critique issue-verification-registry-is-single-plan
+  - critique issue-t2-checks-need-a-host-the-ci-runner-is-not
+  - planning-source.txt (CI の windows job と手動検証手順への振り分け)
+- id: scope-signal-composition-root-component
+  kind: critic_induced_contract
+  target_ref: component-engine-composition-root
+  witness: The draft listed no component for crates/ma-engine, whose Cargo.toml depends on none of ma-signal,
+    ma-detect, ma-capture, ma-signals-windows or any adapter crate, while four contracts delegated wiring to "the
+    composition root". The component is added because boundary.rs skips the layer check only at the top rank, so
+    L5 is the sole legal owner of that wiring and an unowned harness would land in an L3 crate.
+  requirement_refs:
+  - FR-108
+  - FR-109
+  - FR-112
+  - NFR-105
+  authority_refs:
+  - critique issue-composition-root-and-harness-unowned
+  - xtask/src/boundary.rs (rank equals top skips the edge check)
+- id: scope-signal-manual-record-component
+  kind: critic_induced_contract
+  target_ref: component-manual-verification-record
+  witness: The draft had no owner for a verification whose observation the hosted runner cannot make, and
+    Registration.command is a required non-empty string, so the two command-less entries could not be registered
+    and six more would have run unattended on a runner with no target application installed. The component
+    exists to own manual-verification.toml and the committed records that make those checks falsifiable.
+  requirement_refs:
+  - NFR-106
+  - NFR-101
+  authority_refs:
+  - critique issue-t2-checks-need-a-host-the-ci-runner-is-not
+  - critique issue-null-command-verifications-cannot-register
+dispositions:
+- decision_input_ref: decision-input-wasapi-process-loopback-api
+  disposition: 'adopted. assume (conductor, user-delegated authority, 2026-09-04): ActivateAudioInterfaceAsync
+    with AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK including process-tree mode, per-application availability
+    probed at runtime, system-loopback fallback with contamination_risk = PossibleOtherApps on activation
+    failure. Comparison baseline system-loopback-only capture is rejected as the primary path because it leaves
+    CaptureMode::ProcessLoopback unused for the three desktop applications it exists for. Fixed by
+    adr-phase1-windows-audio-signal-observation-apis and contract-process-loopback-capture.'
+  adr_refs:
+  - adr-phase1-windows-audio-signal-observation-apis
+  contract_refs:
+  - contract-process-loopback-capture
+- decision_input_ref: decision-input-microphone-use-observation-api
+  disposition: 'adopted. assume (conductor, user-delegated authority, 2026-09-04): IAudioSessionManager2
+    enumeration plus IAudioSessionNotification/IAudioSessionEvents state changes as the only emitting source,
+    CapabilityAccessManager consent-store timestamps polled at 1 s as corroboration only, one-second latency
+    bound on the primary path. Comparison baseline polling IAudioSessionControl state without notifications is
+    rejected because it gives no documented latency bound without busy polling. The two-source precedence,
+    epistemic partition and typed startup failure are fixed by contract-audio-session-mic-use.'
+  adr_refs:
+  - adr-phase1-windows-audio-signal-observation-apis
+  contract_refs:
+  - contract-audio-session-mic-use
+- decision_input_ref: decision-input-extension-trust-reversal-trigger-status
+  disposition: 'verify-in-phase (conductor, user-delegated authority, 2026-09-04): the reversal condition of
+    adr-20260903-extension-localhost-channel-trust is treated as not yet evaluated; Phase 1 applies the
+    owner-only descriptor the writer already builds and then records both observations rather than pre-judging
+    the outcome. A violation is raised as an open decision for consultation; the loopback channel stays the Phase
+    1 design until then.'
+  adr_refs:
+  - adr-20260903-extension-localhost-channel-trust
+  contract_refs:
+  - contract-extension-trust-reversal-check
+- decision_input_ref: decision-input-capture-path-isolation-scope
+  disposition: 'align-config-to-doc (conductor, user-delegated authority, 2026-09-04): boundary.toml''s
+    capture-path-isolation sources are extended to include ma-signals-windows and ma-ext-channel so the enforced
+    rule matches module-boundaries.md INV-002; the documented invariant is not narrowed. Comparison baseline
+    narrowing the prose is rejected per the conductor''s rationale. Strengthened here by an xtask test that fails
+    when the sources list stops covering every capture-path crate.'
+  adr_refs:
+  - adr-20260903-workspace-boundary-enforcement
+  contract_refs:
+  - contract-capture-path-isolation-scope
+- decision_input_ref: decision-input-package-identity-observation-api
+  disposition: implementation_detail. Delegated as discretion-package-identity-probe, a private, single-unit,
+    reversible choice inside crates/ma-signals-windows/src/package_identity.rs whose alternatives all preserve
+    package_family_name as Option<String> with None meaning "not packaged", verified by
+    v-win1-process-identity-fixture. Escalates if packaged and non-packaged builds cannot be distinguished or if
+    the chosen API forces a service-identifier literal outside an L4 crate.
+  contract_refs:
+  - contract-process-package-identity
+- decision_input_ref: decision-input-engine-notification-platform
+  disposition: not_applicable. Phase 1 is headless and diagnostic-first and builds no consent surface
+    (NFR-105/contract-diagnostic-session-harness), so no Phase 1 contract's observable varies with the choice of
+    notification platform. It remains open for the phase that builds the real consent UI and is recorded there,
+    not here.
+  contract_refs: []
+- decision_input_ref: decision-input-windows-rs-crate-and-gnu-fidelity
+  disposition: 'adopted, replacing the drafted spike-first deferral. The observable that mattered is not which
+    version is pinned but that exactly one version is pinned and that the portable job stays green: a single
+    workspace-level [workspace.dependencies] pin used by every Windows-only crate, all Windows code behind
+    a cfg(windows) attribute with a portable fake behind the same trait, and the x86_64-pc-windows-gnu cross-check removed
+    as a merge gate because its only evidence was status=candidate on one development host and the ubuntu job
+    installs neither the target nor a mingw linker. Fixed by adr-phase1-windows-rs-crate-and-gnu-fidelity and
+    NFR-102; the numeric version is an implementation detail no observable depends on.'
+  adr_refs:
+  - adr-phase1-windows-rs-crate-and-gnu-fidelity
+  contract_refs:
+  - contract-windows-tier-verification-registration
+- decision_input_ref: decision-input-echo-leak-measurement-representation
+  disposition: 'adopted, closed against the drafted default. The Payload.level_dbfs reuse is rejected: a derived
+    cross-track statistic over a sixty-second window is not an observation of one subject at one instant, and
+    reinterpreting a closed-schema field read by four crates would need the ADR-gated bump NFR-104 demands
+    anyway. A new dedicated Payload field is rejected for the same reason. The measurement leaves the signal
+    envelope entirely and lives in a per-application capture-side record, and the statistic, window selection,
+    alignment basis and outcome partition are fixed by adr-phase1-echo-leak-measurement-representation.'
+  adr_refs:
+  - adr-phase1-echo-leak-measurement-representation
+  contract_refs:
+  - contract-echo-leak-measurement
+- decision_input_ref: decision-input-per-app-loopback-requirement-location
+  disposition: 'adopted, closed against the drafted candidate. fold (conductor under user-delegated authority,
+    2026-09-04, minimality-decisions.json): the record lives in the Windows-tier measured comparison record the
+    manual-verification family already commits, and Phase 1 adds no field to adapter.toml or AdapterSpec.
+    Rejected alternatives: the drafted additive requires_process_tree_loopback field parsed into AdapterSpec (it
+    widens an L1 contract four L4 crates, the shared conformance suite and the composition root read, and Phase 1
+    adds no behavioural consumer of it — no match rule reads it, adapter_table_version is deliberately not
+    bumped, and its only asserted value is the one the comparison record already states), and a new ma-store
+    table keyed by application (a writer role and a migration for policy data that is not a per-recording
+    observation). What the fold would otherwise lose — that the record actually covers every target application
+    — is kept by the required-observation keys the procedure declares, checked by
+    v-win1-loopback-requirement-record-shape and enforced by the manual-record gate. The adapter-table field is
+    deferred to the phase that adds a behavioural consumer for it. Fixed by
+    adr-phase1-per-application-loopback-requirement-record.'
+  adr_refs:
+  - adr-phase1-per-application-loopback-requirement-record
+  contract_refs:
+  - contract-per-app-loopback-requirement-record
+  - contract-manual-verification-record
+- decision_input_ref: decision-input-mic-endpoint-representation
+  disposition: 'adopted. Raised by critique issue-endpoint-process-binding-not-representable: Subject is a closed
+    four-variant union with additionalProperties false and a Signal carries exactly one Subject, so a
+    MicCaptureStarted attributed to Subject::Process cannot also name an endpoint, and Payload has no endpoint
+    field. Rejected alternatives: an ADR-gated Payload.endpoint_id bump (a field no detector consumes) and a
+    paired Subject::Device signal correlated by time (no join key). Adopted: the endpoint is capture-side
+    configuration, not detection evidence, so the collector exposes it through a non-Signal accessor that the
+    composition root passes into ma-capture as a string argument. Fixed by
+    adr-20260904-mic-endpoint-observed-outside-the-signal-envelope.'
+  adr_refs:
+  - adr-20260904-mic-endpoint-observed-outside-the-signal-envelope
+  contract_refs:
+  - contract-mic-endpoint-follows-session
+  - contract-audio-session-mic-use
+- decision_input_ref: decision-input-extension-endpoint-acquisition
+  disposition: 'adopted. Raised by critique issue-extension-cannot-obtain-endpoint-token: an MV3 service worker
+    limited to the tabs API and the loopback host can read no file and therefore learns neither the ephemeral
+    port nor the per-start token. Rejected alternatives: an origin-pinned bootstrap endpoint returning the token
+    (weakens the token against a same-user local process before NFR-103(a) has measured whether that matters, and
+    adds a response body to a server whose responses are status-only), native messaging now (the ADR''s own named
+    reversal target, which would discard the evidence the ADR asks Phase 1 to collect), and installer or
+    managed-storage provisioning (Phase 1 has no installer). Adopted: the diagnostic harness writes the current
+    port and token into the unpacked extension directory it is given, which changes no accepted security rule.
+    Fixed by adr-20260904-extension-endpoint-provisioning-poc; provisioning for a store-installed extension is
+    explicitly a later phase''s decision.'
+  adr_refs:
+  - adr-20260904-extension-endpoint-provisioning-poc
+  contract_refs:
+  - contract-extension-signal-delivery
+- decision_input_ref: decision-input-verification-registry-multi-plan
+  disposition: 'adopted. Raised by critique issue-verification-registry-is-single-plan. Rejected alternatives:
+    repointing the single plan field at Phase 1''s spine (makes 112 Phase 0 registrations stale and breaks the
+    docs design-set rule, which requires every v-* id cited by a design invariant to stay registered) and copying
+    Phase 0''s ids into the Phase 1 spine (a plan would then declare contracts it does not own). Adopted: a plans
+    array whose declared ids are unioned, with the single-plan field still accepted. Fixed by
+    adr-20260904-verification-registry-multi-plan-and-manual-records.'
+  adr_refs:
+  - adr-20260904-verification-registry-multi-plan-and-manual-records
+  contract_refs:
+  - contract-windows-tier-verification-registration
+- decision_input_ref: decision-input-manual-vs-ci-verification-split
+  disposition: 'adopted. Raised by planning-source.txt''s required split and by critique
+    issue-t2-checks-need-a-host-the-ci-runner-is-not. Rejected alternatives: leaving the six checks registered as
+    unattended commands on windows-latest (they would fail for want of an installed application or pass
+    vacuously) and dropping them (they are PLAN section 6 Phase 1 exit criteria). Adopted: a declared procedure
+    per manual id and a committed record, gated by cargo xtask manual-record, which the hosted runner can execute
+    even though it cannot make the observation. Fixed by contract-manual-verification-record.'
+  adr_refs:
+  - adr-20260904-verification-registry-multi-plan-and-manual-records
+  contract_refs:
+  - contract-manual-verification-record
+- decision_input_ref: decision-input-process-tree-join-owner
+  disposition: 'adopted. Raised by critique issue-meet-process-tree-join-unimplemented and
+    issue-process-tree-root-pid-producer-unassigned: FR-111 and the accepted extension-channel ADR both require
+    the same-process-tree join, but process_tree_root_pid is read nowhere and produced nowhere. Rejected
+    alternatives: leaving ma-detect fixed and asserting the property in the adapter tables (a table cannot
+    compare two signals) and adding a new SignalKind carrying the pair (a new closed-schema variant for a fact
+    two existing signals already carry). Adopted: decide() performs the join over the existing Payload field,
+    the Windows collector populates it from the process-tree lookup it already performs, and the extension
+    channel copies it from an additive transport-supplied Request field. Fixed by
+    adr-20260904-detector-process-tree-corroboration-join.'
+  adr_refs:
+  - adr-20260904-detector-process-tree-corroboration-join
+  contract_refs:
+  - contract-meet-corroboration-required
+  - contract-audio-session-mic-use
+  - contract-extension-trust-reversal-check
