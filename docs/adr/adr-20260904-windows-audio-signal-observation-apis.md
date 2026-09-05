@@ -50,7 +50,7 @@ source_paths:
 - PLAN.md
 - crates/ma-signals-windows
 - crates/ma-capture/src/source.rs
-updated: '2026-09-04'
+updated: '2026-09-05'
 ---
 
 ## Context

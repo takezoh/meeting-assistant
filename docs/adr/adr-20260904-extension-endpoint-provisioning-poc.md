@@ -49,7 +49,7 @@ source_paths:
 - crates/ma-ext-channel/src/auth.rs
 - crates/ma-ext-channel/src/server.rs
 - PLAN.md
-updated: '2026-09-04'
+updated: '2026-09-05'
 ---
 
 ## Context

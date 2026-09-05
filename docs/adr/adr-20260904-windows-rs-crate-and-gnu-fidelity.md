@@ -44,7 +44,7 @@ source_paths:
 - Cargo.toml
 - .github/workflows/ci.yml
 - verification-tiers.toml
-updated: '2026-09-04'
+updated: '2026-09-05'
 ---
 
 ## Context

@@ -45,7 +45,7 @@ source_paths:
 - crates/ma-signal/src/envelope.rs
 - crates/ma-capture/src/source.rs
 - boundary.toml
-updated: '2026-09-04'
+updated: '2026-09-05'
 ---
 
 ## Context

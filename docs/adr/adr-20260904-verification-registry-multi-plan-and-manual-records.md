@@ -47,7 +47,7 @@ source_paths:
 - verification-tiers.toml
 - xtask/src/verify.rs
 - .github/workflows/ci.yml
-updated: '2026-09-04'
+updated: '2026-09-05'
 ---
 
 ## Context

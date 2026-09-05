@@ -48,7 +48,7 @@ source_paths:
 - verification-tiers.toml
 - xtask/src/verify.rs
 - crates/ma-signal/src/adapter.rs
-updated: '2026-09-04'
+updated: '2026-09-05'
 ---
 
 ## Context
