@@ -78,6 +78,9 @@ impl ChunkFs for RealFs {
 pub enum DegradedReason {
     DiskBackpressure,
     DiskFull,
+    /// The capture device reported a buffer discontinuity: audio was lost before it reached the
+    /// writer, so the gap is recorded from the device's report rather than from queue pressure.
+    CaptureDiscontinuity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +183,14 @@ impl ChunkWriter {
                 DegradedReason::DiskBackpressure
             };
             self.record_drop(dropped, reason);
+        }
+    }
+
+    /// Records audio the capture device itself dropped (a reported buffer discontinuity) as an
+    /// explicit gap at the current position, so a device overrun is never silently spliced.
+    pub fn record_capture_gap(&mut self, dropped_samples: u64) {
+        if dropped_samples > 0 {
+            self.record_drop(dropped_samples, DegradedReason::CaptureDiscontinuity);
         }
     }
 

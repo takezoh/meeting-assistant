@@ -9,6 +9,7 @@ pub mod consolidate;
 pub mod manifest;
 pub mod recovery;
 pub mod source;
+pub mod wasapi;
 pub mod wav;
 
 pub use chunk_writer::{
@@ -25,3 +26,7 @@ pub use manifest::{
 };
 pub use recovery::{recover, RecoveryReport};
 pub use source::{CaptureSource, SourceEvent, SyntheticSource};
+pub use wasapi::{
+    ActivationBackend, ActivationError, ActivationOutcome, AudioStream, LoopbackTarget,
+    StreamFormat, StreamRead, WasapiSource,
+};

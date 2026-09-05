@@ -1,0 +1,11 @@
+{
+  "timeline": "teams-desktop-session.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 5000000000,
+      "to_monotonic_ns": 1805000000000,
+      "was_meeting": true,
+      "note": "desktop client captured the microphone for a thirty-minute call"
+    }
+  ]
+}

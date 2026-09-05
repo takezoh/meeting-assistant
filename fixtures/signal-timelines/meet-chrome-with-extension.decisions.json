@@ -1,0 +1,145 @@
+{
+  "adapter_table_version": 1,
+  "decisions": [
+    {
+      "decision_id": "b3d10369-9951-5206-99d5-e673bb91cd58",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce4-001e-7000-8000-00003316cf32"
+      ],
+      "produced_at_monotonic": 1000000000
+    },
+    {
+      "decision_id": "dae6df22-9a3b-5368-9591-32f28e994fa2",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce4-001f-7000-8000-000034cac509"
+      ],
+      "produced_at_monotonic": 1050000000
+    },
+    {
+      "decision_id": "65914dca-7310-5e88-b78d-80b9642a30a1",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce4-0020-7000-8000-0000367ebae0"
+      ],
+      "produced_at_monotonic": 1200000000
+    },
+    {
+      "decision_id": "5ebcd5d6-486e-519b-9b72-c1b06fa5eb09",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce4-0021-7000-8000-00003832b0b7"
+      ],
+      "produced_at_monotonic": 1250000000
+    },
+    {
+      "decision_id": "fa73d939-9413-5fbd-9791-3520f8a965a3",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "tab:meet.example.test:tab-42",
+      "rule_id": "extension-alone",
+      "evidence": [
+        "01990ce4-0022-7000-8000-000039e6a68e"
+      ],
+      "produced_at_monotonic": 3000000000
+    },
+    {
+      "decision_id": "99d4dffa-7bce-5705-9e61-12311732b3e5",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "tab:meet.example.test:tab-42",
+      "rule_id": "extension-alone",
+      "evidence": [
+        "01990ce4-0022-7000-8000-000039e6a68e"
+      ],
+      "produced_at_monotonic": 4500000000
+    },
+    {
+      "decision_id": "d4bdbc47-694c-5971-bae7-931b7a72a2ca",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "start"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "tab:meet.example.test:tab-42",
+      "rule_id": "adapter-match",
+      "evidence": [
+        "01990ce4-0022-7000-8000-000039e6a68e",
+        "01990ce4-0024-7000-8000-00003d4e923c"
+      ],
+      "produced_at_monotonic": 5000000000
+    },
+    {
+      "decision_id": "40a35674-7baf-58db-9344-0e057de5c260",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "continue"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "tab:meet.example.test:tab-42",
+      "rule_id": "continue",
+      "evidence": [
+        "01990ce4-0025-7000-8000-00003f028813"
+      ],
+      "produced_at_monotonic": 6000000000
+    },
+    {
+      "decision_id": "c1dc5e77-175b-548a-8c18-5dea93c9fc4a",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "continue"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "tab:meet.example.test:tab-42",
+      "rule_id": "continue",
+      "evidence": [
+        "01990ce4-0026-7000-8000-000040b67dea"
+      ],
+      "produced_at_monotonic": 6000500000
+    },
+    {
+      "decision_id": "caee2981-7652-5483-a664-330a38c7fa6e",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "end"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "tab:meet.example.test:tab-42",
+      "rule_id": "end",
+      "evidence": [
+        "01990ce4-0022-7000-8000-000039e6a68e",
+        "01990ce4-0024-7000-8000-00003d4e923c",
+        "01990ce4-0025-7000-8000-00003f028813",
+        "01990ce4-0026-7000-8000-000040b67dea",
+        "01990ce4-0027-7000-8000-0000426a73c1"
+      ],
+      "produced_at_monotonic": 2405000000000
+    }
+  ],
+  "diagnostics": []
+}

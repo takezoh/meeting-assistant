@@ -8,12 +8,30 @@ use std::process::Command;
 
 #[derive(Debug, Deserialize)]
 struct TierFile {
+    /// The single-plan form; still accepted and unioned with `plans`.
     #[serde(default)]
     plan: Option<String>,
+    /// Every canonical plan whose declared verification ids form the registered set
+    /// (contract-windows-tier-verification-registration).
+    #[serde(default)]
+    plans: Vec<String>,
     #[serde(default)]
     tiers: BTreeMap<String, TierDecl>,
     #[serde(default)]
     verification: Vec<Registration>,
+}
+
+impl TierFile {
+    /// The plan paths in declaration order, the single field first, duplicates removed.
+    fn plan_paths(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for p in self.plan.iter().chain(self.plans.iter()) {
+            if !out.contains(p) {
+                out.push(p.clone());
+            }
+        }
+        out
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -103,16 +121,32 @@ pub fn check_registration(
     tiers: Option<&Path>,
 ) -> Result<Report, String> {
     let (file, tiers_path) = load_tiers(root, tiers)?;
-    let plan_path = match plan {
-        Some(p) => p.to_path_buf(),
-        None => root.join(
-            file.plan
-                .as_deref()
-                .ok_or("verification-tiers.toml declares no plan path and --plan was not given")?,
-        ),
+    let plan_paths: Vec<PathBuf> = match plan {
+        Some(p) => vec![p.to_path_buf()],
+        None => {
+            let paths = file.plan_paths();
+            if paths.is_empty() {
+                return Err(
+                    "verification-tiers.toml declares no plan path (plan or plans) and --plan was not given"
+                        .into(),
+                );
+            }
+            paths.iter().map(|p| root.join(p)).collect()
+        }
     };
-    let declared = plan_verifications(&plan_path)?;
+    // The registered set is the union of every declared plan; an id declared by two plans is a
+    // plan defect, not something the registry can resolve.
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut findings = Vec::new();
+    for path in &plan_paths {
+        for (id, tier) in plan_verifications(path)? {
+            if let Some(previous) = declared.insert(id.clone(), tier) {
+                findings.push(format!(
+                    "{id}: declared by more than one plan (previously as {previous}); every id belongs to exactly one plan"
+                ));
+            }
+        }
+    }
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     for reg in &file.verification {
         *seen.entry(reg.id.clone()).or_default() += 1;

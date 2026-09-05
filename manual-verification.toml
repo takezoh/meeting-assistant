@@ -1,0 +1,143 @@
+# Manual verification procedures (contract-manual-verification-record).
+#
+# Nine Phase 1 exit criteria need a real Windows 11 machine with the meeting applications
+# installed, a speaker and a microphone, two hours of wall clock, or a human judging a comparison.
+# The hosted windows runner cannot make those observations, so each one is a declared procedure
+# here and a committed JSON record under `records_dir` named `<id>.json`:
+#
+#   { "id": "...", "performed_at": "<ISO-8601>", "performed_by": "<role>", "host_profile": "...",
+#     "outcome": "pass" | "fail" | "blocked", "observations": { "<key>": <value>, ... },
+#     "procedure_digest": "<sha256 printed by cargo xtask manual-record --id <id>>",
+#     "notes": "..." }
+#
+# `cargo xtask manual-record --id <id> --require pass` is the registered command for every T2 id
+# listed here. It fails when the record is absent, when its outcome is not pass, when a required
+# observation is missing, or when the procedure digest differs from the current procedure text —
+# editing a procedure invalidates every record taken against the old one.
+#
+# No service identifier appears in this file: where a procedure needs one key per target
+# application, `required_observations_from = "adapter-tables"` reads the ids from
+# crates/ma-adapter-*/adapter.toml.
+
+schema = 1
+records_dir = "docs/changes/change-20260904-phase1-windows-detection-and-capture/manual-verification"
+
+[[procedure]]
+id = "v-win1-process-identity-live-probe"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications"
+steps = [
+  "Start each target application (desktop clients and the browser) and leave it idle for ten seconds.",
+  "Run the diagnostic harness (ma-diag) with the process collector enabled and capture its timeline.",
+  "For every target process record whether package_family_name was Some (packaged) or None, and whether the collector's package_query_failures counter moved.",
+  "Restart the harness while at least one target application is still running and confirm the first ProcessStarted for it carries restart_resync = true.",
+  "Use ma-diag record to capture the five required scenarios (three desktop applications, Meet with the extension, and Meet without it); record five capture artifact identifiers, redact host identifiers using a recorded mapping object, replace the seed fixtures and their labels/decisions sidecars, and record five ma-diag replay --synthetic-tables results that match the committed sidecars.",
+]
+pass_criterion = "Every target application is identified by image name or package family name; no None came from a failed probe (package_query_failures = 0); the restart resync flag is set on restart; all five seed fixtures have been replaced from this Windows capture, redacted, and replayed byte-identically against their sidecars."
+required_observations = ["packaged_applications", "non_packaged_applications", "package_query_failures", "restart_resync_observed", "five_real_fixture_captures", "redaction_mapping_recorded", "five_replays_match_sidecars"]
+
+[[procedure]]
+id = "v-win1-mic-use-latency-live"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications"
+steps = [
+  "Start the harness with the audio-session collector enabled and a wall-clock reference visible.",
+  "Join a call in a target application and unmute the microphone; note the wall-clock instant.",
+  "Read the MicCaptureStarted signal's wall_utc_ms from the timeline and compute the latency.",
+  "Mute and leave the call; repeat the measurement for MicCaptureStopped.",
+  "Record the consent-store corroboration delay from the collector diagnostics.",
+]
+pass_criterion = "MicCaptureStarted and MicCaptureStopped each land within 1000 ms of the action; no signal originated from the consent store alone."
+required_observations = ["started_latency_ms", "stopped_latency_ms", "consent_corroboration_delay_ms", "inconclusive_consent_only", "conflicts"]
+
+[[procedure]]
+id = "v-win1-loopback-live-activation"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications"
+steps = [
+  "For each target application, join a call with remote audio playing.",
+  "Activate process loopback for the application's process with process-tree mode included and record the ActivationOutcome (Activated | Fallback | ManualOnly).",
+  "Activate again for the single process (process-tree mode excluded) and compare the captured audio with the process-tree capture.",
+  "Record the TrackOrigin capture_mode and contamination_risk for each activation.",
+]
+pass_criterion = "Every target application reaches Activated or a recorded Fallback; no activation ends in silent capture; the per-application single-process versus process-tree comparison is recorded."
+required_observations = ["activation_outcomes", "capture_modes", "contamination_risks"]
+
+[[procedure]]
+id = "v-win1-mic-endpoint-live"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications-and-two-microphones"
+steps = [
+  "Attach two capture endpoints (built-in microphone and a headset).",
+  "Join a call in a target application using the headset; confirm the collector's endpoint observation names the headset endpoint id.",
+  "Start recording through the harness and confirm the microphone track opened the headset endpoint, not the system default.",
+  "Switch the application's microphone to the built-in device mid-call; confirm a successor track opened with a new origin and the selection record names the new endpoint.",
+]
+pass_criterion = "The recorded microphone endpoint follows the application's session both at start and after a mid-call switch, through a successor track."
+required_observations = ["initial_endpoint_matches_session", "successor_track_on_switch", "selection_history"]
+
+[[procedure]]
+id = "v-win1-leak-live-per-app"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications-speaker-and-microphone"
+steps = [
+  "For each target application, record a call segment of at least ninety seconds with remote speech and no local speech, speaker output on.",
+  "Run ma-diag measure-leak --loopback-track DIR --mic-track DIR --application ID --alignment-uncertainty-ms N over the paired loopback and microphone tracks, using the measured capture-start uncertainty N.",
+  "Record the outcome (measured | no_qualifying_window | inconclusive_alignment) and, when measured, erl_db.",
+]
+pass_criterion = "Every target application has a recorded outcome; a measured value is reported with both RMS levels and the alignment uncertainty."
+required_observations_from = "adapter-tables"
+
+[[procedure]]
+id = "v-win1-two-hour-live"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications"
+steps = [
+  "Start a recording of a target application call and keep it running for two hours of wall clock.",
+  "Stop the recording and run recovery over the track directory.",
+  "Compare the manifest against the directory, record every gap record, and compare the sum of written samples with the wall-clock duration at 16000 samples/second.",
+]
+pass_criterion = "The manifest and the directory agree, no gap record exists, the wall-clock duration is at least two hours, and captured_sample_duration_s is within one percent of wall_clock_duration_s."
+required_observations = ["target_application", "wall_clock_duration_s", "captured_sample_duration_s", "manifest_vs_directory", "gap_records"]
+
+[[procedure]]
+id = "v-win1-loopback-requirement-live-comparison"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-target-applications"
+steps = [
+  "For each target application, capture the same call twice: once under single-process activation and once under process-tree activation.",
+  "Compare the two captures and state whether single-process activation captured the same audio.",
+  "Record one object per adapter table id with single_process and process_tree ('captured' | 'silent' | 'activation-failed') plus requirement ('same' | 'process-tree-required' | 'not-activatable').",
+]
+pass_criterion = "Every adapter table id carries an observation; the per-application requirement FR-107 asks for is thereby recorded from measurement."
+required_observations_from = "adapter-tables"
+observation_required_fields = ["single_process", "process_tree", "requirement"]
+
+[procedure.observation_field_domains]
+single_process = ["captured", "silent", "activation-failed"]
+process_tree = ["captured", "silent", "activation-failed"]
+requirement = ["same", "process-tree-required", "not-activatable"]
+
+[[procedure]]
+id = "v-win1-extension-live-chrome"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-chrome"
+steps = [
+  "Start the harness with the extension directory so endpoint.js is provisioned; load the extension unpacked and pin its id.",
+  "Open a meeting tab and confirm the listener answers 204 and the timeline shows tab_meeting_present with the right host.",
+  "Restart the engine (token rotates) and confirm the worker logs the 401 condition and stops posting.",
+]
+pass_criterion = "A meeting tab yields a 204 with only the declared fields; after an engine restart the stale worker stops posting instead of retrying."
+required_observations = ["meeting_tab_204", "fields_only_declared", "stale_token_stops_posting"]
+
+[[procedure]]
+id = "v-win1-browser-loopback-policy-observed"
+owner = "phase1-windows-tier"
+host_profile = "windows-11-desktop-with-chrome-and-edge"
+steps = [
+  "With the harness running, load the detection-only extension in Chrome under the current browser policy and record whether it reaches the loopback listener.",
+  "Repeat in Edge.",
+  "Copy endpoint_json_same_user_readable from target/windows-observations/endpoint-json-same-user-readability.json produced by the trust_reversal Windows test.",
+]
+pass_criterion = "Both browsers' outcomes are recorded as reached or blocked, never skipped; the endpoint.json readability observation is recorded as a fact. The observations feed the ADR reversal decision and do not pre-judge it."
+required_observations = ["chrome_reaches_listener", "edge_reaches_listener", "endpoint_json_same_user_readable"]

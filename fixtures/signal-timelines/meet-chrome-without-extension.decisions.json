@@ -1,0 +1,71 @@
+{
+  "adapter_table_version": 1,
+  "decisions": [
+    {
+      "decision_id": "12dacb7e-52ca-59f9-8a13-016b79ed1fdf",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce5-002c-7000-8000-00004aee40f4"
+      ],
+      "produced_at_monotonic": 1000000000
+    },
+    {
+      "decision_id": "9f7a5deb-9e3f-5b98-b37d-a0f2fba4490a",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce5-002d-7000-8000-00004ca236cb"
+      ],
+      "produced_at_monotonic": 1200000000
+    },
+    {
+      "decision_id": "3048f217-fc29-53c5-8965-7ed74d64fc3d",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce5-002e-7000-8000-00004e562ca2"
+      ],
+      "produced_at_monotonic": 1250000000
+    },
+    {
+      "decision_id": "34508f2b-f7b7-50fe-a0d4-d27a21196d7c",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce5-002f-7000-8000-0000500a2279"
+      ],
+      "produced_at_monotonic": 4500000000
+    },
+    {
+      "decision_id": "5bffb40d-5e9f-593a-9306-7e767b907d82",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "browser-x",
+      "subject_key": "process:6301:example-browser.exe",
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce5-0030-7000-8000-000051be1850"
+      ],
+      "produced_at_monotonic": 5000000000
+    }
+  ],
+  "diagnostics": []
+}

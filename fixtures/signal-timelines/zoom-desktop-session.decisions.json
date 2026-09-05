@@ -1,0 +1,74 @@
+{
+  "adapter_table_version": 1,
+  "decisions": [
+    {
+      "decision_id": "54ab8392-80ee-5cd5-a41e-008c59570811",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "desk-c",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce3-0015-7000-8000-000023c32aa3"
+      ],
+      "produced_at_monotonic": 1000000000
+    },
+    {
+      "decision_id": "f53cc6f8-5ed1-5c4f-82c2-92745fdd138a",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "desk-c",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce3-0016-7000-8000-00002577207a"
+      ],
+      "produced_at_monotonic": 1100000000
+    },
+    {
+      "decision_id": "3886f1ef-a663-5510-9f1b-46f12d404733",
+      "outcome": {
+        "outcome": "inconclusive"
+      },
+      "adapter_id": "desk-c",
+      "subject_key": null,
+      "rule_id": "corroboration-missing",
+      "evidence": [
+        "01990ce3-0017-7000-8000-0000272b1651"
+      ],
+      "produced_at_monotonic": 4000000000
+    },
+    {
+      "decision_id": "9d09fb9f-157a-5d28-9192-56d93b85849a",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "start"
+      },
+      "adapter_id": "desk-c",
+      "subject_key": "process:4300:example-desk-c.exe",
+      "rule_id": "adapter-match",
+      "evidence": [
+        "01990ce3-0018-7000-8000-000028df0c28"
+      ],
+      "produced_at_monotonic": 5000000000
+    },
+    {
+      "decision_id": "9c048a83-5a5d-5e42-bb88-e92d3d924c51",
+      "outcome": {
+        "outcome": "determinate",
+        "phase": "end"
+      },
+      "adapter_id": "desk-c",
+      "subject_key": "process:4300:example-desk-c.exe",
+      "rule_id": "end",
+      "evidence": [
+        "01990ce3-0018-7000-8000-000028df0c28",
+        "01990ce3-0019-7000-8000-00002a9301ff"
+      ],
+      "produced_at_monotonic": 1805000000000
+    }
+  ],
+  "diagnostics": []
+}

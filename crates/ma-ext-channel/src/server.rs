@@ -32,6 +32,13 @@ impl Default for SystemClock {
     }
 }
 
+impl SystemClock {
+    /// A clock whose monotonic zero is `start`, shared with the other sources of a session.
+    pub fn with_origin(start: std::time::Instant) -> Self {
+        SystemClock { start }
+    }
+}
+
 impl Clock for SystemClock {
     fn monotonic_ns(&self) -> u64 {
         self.start.elapsed().as_nanos() as u64
@@ -51,6 +58,11 @@ pub struct Request {
     pub origin: Option<String>,
     pub token: Option<String>,
     pub body: Vec<u8>,
+    /// The process-tree root of the browser that opened the connection, as the transport observed
+    /// it on the loopback peer; copied into every tab signal so the detector can join tab and
+    /// microphone facts (contract-extension-trust-reversal-check). Additive: `None` when the
+    /// transport cannot attribute the peer.
+    pub peer_process_tree_root_pid: Option<u32>,
 }
 
 /// Status only. There is never a body.
@@ -92,7 +104,9 @@ pub struct Server<C: Clock> {
     /// Last accepted seq per extension instance; bounded, oldest instance evicted.
     last_seq: BTreeMap<String, u64>,
     instance_order: VecDeque<String>,
-    recent_by_connection: BTreeMap<u32, VecDeque<u64>>,
+    /// Accepted requests in the current server-wide one-second window. The concrete transport
+    /// closes every HTTP connection, so a per-connection bucket would be bypassable by reconnecting.
+    recent_requests: VecDeque<u64>,
     queue: VecDeque<Signal>,
     counters: Counters,
 }
@@ -105,7 +119,7 @@ impl<C: Clock> Server<C> {
             clock,
             last_seq: BTreeMap::new(),
             instance_order: VecDeque::new(),
-            recent_by_connection: BTreeMap::new(),
+            recent_requests: VecDeque::new(),
             queue: VecDeque::new(),
             counters: Counters::default(),
         }
@@ -133,7 +147,7 @@ impl<C: Clock> Server<C> {
             return self.reject(reason);
         }
         let now_ns = self.clock.monotonic_ns();
-        if self.rate_limited(request.connection_id, now_ns) {
+        if self.rate_limited(now_ns) {
             return self.reject(RejectReason::RateLimited);
         }
         let message = match ExtensionMessage::parse(&request.body) {
@@ -157,7 +171,7 @@ impl<C: Clock> Server<C> {
         }
         self.remember_seq(&message.instance_id, message.seq);
         self.counters.accepted += 1;
-        for signal in self.signals_for(&message) {
+        for signal in self.signals_for(&message, request.peer_process_tree_root_pid) {
             self.enqueue(signal);
         }
         Response::ACCEPTED
@@ -180,18 +194,18 @@ impl<C: Clock> Server<C> {
         self.last_seq.insert(instance_id.to_string(), seq);
     }
 
-    fn rate_limited(&mut self, connection_id: u32, now_ns: u64) -> bool {
-        let window = self.recent_by_connection.entry(connection_id).or_default();
-        while window
+    fn rate_limited(&mut self, now_ns: u64) -> bool {
+        while self
+            .recent_requests
             .front()
             .is_some_and(|t| now_ns.saturating_sub(*t) >= 1_000_000_000)
         {
-            window.pop_front();
+            self.recent_requests.pop_front();
         }
-        if window.len() >= MAX_MESSAGES_PER_SECOND {
+        if self.recent_requests.len() >= MAX_MESSAGES_PER_SECOND {
             return true;
         }
-        window.push_back(now_ns);
+        self.recent_requests.push_back(now_ns);
         false
     }
 
@@ -205,7 +219,11 @@ impl<C: Clock> Server<C> {
 
     /// `meeting_present` yields `tab_meeting_present`; `audible` yields `tab_audible`; a report with
     /// neither is a keep-alive and yields no signal, so it can never corroborate anything.
-    fn signals_for(&self, message: &ExtensionMessage) -> Vec<Signal> {
+    fn signals_for(
+        &self,
+        message: &ExtensionMessage,
+        peer_process_tree_root_pid: Option<u32>,
+    ) -> Vec<Signal> {
         let observed_at = ObservedAt {
             monotonic_ns: self.clock.monotonic_ns(),
             wall_utc_ms: self.clock.wall_utc_ms(),
@@ -222,6 +240,7 @@ impl<C: Clock> Server<C> {
             observed_at,
             payload: Payload {
                 audible: Some(message.audible),
+                process_tree_root_pid: peer_process_tree_root_pid,
                 ..Payload::default()
             },
             authority: Authority::Extension,
@@ -286,6 +305,7 @@ mod tests {
             origin: Some(ORIGIN.into()),
             token: Some(server.authenticator().token().to_hex()),
             body: body(seq, server.clock.wall_utc_ms()),
+            peer_process_tree_root_pid: None,
         }
     }
 
@@ -430,9 +450,17 @@ mod tests {
             port: 49_152,
             token: a.authenticator().token().to_hex(),
         };
-        let (path, security) = descriptor.write(dir.path(), "S-1-5-21-1-2-3-1001").unwrap();
+        let mut applier = crate::auth::RecordingApplier::default();
+        let (path, security) = descriptor
+            .write(dir.path(), "S-1-5-21-1-2-3-1001", &mut applier)
+            .unwrap();
         assert!(path.ends_with("MeetingAssistant/ext/endpoint.json"));
         assert!(security.grants_owner_only());
+        assert_eq!(
+            applier.applied.len(),
+            1,
+            "the descriptor is applied, not only built"
+        );
         let read: EndpointDescriptor =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(read, descriptor);
@@ -460,5 +488,19 @@ mod tests {
         }
         assert_eq!(s.queue.len(), MAX_QUEUED_SIGNALS);
         assert!(s.counters().dropped_oldest > 0);
+    }
+
+    #[test]
+    fn reconnecting_does_not_bypass_the_server_wide_rate_limit() {
+        let mut s = server();
+        for seq in 1..=MAX_MESSAGES_PER_SECOND as u64 {
+            let mut request = good(&s, seq);
+            request.connection_id = seq as u32;
+            assert_eq!(s.handle(request), Response::ACCEPTED);
+        }
+        let mut request = good(&s, MAX_MESSAGES_PER_SECOND as u64 + 1);
+        request.connection_id = 10_000;
+        assert_eq!(s.handle(request).status, 429);
+        assert_eq!(s.recent_requests.len(), MAX_MESSAGES_PER_SECOND);
     }
 }

@@ -3,6 +3,12 @@
 # `cargo xtask verify --check-registration` enforces it; `cargo xtask verify --tier <name>` runs it.
 schema = 1
 plan = "docs/changes/change-20260903-phase0-repository-and-contracts/design-plan/spine.yaml"
+# Every canonical plan whose verification ids are registered here; their declared ids are unioned.
+# The single `plan` field above stays valid and is unioned as well.
+plans = [
+  "docs/changes/change-20260903-phase0-repository-and-contracts/design-plan/spine.yaml",
+  "docs/changes/change-20260904-phase1-windows-detection-and-capture/design-plan/spine.yaml",
+]
 
 [tiers.portable]
 description = "runs on any host, including the Linux development and CI hosts"
@@ -818,3 +824,336 @@ tier = "portable"
 plan_tier = "T1"
 contract = "contract-workflow-step-idempotency"
 command = "cargo test -p ma-workflow lease_recovery_creates_no_duplicate_artifact"
+
+# ---- Phase 1 (change-20260904-phase1-windows-detection-and-capture) ----
+[[verification]]
+id = "v-win1-process-identity-fixture"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-process-package-identity"
+command = "cargo test -p ma-signals-windows process_identity_from_fake_enumerator"
+
+[[verification]]
+id = "v-win1-collector-restart-resync-fixture"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-process-package-identity"
+command = "cargo test -p ma-signals-windows restart_while_condition_true_sets_restart_resync"
+
+[[verification]]
+id = "v-win1-process-identity-live-probe"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-process-package-identity"
+command = "cargo xtask manual-record --id v-win1-process-identity-live-probe --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-mic-use-fixture"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-audio-session-mic-use"
+command = "cargo test -p ma-signals-windows mic_use_from_fake_session_manager"
+
+[[verification]]
+id = "v-win1-mic-use-source-precedence"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-audio-session-mic-use"
+command = "cargo test -p ma-signals-windows consent_store_never_emits_a_signal_alone"
+
+[[verification]]
+id = "v-win1-mic-use-latency-live"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-audio-session-mic-use"
+command = "cargo xtask manual-record --id v-win1-mic-use-latency-live --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-loopback-fallback-fixture"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-process-loopback-capture"
+command = "cargo test -p ma-capture process_loopback_falls_back_to_system_loopback_on_activation_failure"
+
+[[verification]]
+id = "v-win1-manual-path-available"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-process-loopback-capture"
+command = "cargo test -p ma-capture manual_capture_source_available_independent_of_loopback_outcome"
+
+[[verification]]
+id = "v-win1-capture-origin-rate-pinned"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-process-loopback-capture"
+command = "cargo test -p ma-capture wasapi_origin_is_pinned_to_sample_rate_and_mono"
+
+[[verification]]
+id = "v-win1-loopback-live-activation"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-process-loopback-capture"
+command = "cargo xtask manual-record --id v-win1-loopback-live-activation --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-mic-endpoint-fixture"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-mic-endpoint-follows-session"
+command = "cargo test -p ma-capture mic_endpoint_follows_supplied_session_endpoint"
+
+[[verification]]
+id = "v-win1-mic-endpoint-successor-track"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-mic-endpoint-follows-session"
+command = "cargo test -p ma-capture endpoint_change_opens_successor_track"
+
+[[verification]]
+id = "v-win1-mic-endpoint-live"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-mic-endpoint-follows-session"
+command = "cargo xtask manual-record --id v-win1-mic-endpoint-live --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-leak-erl-fixture"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-echo-leak-measurement"
+command = "cargo test -p ma-capture leak_erl_from_paired_fixture_tracks"
+
+[[verification]]
+id = "v-win1-leak-no-qualifying-window"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-echo-leak-measurement"
+command = "cargo test -p ma-capture leak_measurement_reports_no_qualifying_window"
+
+[[verification]]
+id = "v-win1-leak-live-per-app"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-echo-leak-measurement"
+command = "cargo xtask manual-record --id v-win1-leak-live-per-app --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-two-hour-chunk-accounting"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-two-hour-durability"
+command = "cargo test -p ma-capture two_hour_chunk_accounting_from_synthetic_source"
+
+[[verification]]
+id = "v-win1-two-hour-live"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-two-hour-durability"
+command = "cargo xtask manual-record --id v-win1-two-hour-live --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-loopback-requirement-record-shape"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-per-app-loopback-requirement-record"
+command = "cargo test -p xtask loopback_requirement_record_covers_every_adapter_table"
+
+[[verification]]
+id = "v-win1-loopback-requirement-live-comparison"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-per-app-loopback-requirement-record"
+command = "cargo xtask manual-record --id v-win1-loopback-requirement-live-comparison --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-fixture-replay-golden"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-replayable-timeline-fixtures"
+command = "cargo test -p ma-detect windows_fixture_timelines_replay_byte_identical"
+
+[[verification]]
+id = "v-win1-fixture-header-shape"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-replayable-timeline-fixtures"
+command = "cargo test -p ma-signal windows_fixture_header_matches_timeline_header_shape"
+
+[[verification]]
+id = "v-win1-fixture-redaction"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-replayable-timeline-fixtures"
+command = "cargo test -p ma-signal windows_fixtures_carry_no_real_host_identifiers"
+
+[[verification]]
+id = "v-win1-confirmation-label-sidecar-shape"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-replayable-timeline-fixtures"
+command = "cargo test -p ma-signal confirmation_label_matches_labels_json_shape"
+
+[[verification]]
+id = "v-win1-harness-requires-explicit-invocation"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-diagnostic-session-harness"
+command = "cargo test -p ma-engine diagnostic_harness_requires_explicit_invocation"
+
+[[verification]]
+id = "v-win1-harness-partial-timeline-survives-cancel"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-diagnostic-session-harness"
+command = "cargo test -p ma-engine cancelled_session_keeps_its_partial_timeline"
+
+[[verification]]
+id = "v-win1-harness-label-command"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-diagnostic-session-harness"
+command = "cargo test -p ma-engine label_command_writes_labels_sidecar"
+
+[[verification]]
+id = "v-win1-harness-decisions-sidecar"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-diagnostic-session-harness"
+command = "cargo test -p ma-engine session_end_writes_decisions_sidecar"
+
+[[verification]]
+id = "v-win1-extension-message-shape"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-extension-signal-delivery"
+command = "cargo test -p ma-ext-channel extension_poc_message_matches_existing_schema"
+
+[[verification]]
+id = "v-win1-extension-manifest-permissions"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-extension-signal-delivery"
+command = "cargo test -p ma-ext-channel extension_manifest_declares_no_content_script_or_broad_host"
+
+[[verification]]
+id = "v-win1-extension-live-chrome"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-extension-signal-delivery"
+command = "cargo xtask manual-record --id v-win1-extension-live-chrome --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-same-tree-mic-corroborates"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-meet-corroboration-required"
+command = "cargo test -p ma-detect same_process_tree_mic_and_tab_corroborate"
+
+[[verification]]
+id = "v-win1-cross-tree-mic-does-not-corroborate"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-meet-corroboration-required"
+command = "cargo test -p ma-detect mic_use_from_a_different_process_tree_does_not_corroborate"
+
+[[verification]]
+id = "v-win1-missing-tree-root-is-inconclusive"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-meet-corroboration-required"
+command = "cargo test -p ma-detect tab_without_a_process_tree_root_is_inconclusive"
+
+[[verification]]
+id = "v-win1-diagnostics-cite-signals"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-detector-diagnostics-explainability"
+command = "cargo test -p ma-detect decision_cites_signal_ids_for_windows_fixtures"
+
+[[verification]]
+id = "v-win1-capture-path-sources-cover-collectors"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-capture-path-isolation-scope"
+command = "cargo test -p xtask capture_path_isolation_names_every_capture_path_crate"
+
+[[verification]]
+id = "v-win1-registration-unions-plans"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-windows-tier-verification-registration"
+command = "cargo test -p xtask registration_unions_every_declared_plan"
+
+[[verification]]
+id = "v-win1-windows-code-is-cfg-gated"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-windows-tier-verification-registration"
+command = "cargo test -p xtask windows_only_dependencies_are_target_gated"
+
+[[verification]]
+id = "v-win1-portable-workspace-clippy"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-windows-tier-verification-registration"
+command = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[[verification]]
+id = "v-win1-manual-procedures-declared"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-manual-verification-record"
+command = "cargo test -p xtask every_manual_verification_id_has_a_procedure"
+
+[[verification]]
+id = "v-win1-manual-record-staleness"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-manual-verification-record"
+command = "cargo test -p xtask a_record_whose_procedure_changed_is_rejected"
+
+[[verification]]
+id = "v-win1-endpoint-descriptor-acl-applied"
+tier = "portable"
+plan_tier = "T1"
+contract = "contract-extension-trust-reversal-check"
+command = "cargo test -p ma-ext-channel endpoint_write_applies_the_owner_only_descriptor"
+
+[[verification]]
+id = "v-win1-endpoint-dacl-readability-observed"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-extension-trust-reversal-check"
+command = "cargo test -p ma-ext-channel --test trust_reversal endpoint_json_not_readable_by_other_same_user_process -- --ignored"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-browser-loopback-policy-observed"
+tier = "windows"
+plan_tier = "T2"
+contract = "contract-extension-trust-reversal-check"
+command = "cargo xtask manual-record --id v-win1-browser-loopback-policy-observed --require pass"
+platform = "windows"
+
+[[verification]]
+id = "v-win1-fixture-schema-conformance"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-closed-schema-discipline"
+command = "cargo test -p ma-signal windows_fixtures_conform_to_signal_schema"
+
+[[verification]]
+id = "v-win1-no-new-signal-fields"
+tier = "portable"
+plan_tier = "T0"
+contract = "contract-closed-schema-discipline"
+command = "cargo test -p ma-signal payload_and_subject_field_sets_are_unchanged"

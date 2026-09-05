@@ -1,94 +1,126 @@
 ---
 id: design-threat-model
 kind: design
-title: "Threat model and trust boundaries"
-summary: Names every trust boundary of the meeting assistant, what crosses it, the accepted residual risks, and the checks that keep the boundaries mechanical.
+title: Threat model and trust boundaries
+summary: Names every trust boundary of the meeting assistant, what crosses it, the
+  accepted residual risks, and the checks that keep the boundaries mechanical.
 status: active
 created: '2026-09-03'
 scope_type: policy
 responsibilities:
-  - id: RESP-001
-    statement: "Enumerate every trust boundary the product has and what may cross each one."
-  - id: RESP-002
-    statement: "Record accepted residual risks with the reason they are accepted."
-  - id: RESP-003
-    statement: "Bind each boundary to the contract and the verification that enforce it."
+- id: RESP-001
+  statement: Enumerate every trust boundary the product has and what may cross each
+    one.
+- id: RESP-002
+  statement: Record accepted residual risks with the reason they are accepted.
+- id: RESP-003
+  statement: Bind each boundary to the contract and the verification that enforce
+    it.
 invariants:
-  - id: INV-001
-    statement: "No secret value is serialized by a general-purpose serializer or written to any file the application writes (v-credential-type-not-displayable, v-credential-no-secret-in-any-written-file)."
-    enforcement: test
-  - id: INV-002
-    statement: "The diagnostic bundle of any run contains no meeting content and no secret (v-redaction-content-type-not-loggable, v-redaction-marker-scan)."
-    enforcement: test
-  - id: INV-003
-    statement: "The engine control pipe never exists with a permissive DACL, even transiently (v-authz-dacl-shape)."
-    enforcement: test
-  - id: INV-004
-    statement: "Every host the product may contact is declared in egress-inventory.toml under a user_account, distribution or operating_system owner (v-egress-inventory-complete, v-egress-inventory-no-first-party)."
-    enforcement: test
+- id: INV-001
+  statement: No secret value is serialized by a general-purpose serializer or written
+    to any file the application writes (v-credential-type-not-displayable, v-credential-no-secret-in-any-written-file).
+  enforcement: test
+- id: INV-002
+  statement: The diagnostic bundle of any run contains no meeting content and no secret
+    (v-redaction-content-type-not-loggable, v-redaction-marker-scan).
+  enforcement: test
+- id: INV-003
+  statement: The engine control pipe never exists with a permissive DACL, even transiently
+    (v-authz-dacl-shape).
+  enforcement: test
+- id: INV-004
+  statement: Every host the product may contact is declared in egress-inventory.toml
+    under a user_account, distribution or operating_system owner (v-egress-inventory-complete,
+    v-egress-inventory-no-first-party).
+  enforcement: test
+- id: INV-005
+  statement: The extension endpoint descriptor is written with its owner-only DACL
+    applied to the file, never merely constructed (v-win1-endpoint-descriptor-acl-applied).
+  enforcement: test
 boundaries:
   provides:
-    - the list of trust boundaries and residual risks that every security review starts from
+  - the list of trust boundaries and residual risks that every security review starts
+    from
   consumes:
-    - contract-credential-custody
-    - contract-diagnostic-redaction
-    - contract-ipc-transport-authz
-    - contract-egress-inventory
-    - contract-extension-channel-trust
-    - contract-release-manifest-trust
+  - contract-credential-custody
+  - contract-diagnostic-redaction
+  - contract-ipc-transport-authz
+  - contract-egress-inventory
+  - contract-extension-channel-trust
+  - contract-release-manifest-trust
   forbidden:
-    - a first-party backend in any data path
-    - an anonymous fallback when a credential is missing
-    - deleting a user's remote objects on the user's behalf
+  - a first-party backend in any data path
+  - an anonymous fallback when a credential is missing
+  - deleting a user's remote objects on the user's behalf
 variability:
   fixed:
-    - the three integration owners
-    - the owner-only descriptor shape
-    - the Secret and Content types as the only carriers of secrets and meeting text
+  - the three integration owners
+  - the owner-only descriptor shape
+  - the Secret and Content types as the only carriers of secrets and meeting text
   free:
-    - the zeroization mechanism inside Secret
-    - the notification platform used for the consent surface
+  - the zeroization mechanism inside Secret
+  - the notification platform used for the consent surface
 capabilities:
-  - id: cap:secret-custody
-    uniqueness: global
-  - id: cap:log-redaction
-    uniqueness: global
-  - id: cap:transport-authorization
-    uniqueness: global
-  - id: cap:egress-containment
-    uniqueness: global
+- id: cap:secret-custody
+  uniqueness: global
+- id: cap:log-redaction
+  uniqueness: global
+- id: cap:transport-authorization
+  uniqueness: global
+- id: cap:egress-containment
+  uniqueness: global
 failure_responsibilities:
-  - id: RESP-001
-    statement: "Enumerate every trust boundary the product has and what may cross each one."
-  - id: RESP-002
-    statement: "Record accepted residual risks with the reason they are accepted."
-  - id: RESP-003
-    statement: "Bind each boundary to the contract and the verification that enforce it."
+- id: RESP-001
+  statement: Enumerate every trust boundary the product has and what may cross each
+    one.
+- id: RESP-002
+  statement: Record accepted residual risks with the reason they are accepted.
+- id: RESP-003
+  statement: Bind each boundary to the contract and the verification that enforce
+    it.
 trust_boundaries:
-  - id: TB-001
-    statement: "operating system to engine: process, package-identity, audio-session and microphone facts cross in a closed signal envelope with no free-text field."
-  - id: TB-002
-    statement: "browser extension to engine: non-authoritative tab signals cross the loopback channel under a token-authenticated listener with pinned origin and freshness window; extension evidence never starts a recording alone."
-  - id: TB-003
-    statement: "interface host to engine: JSON-RPC commands and events cross the named pipe under an owner-only DACL, FILE_FLAG_FIRST_PIPE_INSTANCE, client SID comparison and per-channel server authenticity."
-  - id: TB-004
-    statement: "engine to processor host child: staged input files, a manifest-templated argument vector and secrets via the environment block or stdin cross to a per-job child under a job object; never argv."
-  - id: TB-005
-    statement: "product to the user's own accounts: exported transcripts, summaries and audio cross only to hosts in the egress inventory, with a per-send egress_audit row and credentials read on demand."
-  - id: TB-006
-    statement: "distribution to product: installers and update or adapter manifests cross only when code-signed or Ed25519-signed and verified before any declared value is used."
+- id: TB-001
+  statement: 'operating system to engine: process, package-identity, audio-session
+    and microphone facts cross in a closed signal envelope with no free-text field.'
+- id: TB-002
+  statement: 'browser extension to engine: non-authoritative tab signals cross the
+    loopback channel under a token-authenticated listener with pinned origin and freshness
+    window; a determinate start additionally requires an operating-system microphone
+    signal whose process tree root equals the tab signal''s, and the Phase 1 proof-of-concept
+    extension is provisioned by the diagnostic harness rather than by reading the
+    endpoint descriptor.'
+- id: TB-003
+  statement: 'interface host to engine: JSON-RPC commands and events cross the named
+    pipe under an owner-only DACL, FILE_FLAG_FIRST_PIPE_INSTANCE, client SID comparison
+    and per-channel server authenticity.'
+- id: TB-004
+  statement: 'engine to processor host child: staged input files, a manifest-templated
+    argument vector and secrets via the environment block or stdin cross to a per-job
+    child under a job object; never argv.'
+- id: TB-005
+  statement: 'product to the user''s own accounts: exported transcripts, summaries
+    and audio cross only to hosts in the egress inventory, with a per-send egress_audit
+    row and credentials read on demand.'
+- id: TB-006
+  statement: 'distribution to product: installers and update or adapter manifests
+    cross only when code-signed or Ed25519-signed and verified before any declared
+    value is used.'
 compatibility_policies:
-  - Adding a host requires an inventory entry with a closed owner; removing the last reference to an active host requires removing the entry.
-  - Adding a secret requires a Secret<T>; adding meeting text to a type requires Content.
-tags: [security, threat-model]
-owners: [take]
+- Adding a host requires an inventory entry with a closed owner; removing the last
+  reference to an active host requires removing the entry.
+- Adding a secret requires a Secret<T>; adding meeting text to a type requires Content.
+tags:
+- security
+- threat-model
+owners:
+- take
 relations:
-  - type: originatedFrom
-    target: change-20260903-phase0-repository-and-contracts
+- {type: originatedFrom, target: change-20260903-phase0-repository-and-contracts}
 source_paths:
-  - crates/ma-secure/src/redaction.rs
-  - crates/ma-secure/src/acl.rs
-  - egress-inventory.toml
+- crates/ma-secure/src/redaction.rs
+- crates/ma-secure/src/acl.rs
+- egress-inventory.toml
 ---
 
 ## Purpose

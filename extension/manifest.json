@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Assistant detection PoC",
+  "version": "0.1.0",
+  "description": "Detection-only: reports the active tab's hostname and audible state to the local Meeting Assistant engine. No page content, no URL path, no title, no audio.",
+  "permissions": ["tabs"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}

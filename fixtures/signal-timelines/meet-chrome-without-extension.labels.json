@@ -1,0 +1,11 @@
+{
+  "timeline": "meet-chrome-without-extension.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 5000000000,
+      "to_monotonic_ns": 1205000000000,
+      "was_meeting": true,
+      "note": "the person confirms a meeting the detector could not corroborate without tab evidence"
+    }
+  ]
+}

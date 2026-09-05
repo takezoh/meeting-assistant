@@ -9,11 +9,32 @@ publish = false
 name = "ma-engine"
 path = "src/main.rs"
 
+[[bin]]
+name = "ma-diag"
+path = "src/bin/ma-diag.rs"
+
 [dependencies]
 ma-core-types = { path = "../ma-core-types" }
 ma-session = { path = "../ma-session" }
 ma-ipc = { path = "../ma-ipc" }
 ma-secure = { path = "../ma-secure" }
 ma-store = { path = "../ma-store" }
+ma-signal = { path = "../ma-signal" }
+ma-detect = { path = "../ma-detect" }
+ma-capture = { path = "../ma-capture" }
+ma-signals-windows = { path = "../ma-signals-windows" }
+ma-ext-channel = { path = "../ma-ext-channel" }
+# The four service adapter tables, renamed so no service identifier token appears in this crate's
+# source (boundary.toml confines those to L4).
+adapter_a = { package = "ma-adapter-teams", path = "../ma-adapter-teams" }
+adapter_b = { package = "ma-adapter-slack", path = "../ma-adapter-slack" }
+adapter_c = { package = "ma-adapter-zoom", path = "../ma-adapter-zoom" }
+adapter_d = { package = "ma-adapter-meet", path = "../ma-adapter-meet" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

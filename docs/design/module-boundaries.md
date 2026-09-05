@@ -1,77 +1,103 @@
 ---
 id: design-module-boundaries
 kind: design
-title: "Module boundaries"
-summary: The crate layering, the L4 adapter sink, the capture-path and native-inference isolation rules and the literal classes, all enforced by cargo xtask boundary.
+title: Module boundaries
+summary: The crate layering, the L4 adapter sink, the capture-path and native-inference
+  isolation rules and the literal classes, all enforced by cargo xtask boundary.
 status: active
 created: '2026-09-03'
 scope_type: policy
 responsibilities:
-  - id: RESP-001
-    statement: "Declare the dependency direction of every workspace crate in boundary.toml and reject any edge that violates it."
-  - id: RESP-002
-    statement: "Keep the capture path unreachable from the workflow, processor, destination and adapter crates, transitively and through feature gates."
-  - id: RESP-003
-    statement: "Confine native inference libraries and C/C++ build scripts to the processor host and its adapters."
-  - id: RESP-004
-    statement: "Keep every service identifier inside the L4 adapter crates and their tables."
+- id: RESP-001
+  statement: Declare the dependency direction of every workspace crate in boundary.toml
+    and reject any edge that violates it.
+- id: RESP-002
+  statement: Keep the capture path unreachable from the workflow, processor, destination
+    and adapter crates, transitively and through feature gates.
+- id: RESP-003
+  statement: Confine native inference libraries and C/C++ build scripts to the processor
+    host and its adapters.
+- id: RESP-004
+  statement: Keep every service identifier inside the L4 adapter crates and their
+    tables.
+- id: RESP-005
+  statement: Name the L5 composition root as the only place where the platform collectors,
+    the capture engine, the extension channel and the adapter crates are linked together,
+    with every adapter dependency renamed so no service identifier appears outside
+    L4.
 invariants:
-  - id: INV-001
-    statement: "A crate depends only on strictly lower layers; L4 adapters depend only on L0 and L1 and are depended on only by L5 composition roots (v-boundary-clean-workspace, cargo xtask boundary)."
-    enforcement: test
-  - id: INV-002
-    statement: "No capture-path crate reaches ma-workflow, ma-processor, ma-destination, ma-store or any adapter crate (v-isolation-capture-path-edges, v-isolation-negative-fixture)."
-    enforcement: test
-  - id: INV-003
-    statement: "No crate outside ma-processor-host and ma-processor-* links a native inference library or a C/C++ build script into the capture path (v-isolation-native-link-confined)."
-    enforcement: test
-  - id: INV-004
-    statement: "Service identifier tokens and literals appear only in L4 crates and their fixtures (v-boundary-clean-workspace, cargo xtask boundary)."
-    enforcement: test
-  - id: INV-005
-    statement: "ma-detect imports none of std::time, std::fs, std::net, std::process, rand or HashMap (v-detect-purity-lint)."
-    enforcement: test
+- id: INV-001
+  statement: A crate depends only on strictly lower layers; L4 adapters depend only
+    on L0 and L1 and are depended on only by L5 composition roots (v-boundary-clean-workspace,
+    cargo xtask boundary).
+  enforcement: test
+- id: INV-002
+  statement: No capture-path crate reaches ma-workflow, ma-processor, ma-destination,
+    ma-store or any adapter crate, and the enforced source list covers every capture-path
+    crate including ma-signals-windows and ma-ext-channel (v-isolation-capture-path-edges,
+    v-isolation-negative-fixture, v-win1-capture-path-sources-cover-collectors).
+  enforcement: test
+- id: INV-003
+  statement: No crate outside ma-processor-host and ma-processor-* links a native
+    inference library or a C/C++ build script into the capture path (v-isolation-native-link-confined).
+  enforcement: test
+- id: INV-004
+  statement: Service identifier tokens and literals appear only in L4 crates and their
+    fixtures (v-boundary-clean-workspace, cargo xtask boundary).
+  enforcement: test
+- id: INV-005
+  statement: ma-detect imports none of std::time, std::fs, std::net, std::process,
+    rand or HashMap (v-detect-purity-lint).
+  enforcement: test
 boundaries:
   provides:
-    - boundary.toml as the single source of truth for layers, restricted edges, forbidden imports, literal classes and isolation rules
-    - cargo xtask boundary as the check every CI run and every developer runs
+  - boundary.toml as the single source of truth for layers, restricted edges, forbidden
+    imports, literal classes and isolation rules
+  - cargo xtask boundary as the check every CI run and every developer runs
   consumes:
-    - cargo metadata --all-features as the crate graph
-    - the source tree for import and literal scans
+  - cargo metadata --all-features as the crate graph
+  - the source tree for import and literal scans
   forbidden:
-    - an exception list that names a crate rather than a rule
-    - a check that resolves default features only or direct edges only
+  - an exception list that names a crate rather than a rule
+  - a check that resolves default features only or direct edges only
 variability:
   fixed:
-    - the six layers L0 to L5 and the L4 sink rule
-    - the two isolation rule classes
+  - the six layers L0 to L5 and the L4 sink rule
+  - the two isolation rule classes
   free:
-    - which external crates count as native inference bindings (the list in boundary.toml)
-    - the heuristic that detects a C/C++ build script
+  - which external crates count as native inference bindings (the list in boundary.toml)
+  - the heuristic that detects a C/C++ build script
 capabilities:
-  - id: cap:dependency-direction-enforcement
-    uniqueness: global
+- id: cap:dependency-direction-enforcement
+  uniqueness: global
 failure_responsibilities:
-  - id: FR-001
-    statement: "A violation names the edge, the rule and the layer pair; the check exits non-zero and CI blocks the merge."
-  - id: FR-002
-    statement: "A false positive is corrected by refining the rule in boundary.toml or the heuristic in xtask, never by an ad hoc exemption in a crate."
+- id: FR-001
+  statement: A violation names the edge, the rule and the layer pair; the check exits
+    non-zero and CI blocks the merge.
+- id: FR-002
+  statement: A false positive is corrected by refining the rule in boundary.toml or
+    the heuristic in xtask, never by an ad hoc exemption in a crate.
 trust_boundaries:
-  - id: TB-001
-    statement: "workspace source to policy: the check reads every crate's manifest and source and trusts none of it; a crate cannot declare itself exempt."
+- id: TB-001
+  statement: 'workspace source to policy: the check reads every crate''s manifest
+    and source and trusts none of it; a crate cannot declare itself exempt.'
 compatibility_policies:
-  - id: CP-001
-    statement: "Adding a crate requires a layer assignment in boundary.toml or a matching layer pattern; an unassigned crate is a violation."
-  - id: CP-002
-    statement: "Moving a responsibility between layers is a boundary.toml change reviewed with the ADR that motivates it."
-tags: [architecture, boundaries]
-owners: [take]
+- id: CP-001
+  statement: Adding a crate requires a layer assignment in boundary.toml or a matching
+    layer pattern; an unassigned crate is a violation.
+- id: CP-002
+  statement: Moving a responsibility between layers is a boundary.toml change reviewed
+    with the ADR that motivates it.
+tags:
+- architecture
+- boundaries
+owners:
+- take
 relations:
-  - type: originatedFrom
-    target: change-20260903-phase0-repository-and-contracts
+- {type: originatedFrom, target: change-20260903-phase0-repository-and-contracts}
 source_paths:
-  - boundary.toml
-  - xtask/src/boundary.rs
+- boundary.toml
+- xtask/src/boundary.rs
 ---
 
 ## Purpose

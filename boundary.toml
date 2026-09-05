@@ -50,7 +50,7 @@ literals = [
 [rules.capture-path-isolation]
 # No capture-path crate may reach the processing side, directly, transitively or through
 # a feature gate (contract-processing-isolation, layer 1).
-sources = ["ma-core-types", "ma-session", "ma-capture"]
+sources = ["ma-core-types", "ma-session", "ma-capture", "ma-signals-windows", "ma-ext-channel"]
 forbidden = ["ma-workflow", "ma-processor", "ma-destination", "ma-store"]
 forbidden_patterns = ["ma-adapter-*", "ma-processor-*", "ma-destination-*"]
 

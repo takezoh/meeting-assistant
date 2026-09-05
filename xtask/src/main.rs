@@ -3,6 +3,7 @@
 
 mod boundary;
 mod docs_check;
+mod manual_record;
 mod verify;
 
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use std::process::ExitCode;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage:\n  cargo xtask boundary [--workspace DIR] [--rule NAME] [--check forbidden-imports] [--format json]\n  cargo xtask verify --check-registration [--workspace DIR] [--plan FILE] [--tiers FILE] [--format json]\n  cargo xtask verify --tier portable|windows [--strict] [--workspace DIR] [--tiers FILE] [--format json]\n  cargo xtask docs-check [--rule adr-placement|design-set|change-members|promotion-none|schema] [--workspace DIR] [--format json]"
+        "usage:\n  cargo xtask boundary [--workspace DIR] [--rule NAME] [--check forbidden-imports] [--format json]\n  cargo xtask verify --check-registration [--workspace DIR] [--plan FILE] [--tiers FILE] [--format json]\n  cargo xtask verify --tier portable|windows [--strict] [--workspace DIR] [--tiers FILE] [--format json]\n  cargo xtask docs-check [--rule adr-placement|design-set|change-members|promotion-none|schema] [--workspace DIR] [--format json]\n  cargo xtask manual-record --id ID [--require pass|fail|blocked] [--manifest FILE] [--workspace DIR] [--format json]"
     );
     ExitCode::from(2)
 }
@@ -41,11 +42,26 @@ fn main() -> ExitCode {
     let mut strict = false;
     let mut plan = None;
     let mut tiers = None;
+    let mut id = None;
+    let mut require = String::from("pass");
+    let mut manifest = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--workspace" => {
                 workspace = args.get(i + 1).map(PathBuf::from);
+                i += 1;
+            }
+            "--id" => {
+                id = args.get(i + 1).cloned();
+                i += 1;
+            }
+            "--require" => {
+                require = args.get(i + 1).cloned().unwrap_or_default();
+                i += 1;
+            }
+            "--manifest" => {
+                manifest = args.get(i + 1).map(PathBuf::from);
                 i += 1;
             }
             "--rule" => {
@@ -106,6 +122,37 @@ fn main() -> ExitCode {
                 }
                 Err(err) => {
                     eprintln!("boundary check failed to run: {err}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        "manual-record" => {
+            let Some(id) = id else {
+                eprintln!("manual-record needs --id");
+                return usage();
+            };
+            if !matches!(require.as_str(), "pass" | "fail" | "blocked") {
+                eprintln!("--require must be pass, fail or blocked");
+                return usage();
+            }
+            match manual_record::check(&root, manifest.as_deref(), &id, &require) {
+                Ok(report) => {
+                    if format_json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).expect("report is serializable")
+                        );
+                    } else {
+                        manual_record::print_text(&report);
+                    }
+                    if report.ok {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(1)
+                    }
+                }
+                Err(err) => {
+                    eprintln!("manual-record failed to run: {err}");
                     ExitCode::from(2)
                 }
             }

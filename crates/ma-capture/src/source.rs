@@ -15,6 +15,11 @@ pub enum SourceEvent {
 pub trait CaptureSource {
     fn origin(&self) -> TrackOrigin;
     fn next(&mut self) -> SourceEvent;
+    /// Device-reported discontinuities since the previous call. Sources that cannot observe
+    /// discontinuities keep the default zero count.
+    fn take_discontinuities(&mut self) -> u32 {
+        0
+    }
 }
 
 /// A deterministic PCM ramp: sample `i` is `((i * 37) mod 65536) - 32768`.

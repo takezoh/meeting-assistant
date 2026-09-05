@@ -1,0 +1,11 @@
+{
+  "timeline": "meet-chrome-with-extension.jsonl",
+  "labels": [
+    {
+      "from_monotonic_ns": 3000000000,
+      "to_monotonic_ns": 2405000000000,
+      "was_meeting": true,
+      "note": "meeting tab present and the same browser tree captured the microphone"
+    }
+  ]
+}

@@ -52,12 +52,14 @@ impl EndpointDescriptor {
             .join("endpoint.json")
     }
 
-    /// Write the descriptor with the owner-only descriptor that the platform layer applies. The
-    /// returned descriptor is what was requested; applying it is the Windows tier's job.
+    /// Write the descriptor and apply the owner-only security descriptor to it through `applier`
+    /// before the path is returned (contract-extension-trust-reversal-check). The returned
+    /// descriptor is the one that was applied.
     pub fn write(
         &self,
         local_app_data: &Path,
         owner_sid: &str,
+        applier: &mut dyn AclApplier,
     ) -> std::io::Result<(PathBuf, SecurityDescriptor)> {
         let path = Self::path_under(local_app_data);
         std::fs::create_dir_all(path.parent().expect("descriptor has a parent"))?;
@@ -66,7 +68,90 @@ impl EndpointDescriptor {
             &path,
             serde_json::to_vec(self).expect("descriptor serializes"),
         )?;
+        if let Err(error) = applier.apply(&path, &security) {
+            // A token file that failed closed must not remain readable with inherited ACLs.
+            let _ = std::fs::remove_file(&path);
+            return Err(error);
+        }
         Ok((path, security))
+    }
+}
+
+/// Applies a [`SecurityDescriptor`] to a file. The live implementation is [`WindowsAclApplier`];
+/// [`RecordingApplier`] is the portable one, recording every call so a test can assert the
+/// descriptor was applied to the path that is returned.
+pub trait AclApplier {
+    fn apply(&mut self, path: &Path, descriptor: &SecurityDescriptor) -> std::io::Result<()>;
+}
+
+/// Records `(path, sddl)` for every application; never touches the file.
+#[derive(Debug, Default, Clone)]
+pub struct RecordingApplier {
+    pub applied: Vec<(PathBuf, String)>,
+}
+
+impl AclApplier for RecordingApplier {
+    fn apply(&mut self, path: &Path, descriptor: &SecurityDescriptor) -> std::io::Result<()> {
+        self.applied
+            .push((path.to_path_buf(), descriptor.to_sddl()));
+        Ok(())
+    }
+}
+
+/// Sets the file's owner and protected DACL from the descriptor's SDDL.
+#[cfg(windows)]
+#[derive(Debug, Default)]
+pub struct WindowsAclApplier;
+
+#[cfg(windows)]
+impl AclApplier for WindowsAclApplier {
+    fn apply(&mut self, path: &Path, descriptor: &SecurityDescriptor) -> std::io::Result<()> {
+        use windows::core::HSTRING;
+        use windows::Win32::Foundation::LocalFree;
+        use windows::Win32::Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+        };
+        use windows::Win32::Security::{
+            SetFileSecurityW, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        };
+
+        let sddl = HSTRING::from(descriptor.to_sddl());
+        let mut psd = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: out-pointer for a LocalAlloc'd security descriptor, freed below.
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                &sddl,
+                SDDL_REVISION_1,
+                &mut psd,
+                None,
+            )
+        }
+        .map_err(|e| std::io::Error::other(format!("sddl: {e}")))?;
+        let name = HSTRING::from(path.as_os_str());
+        // SAFETY: valid path string and a converted security descriptor.
+        let ok = unsafe {
+            SetFileSecurityW(
+                &name,
+                OWNER_SECURITY_INFORMATION
+                    | DACL_SECURITY_INFORMATION
+                    | PROTECTED_DACL_SECURITY_INFORMATION,
+                psd,
+            )
+        };
+        let err = if ok.as_bool() {
+            None
+        } else {
+            Some(std::io::Error::last_os_error())
+        };
+        // SAFETY: frees what ConvertStringSecurityDescriptorToSecurityDescriptorW allocated.
+        unsafe {
+            let _ = LocalFree(Some(windows::Win32::Foundation::HLOCAL(psd.0)));
+        }
+        match err {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
     }
 }
 

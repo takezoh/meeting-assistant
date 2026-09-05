@@ -5,7 +5,7 @@ title: 'Phase 1: Windows detection and audio-capture PoC'
 summary: Windows process, package, audio-session and microphone collectors, process
   loopback capture, a diagnostic harness in ma-engine, replayable recorded fixtures,
   the detection-only extension PoC and the process-tree corroboration join.
-status: ready
+status: done
 created: '2026-09-04'
 updated: '2026-09-04'
 profile: sdd@1
@@ -226,6 +226,34 @@ relations:
 - {type: dependsOn, target: change-20260903-phase0-repository-and-contracts}
 source_paths:
 - PLAN.md
+evidence_refs:
+- type: command
+  ref: cargo xtask verify --tier portable --strict (OK on delivery/phase1-windows-detection-and-capture
+    @ d4a0caf6; 36 portable Phase 1 verifications passed)
+- type: command
+  ref: 'cargo xtask verify --check-registration (OK: 158 plan verification ids, 158
+    registrations, 30 windows)'
+- type: command
+  ref: 'cargo xtask boundary (OK: no boundary violations, 21 crates)'
+- type: command
+  ref: 'cargo xtask docs-check (OK: 5 rules)'
+- type: command
+  ref: cargo test --workspace and cargo clippy --workspace --all-targets -- -D warnings
+    (green on Linux); cargo clippy --target x86_64-pc-windows-gnu for ma-signals-windows,
+    ma-capture, ma-ext-channel and ma-engine (green, compile-check only)
+- type: contract
+  ref: verification-tiers.toml (46 Phase 1 registrations; the 10 windows-tier verifications
+    are gated by cargo xtask manual-record and run by the ci.yml windows job once
+    the manual records exist)
+- type: contract
+  ref: manual-verification.toml (9 procedures with required observations; no record
+    committed yet)
+- type: source
+  ref: fixtures/signal-timelines/{teams-desktop-session,slack-huddle-session,zoom-desktop-session,meet-chrome-with-extension,meet-chrome-without-extension}.{jsonl,labels.json,decisions.json}
+promotion_applied_at: '2026-09-04T04:49:44.534138+00:00'
+closure:
+  closed_at: '2026-09-04T04:49:45.851622+00:00'
+  content_hash: sha256:331c348105d1284a61c0470a037f7f440228034dc9f3723738af2b12be4ae8a5
 ---
 
 ## Summary
@@ -281,4 +309,14 @@ consultation-phase1-20260904-1 (2026-09-04) closed the two authority questions t
 
 {% transition from="draft" to="ready" date="2026-09-04" %}
 design run design-phase1-20260904-1 finalized: canonical plan materialized, 8 ADRs accepted
+{% /transition %}
+
+
+{% transition from="ready" to="active" date="2026-09-04" %}
+plan-delivery run plan-delivery-phase1-20260904-1: 14 task commits on delivery/phase1-windows-detection-and-capture
+{% /transition %}
+
+
+{% transition from="active" to="closing" date="2026-09-04" %}
+plan-delivery run plan-delivery-phase1-20260904-1: all 14 tasks done, evidence recorded
 {% /transition %}
