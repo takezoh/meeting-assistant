@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Assistant tabCapture probe",
+  "version": "0.0.1",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp6w2aOeDcZRsm9wzs9nipY6cYC7y6uxKJoi2UOSJ0tRUbTRSc/RwgLKDPx0VO0Fd2lhXhqVcX4nr9QQyjxd+tk+buOzDT07+1jjZPPN39SfZMkaA9r13fb2qvRPR6lvvc4F65u6zqQ2ymxfq25puFD62PtcJWb0PTwSsMgwy5tj7ogbgBUFz9UzG+o2HmK+zxgrwdkovJ3XAR8/kxn8OBfak8AHjJJ3XTd2hgVNxpdXg9GSMZVrY4P2kuCDbNzA2NO0OSctSHAC4R+Mxudre16sbJUtNxGXSK8VJnFGBjb7woQABBOuocJZSR6QnIiIPtoWepBLO+GI0eNgfLc656QIDAQAB",
+  "permissions": [
+    "tabCapture",
+    "tabs",
+    "offscreen"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

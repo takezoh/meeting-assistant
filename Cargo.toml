@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+log = { version = "0.4", features = ["std"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+toml = "1"
+
+[profile.release]
+lto = "thin"

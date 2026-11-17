@@ -1,0 +1,265 @@
+use std::time::{Duration, Instant};
+
+use meeting_assistant_core::fakes::{
+    FakeRecorder, ScriptedSignals, fake_ports, meet_in_chrome, process, snapshot, window, window_id, zoom_in_meeting,
+};
+use meeting_assistant_core::{
+    BrowserLink, BrowserMeeting, BrowserTab, Config, Engine, NoticeLevel, RecordingCoordinator, VideoTarget,
+};
+
+struct Fixture {
+    recorder: FakeRecorder,
+    signals: ScriptedSignals,
+    engine: Engine<ScriptedSignals, FakeRecorder>,
+    now: Instant,
+}
+
+/// Built with the default settings (start grace 3 s, end grace 15 s, signal outage limit 60 s).
+fn fixture() -> Fixture {
+    let recorder = FakeRecorder::default();
+    let signals = ScriptedSignals::default();
+    let coordinator = RecordingCoordinator::new(recorder.clone(), fake_ports(&recorder));
+    let engine = Engine::new(signals.clone(), coordinator, &Config::default()).unwrap();
+    Fixture {
+        recorder,
+        signals,
+        engine,
+        now: Instant::now(),
+    }
+}
+
+impl Fixture {
+    /// Advances detection with the same signals, `seconds` times at 1-second intervals.
+    fn run(&mut self, seconds: u32) {
+        for _ in 0..seconds {
+            self.engine.tick(self.now);
+            self.now += Duration::from_secs(1);
+        }
+    }
+
+    fn recording(&self) -> bool {
+        self.recorder.state().recording
+    }
+}
+
+#[test]
+fn records_a_desktop_app_meeting_from_start_to_end() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+    f.run(10);
+    assert!(f.recording());
+    assert!(
+        f.recorder.state().started[0]
+            .output_path
+            .ends_with("2026-11-17_10-00-00_Zoom.mp4")
+    );
+
+    f.signals.set(snapshot(&[process(100, 1, "Zoom.exe")], &[], &[], &[]));
+    f.run(20);
+    assert!(!f.recording());
+    assert_eq!(f.recorder.state().stop_count, 1);
+}
+
+#[test]
+fn records_a_browser_meeting_from_start_to_end() {
+    let mut f = fixture();
+    f.signals.set(meet_in_chrome());
+    f.run(10);
+    {
+        let state = f.recorder.state();
+        assert_eq!(state.started.len(), 1);
+        assert!(
+            state.started[0]
+                .output_path
+                .ends_with("2026-11-17_10-00-00_WebMeeting.mp4")
+        );
+        assert_eq!(
+            state.started[0].video,
+            VideoTarget::Window(window_id("Meet - abc-defg-hij - Google Chrome"))
+        );
+        assert_eq!(state.started[0].audio_process_id, Some(200));
+    }
+
+    // Even if switching to another tab changes the title, recording continues while the microphone is in use.
+    // Switching tabs leaves the window itself the same.
+    let same_window = meeting_assistant_core::WindowEntry {
+        id: window_id("Meet - abc-defg-hij - Google Chrome"),
+        ..window(200, "Slides - Google Chrome", "DISPLAY2", 1000)
+    };
+    f.signals.set(snapshot(
+        &[process(200, 1, "chrome.exe"), process(201, 200, "chrome.exe")],
+        &[201],
+        &[],
+        &[same_window],
+    ));
+    f.run(60);
+    assert!(f.recording());
+    // The window is the same, so the recording target does not change.
+    assert!(f.recorder.state().retargets.is_empty());
+
+    f.signals.set(snapshot(&[process(200, 1, "chrome.exe")], &[], &[], &[]));
+    f.run(20);
+    assert!(!f.recording());
+}
+
+#[test]
+fn does_not_record_while_no_meeting_is_taking_place() {
+    let mut f = fixture();
+    f.signals.set(snapshot(
+        &[
+            process(100, 1, "Zoom.exe"),
+            process(200, 1, "chrome.exe"),
+            process(300, 1, "VoiceRecorder.exe"),
+        ],
+        &[300],
+        &[],
+        &[window(200, "Meet - abc-defg-hij - Google Chrome", "DISPLAY1", 1000)],
+    ));
+    f.run(120);
+
+    assert!(f.recorder.state().started.is_empty());
+}
+
+#[test]
+fn does_not_stop_recording_when_signal_acquisition_fails_transiently() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+    f.run(10);
+
+    f.signals.set_failure(Some("audio service restarting"));
+    f.run(30);
+    f.signals.set_failure(None);
+    f.run(30);
+
+    assert!(f.recording());
+    assert_eq!(f.recorder.state().stop_count, 0);
+    assert!(f.engine.take_notices().iter().all(|n| n.level == NoticeLevel::Info));
+}
+
+#[test]
+fn stops_recording_and_notifies_when_signal_acquisition_keeps_failing() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+    f.run(10);
+
+    f.signals.set_failure(Some("audio service gone"));
+    f.run(120);
+
+    assert!(!f.recording());
+    let errors = f
+        .engine
+        .take_notices()
+        .into_iter()
+        .filter(|n| n.level == NoticeLevel::Error)
+        .count();
+    assert_eq!(errors, 1);
+}
+
+#[test]
+fn resumes_on_the_next_cycle_when_recording_fails_during_a_meeting() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+    f.run(10);
+
+    f.recorder.fail("device lost");
+    f.run(2);
+
+    assert!(f.recording());
+    assert_eq!(f.recorder.state().started.len(), 2);
+}
+
+fn zoom_with(windows: &[(&str, u64)]) -> meeting_assistant_core::SignalSnapshot {
+    let windows: Vec<_> = windows
+        .iter()
+        .map(|(title, area)| window(100, title, "DISPLAY1", *area))
+        .collect();
+    snapshot(&[process(100, 1, "Zoom.exe")], &[100], &[], &windows)
+}
+
+#[test]
+fn moves_to_another_window_of_the_same_app_when_the_recorded_window_closes() {
+    let mut f = fixture();
+    f.signals.set(zoom_with(&[("Waiting room", 5000)]));
+    f.run(10);
+    assert_eq!(
+        f.recorder.state().started[0].video,
+        VideoTarget::Window(window_id("Waiting room"))
+    );
+
+    f.signals.set(zoom_with(&[("Zoom Meeting", 9000)]));
+    f.run(3);
+
+    assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting")]);
+    assert_eq!(f.recorder.state().started.len(), 1);
+    assert!(f.recording());
+}
+
+#[test]
+fn does_not_move_when_a_larger_window_appears_while_the_recorded_window_remains() {
+    let mut f = fixture();
+    f.signals.set(zoom_with(&[("Zoom Meeting", 5000)]));
+    f.run(10);
+
+    f.signals
+        .set(zoom_with(&[("Zoom Meeting", 5000), ("Shared screen", 9000)]));
+    f.run(30);
+
+    assert!(f.recorder.state().retargets.is_empty());
+}
+
+#[test]
+fn keeps_recording_and_waits_when_there_is_no_replacement_window() {
+    let mut f = fixture();
+    f.signals.set(zoom_with(&[("Zoom Meeting", 5000)]));
+    f.run(10);
+
+    f.signals.set(zoom_with(&[]));
+    f.run(5);
+    assert!(f.recording());
+    assert!(f.recorder.state().retargets.is_empty());
+
+    f.signals.set(zoom_with(&[("Zoom Meeting 2", 5000)]));
+    f.run(2);
+    assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting 2")]);
+}
+
+#[test]
+fn a_recording_started_without_a_window_moves_to_a_window_that_appears() {
+    let mut f = fixture();
+    f.signals.set(zoom_with(&[]));
+    f.run(10);
+    assert_eq!(f.recorder.state().started[0].video, VideoTarget::Blank);
+
+    f.signals.set(zoom_with(&[("Zoom Meeting", 5000)]));
+    f.run(2);
+
+    assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting")]);
+}
+
+#[test]
+fn records_a_meeting_reported_by_the_extension_in_its_tab_from_start_to_end() {
+    let mut f = fixture();
+    let tab = BrowserTab { link: 1, tab: 42 };
+    let mut in_meeting = snapshot(&[], &[], &[], &[]);
+    in_meeting.browser_links = vec![BrowserLink {
+        id: 1,
+        host_process_id: 301,
+    }];
+    in_meeting.browser_meetings = vec![BrowserMeeting {
+        tab,
+        service: "GoogleMeet".into(),
+    }];
+    f.signals.set(in_meeting.clone());
+    f.run(10);
+    {
+        let state = f.recorder.state();
+        assert_eq!(state.started.len(), 1);
+        assert_eq!(state.started[0].video, VideoTarget::BrowserTab(tab));
+    }
+
+    in_meeting.browser_meetings.clear();
+    f.signals.set(in_meeting);
+    f.run(20);
+    assert!(!f.recording());
+    assert_eq!(f.recorder.state().stop_count, 1);
+}

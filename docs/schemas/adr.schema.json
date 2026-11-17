@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-module.local/docs/adr.schema.json",
+  "title": "Architecture Decision Record (Nygard-style skeleton with frontmatter)",
+  "allOf": [{"$ref": "_common.schema.json"}],
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["decision_makers"],
+  "properties": {
+    "kind":   {"const": "adr"},
+    "status": {"enum": ["proposed", "accepted", "rejected", "deprecated", "superseded"]},
+    "decision_makers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1
+    },
+    "consulted": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "informed": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "consequences": {
+      "description": "Nygard 形式の正・負・中立の三極を記録する。検証はADR作成日や編集履歴に依存しない。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["positive", "negative", "neutral"],
+      "properties": {
+        "positive": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "description": "採用の望ましい帰結"},
+        "negative": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "description": "採用の望ましくない帰結"},
+        "neutral":  {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "description": "採用に伴う中立な帰結"}
+      }
+    },
+    "confirmation": {
+      "type": "string",
+      "description": "spec-detail (2026-07-09): MADR 由来 (optional)。この decision が守られていることを機械的に確認する手段の宣言 (fitness function / grep / test)。artifacts/architecture-contract/semantics.md §18 が SoT。"
+    },
+    "decision_bindings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1},
+      "description": "この判断を実行時に拘束する project-root 相対ファイル。accepted ADR では各ファイルが ADR id を decision_ref またはコメントとして明示し、source_paths にも含める。"
+    }
+  }
+}

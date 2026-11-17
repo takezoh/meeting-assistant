@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Meeting Assistant</title>
+<style>
+  body { font: 15px/1.7 system-ui, sans-serif; max-width: 42em; margin: 2em auto; padding: 0 1em; color: #222; }
+  code { background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 3px; word-break: break-all; }
+  button { font: inherit; padding: 0.4em 1em; }
+  @media (prefers-color-scheme: dark) { body { background: #1e1e1e; color: #ddd; } code { background: #333; } }
+</style>
+<body>
+  <h1>Meeting Assistant</h1>
+  <p>This extension automatically records meeting tabs. Recording happens only while the resident Meeting Assistant app is running.</p>
+
+  <h2>Microphone</h2>
+  <p>To record your own voice, allow this extension to use the microphone.</p>
+  <p id="state"></p>
+  <p><button id="allow" hidden>Allow microphone</button></p>
+
+  <h2>Browser launch option</h2>
+  <p>To record tabs without a user gesture, the browser must be started with the following option.</p>
+  <p><code>--allowlisted-extension-id=<span id="id"></span></code></p>
+  <script src="options.js"></script>
+</body>
+</html>

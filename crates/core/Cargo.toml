@@ -1,0 +1,21 @@
+[package]
+name = "meeting-assistant-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OS-independent logic that detects meetings and coordinates recording"
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+regex.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[features]
+# Include the fakes module (fakes of the ports) for tests.
+fakes = []
+
+[dev-dependencies]
+meeting-assistant-core = { path = ".", features = ["fakes"] }
