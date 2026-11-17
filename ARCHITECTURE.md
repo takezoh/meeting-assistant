@@ -118,7 +118,7 @@ The app listens on `127.0.0.1` at a random port and writes the port and a random
 - **Scope is never widened silently.** In app scope a missing window gives a black picture and a failed app-audio capture gives no app audio. Neither falls back to the display or the output device.
 - **A started file is finalized.** Stop, drop of the recorder, quit, logoff and shutdown all reach `finalize`. A recording that fails keeps its partial file.
 - **Start reports the real outcome.** `Recorder::start` returns only after capture is running or has failed, so the coordinator never reports a recording that did not begin.
-- **The extension link is local and authenticated.** The listener binds to loopback only and rejects a connection whose first message does not carry the token.
+- **The extension link is local and authenticated.** The listener binds to loopback only and rejects a connection whose first message does not carry the token. Before that, a connection is held to a small first message, a short deadline and a small number of waiting peers.
 - **Unknown messages are ignored, not fatal.** A newer extension may send message types an older app does not know.
 
 ## Verification boundary

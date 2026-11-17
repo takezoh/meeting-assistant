@@ -13,6 +13,9 @@ pub const EXTENSION_ID: &str = "lnplioaidiniokndppmckdaflgefgale";
 
 /// Maximum size of one message (same as the limit the browser accepts from an extension).
 pub const MAX_FRAME: usize = 64 * 1024 * 1024;
+/// Maximum size of the first message of a connection. Nothing has proved who the peer is yet,
+/// so it is not allowed to make the app reserve more than a `hello` needs.
+pub const MAX_HELLO_FRAME: usize = 4 * 1024;
 
 /// Browser launch option that allows this extension alone to record a tab without a user gesture.
 pub fn browser_launch_option() -> String {
@@ -93,11 +96,28 @@ pub fn hello_body(token: &str, host_pid: u32) -> Vec<u8> {
         .into_bytes()
 }
 
+/// Whether the token a peer presented is the expected one.
+///
+/// Every byte is compared whatever the outcome, so the time taken does not reveal how much of a guess was right.
+pub fn tokens_match(presented: &str, expected: &str) -> bool {
+    let (presented, expected) = (presented.as_bytes(), expected.as_bytes());
+    let difference = presented
+        .iter()
+        .zip(expected)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b));
+    presented.len() == expected.len() && difference == 0
+}
+
 pub fn read_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
+    read_frame_within(reader, MAX_FRAME)
+}
+
+/// Reads one message, rejecting a declared length over `limit` before reserving memory for it.
+pub fn read_frame_within(reader: &mut impl Read, limit: usize) -> io::Result<Vec<u8>> {
     let mut length = [0u8; 4];
     reader.read_exact(&mut length)?;
     let length = u32::from_ne_bytes(length) as usize;
-    if length > MAX_FRAME {
+    if length > limit {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large"));
     }
     let mut body = vec![0u8; length];
@@ -144,6 +164,27 @@ mod tests {
 
         let error = read_frame(&mut Cursor::new(wire)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn first_message_is_held_to_a_smaller_limit() {
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &hello_body("token", 42)).unwrap();
+        assert!(read_frame_within(&mut Cursor::new(wire), MAX_HELLO_FRAME).is_ok());
+
+        // Only the length is sent: a peer must not be able to make the app reserve the declared size.
+        let oversized = ((MAX_HELLO_FRAME + 1) as u32).to_ne_bytes().to_vec();
+        let error = read_frame_within(&mut Cursor::new(oversized), MAX_HELLO_FRAME).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn only_the_exact_token_matches() {
+        assert!(tokens_match("abc123", "abc123"));
+        assert!(!tokens_match("abc124", "abc123"));
+        assert!(!tokens_match("abc12", "abc123"), "a prefix is not a match");
+        assert!(!tokens_match("abc1234", "abc123"));
+        assert!(!tokens_match("", "abc123"));
     }
 
     #[test]

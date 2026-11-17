@@ -18,7 +18,7 @@ This page describes the wire contract between the browser extension and the app:
 1. At startup the app binds `127.0.0.1` on a port chosen by the OS, generates a random token and writes `{ "port", "token" }` to `browser-link.json` in the user's local application data.
 2. The extension calls `chrome.runtime.connectNative("com.meeting_assistant.host")`. The browser looks up the host manifest that `--install` registered, checks that the calling extension's ID is in its `allowed_origins`, and starts the executable with the extension origin `chrome-extension://lnplioaidiniokndppmckdaflgefgale/` as the first argument.
 3. The executable recognizes that argument and runs as the relay. It reads `browser-link.json`, connects, and sends `hello` with the token and its process ID.
-4. The app closes a connection whose first message is not a `hello` with the right token.
+4. The app closes a connection whose first message is not a `hello` with the right token. Any local process can reach the loopback port, so until the token has been presented a connection is limited: the first message may be at most 4 KiB, it must arrive within 5 seconds, and at most 8 connections may be waiting at once. The token is compared in constant time.
 
 The process ID in `hello` lets the app find which browser process tree the connection belongs to, so that this browser is excluded from window-based detection.
 

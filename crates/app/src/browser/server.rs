@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -18,11 +19,36 @@ use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab};
 
 use super::endpoint::Endpoint;
 use super::hub::{ChunkSink, Finished, Hub, Phase};
-use super::protocol::{Incoming, Outgoing, read_frame, write_frame};
+use super::protocol::{Incoming, MAX_HELLO_FRAME, Outgoing, read_frame, read_frame_within, tokens_match, write_frame};
 use crate::linked::BrowserPort;
 
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long a new connection may take to present the token. The relay sends it immediately after connecting.
+const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+/// How many connections may be waiting to present the token at once. Any local process can connect to
+/// the loopback port, so those that have not proved themselves are kept few and short-lived.
+const MAX_UNAUTHENTICATED: usize = 8;
+
+/// A place among the connections that have not presented the token yet. Dropping it frees the place.
+struct PendingSlot<'a>(&'a AtomicUsize);
+
+impl<'a> PendingSlot<'a> {
+    fn take(pending: &'a AtomicUsize) -> Option<Self> {
+        pending
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < MAX_UNAUTHENTICATED).then_some(count + 1)
+            })
+            .ok()
+            .map(|_| Self(pending))
+    }
+}
+
+impl Drop for PendingSlot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// Writes recording data to a file as is.
 struct FileSink(File);
@@ -56,6 +82,8 @@ struct Shared {
     state: Mutex<State>,
     changed: Condvar,
     token: String,
+    /// Number of connections that have not presented the token yet.
+    unauthenticated: AtomicUsize,
 }
 
 impl Shared {
@@ -108,6 +136,7 @@ impl BrowserLinkServer {
             state: Mutex::default(),
             changed: Condvar::new(),
             token,
+            unauthenticated: AtomicUsize::new(0),
         });
         std::thread::Builder::new().name("browser-link".into()).spawn({
             let shared = shared.clone();
@@ -218,17 +247,33 @@ fn close(finished: Finished, path: Option<PathBuf>) -> anyhow::Result<()> {
 fn serve(shared: &Shared, stream: TcpStream) {
     let Ok(mut reader) = stream.try_clone() else { return };
 
-    // The first message confirms that this is a relay process launched by this app.
-    let hello = read_frame(&mut reader)
-        .ok()
-        .and_then(|body| Incoming::parse(&body).ok());
-    let Some(Incoming::Hello { token, host_pid }) = hello else {
-        return;
+    // The first message confirms that this is a relay process launched by this app. Until it has,
+    // the peer gets a small message, a short time and one of a few places, so that a process which
+    // does not know the token cannot tie up memory or threads.
+    let host_pid = {
+        let Some(_slot) = PendingSlot::take(&shared.unauthenticated) else {
+            log::warn!("Rejected a connection from the extension (too many unauthenticated connections).");
+            return;
+        };
+        if stream.set_read_timeout(Some(HELLO_TIMEOUT)).is_err() {
+            return;
+        }
+        let hello = read_frame_within(&mut reader, MAX_HELLO_FRAME)
+            .ok()
+            .and_then(|body| Incoming::parse(&body).ok());
+        let Some(Incoming::Hello { token, host_pid }) = hello else {
+            return;
+        };
+        if !tokens_match(&token, &shared.token) {
+            log::warn!("Rejected a connection from the extension (token mismatch).");
+            return;
+        }
+        // An authenticated connection stays open while idle, for as long as the browser runs.
+        if stream.set_read_timeout(None).is_err() {
+            return;
+        }
+        host_pid
     };
-    if token != shared.token {
-        log::warn!("Rejected a connection from the extension (token mismatch).");
-        return;
-    }
 
     let link = {
         let mut state = shared.lock();
