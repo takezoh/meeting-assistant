@@ -5,8 +5,11 @@
 //! to this app over loopback TCP and carries the control messages. For each recording the app opens a second,
 //! short-lived loopback listener; the extension's recording page connects to it with a WebSocket and sends the
 //! recording as binary messages, which are appended to the file as they are.
+//!
+//! Both listeners first ask the operating system who owns the other end of a new connection and close it unread
+//! unless it is one of the current user's processes ([`peer`](super::peer)); the token checks come after that.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -18,12 +21,14 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use base64::Engine as _;
 use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab, naming};
-use tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tungstenite::handshake::server::{ErrorResponse, Request, Response, ServerHandshake};
+use tungstenite::handshake::{HandshakeError, MidHandshake};
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::{Message, WebSocket};
 
 use super::endpoint::Endpoint;
 use super::hub::{CaptureId, ChunkSink, Finished, Hub, Phase, Upload};
+use super::peer::{self, LoopbackPeers, UserId};
 use super::protocol::{
     Incoming, MAX_FRAME, MAX_HELLO_FRAME, Outgoing, UploadWarning, accept_upload_hello, is_extension_origin,
     read_frame, read_frame_within, tokens_match, upload_close_outcome, write_frame,
@@ -41,6 +46,21 @@ const UPLOAD_ACCEPT_POLL: Duration = Duration::from_millis(20);
 /// How many connections may be waiting to present the token at once. Any local process can connect to
 /// the loopback port, so those that have not proved themselves are kept few and short-lived.
 const MAX_UNAUTHENTICATED: usize = 8;
+
+/// The check a recording upload's WebSocket handshake makes on its request.
+type OriginCheck = fn(&Request, Response) -> Result<Response, ErrorResponse>;
+
+/// A connection to a recording's upload listener that has not presented the token yet.
+enum Unproven {
+    Handshaking(MidHandshake<ServerHandshake<TcpStream, OriginCheck>>),
+    AwaitingHello(WebSocket<TcpStream>),
+}
+
+/// How far an unproven connection got.
+enum Progress {
+    Proven(WebSocket<TcpStream>, String),
+    Waiting(Unproven),
+}
 
 /// A place among the connections that have not presented the token yet. Dropping it frees the place.
 struct PendingSlot<'a>(&'a AtomicUsize);
@@ -96,11 +116,22 @@ struct Shared {
     token: String,
     /// Number of connections that have not presented the token yet.
     unauthenticated: AtomicUsize,
+    peers: Arc<dyn LoopbackPeers>,
+    /// The user this app runs as: only this user's processes may connect.
+    user: UserId,
 }
 
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Whether a just-accepted connection may be read: only if one of the current user's processes made it.
+    fn admit(&self, stream: &TcpStream) -> Result<(), String> {
+        let (Ok(local), Ok(peer)) = (stream.local_addr(), stream.peer_addr()) else {
+            return Err("its addresses cannot be read".to_owned());
+        };
+        peer::admit(self.peers.owner(local.port(), peer.port()), &self.user)
     }
 
     /// Waits until `still_waiting` becomes false or the timeout expires.
@@ -131,8 +162,11 @@ impl Shared {
 pub struct BrowserLinkServer(Arc<Shared>);
 
 impl BrowserLinkServer {
-    /// Starts listening and publishes the endpoint for the relay process.
-    pub fn start() -> anyhow::Result<Self> {
+    /// Starts listening and publishes the endpoint for the relay process. `peers` tells who made a connection.
+    pub fn start(peers: Arc<dyn LoopbackPeers>) -> anyhow::Result<Self> {
+        let user = peers
+            .current_user()
+            .context("Cannot tell which user this app runs as")?;
         let listener =
             TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("Cannot listen for connections from the extension")?;
         let token = random_token()?;
@@ -147,19 +181,28 @@ impl BrowserLinkServer {
             changed: Condvar::new(),
             token,
             unauthenticated: AtomicUsize::new(0),
+            peers,
+            user,
         });
         std::thread::Builder::new().name("browser-link".into()).spawn({
             let shared = shared.clone();
-            move || {
-                for stream in listener.incoming().flatten() {
-                    let shared = shared.clone();
-                    let _ = std::thread::Builder::new()
-                        .name("browser-link-conn".into())
-                        .spawn(move || serve(&shared, stream));
-                }
-            }
+            move || accept_links(&shared, &listener)
         })?;
         Ok(Self(shared))
+    }
+}
+
+/// Serves each connection the current user's processes make to the control listener, on a thread of its own.
+fn accept_links(shared: &Arc<Shared>, listener: &TcpListener) {
+    for stream in listener.incoming().flatten() {
+        if let Err(reason) = shared.admit(&stream) {
+            log::warn!("Refused a connection from the extension: {reason}.");
+            continue;
+        }
+        let shared = shared.clone();
+        let _ = std::thread::Builder::new()
+            .name("browser-link-conn".into())
+            .spawn(move || serve(&shared, stream));
     }
 }
 
@@ -325,60 +368,118 @@ fn receive_upload(shared: &Shared, listener: &TcpListener, id: CaptureId, token:
 
 /// Waits, while recording `id` is starting, for the recording page to connect and prove itself. Other connections
 /// are turned away and do not end the wait.
+///
+/// Connections are advanced side by side without blocking, each with a fixed time to present the token, so a peer
+/// that connects and then sends slowly or nothing cannot hold up the recording page. When too many are waiting, the
+/// one that has waited longest is dropped to make room.
 fn accept_upload(shared: &Shared, listener: &TcpListener, id: CaptureId, token: &str) -> Option<WebSocket<TcpStream>> {
     listener.set_nonblocking(true).ok()?;
     let deadline = Instant::now() + START_TIMEOUT;
+    let mut waiting: VecDeque<(Unproven, Instant)> = VecDeque::new();
     while Instant::now() < deadline && shared.lock().hub.is_capturing(id) {
-        match listener.accept() {
-            Ok((stream, _)) => match authenticate_upload(stream, token) {
-                Ok((socket, mime)) => {
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) if let Err(reason) = shared.admit(&stream) => {
+                    log::warn!("Refused a connection for the recording: {reason}.");
+                }
+                Ok((stream, _)) => match start_upload_handshake(stream) {
+                    Ok(connection) => {
+                        if waiting.len() == MAX_UNAUTHENTICATED {
+                            waiting.pop_front();
+                            log::warn!("Dropped a connection for the recording that had not presented the token.");
+                        }
+                        waiting.push_back((connection, Instant::now() + HELLO_TIMEOUT));
+                    }
+                    Err(error) => log::warn!("Rejected a connection for the recording: {error:#}"),
+                },
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) => {
+                    log::warn!("Cannot accept the recording from the extension: {error}");
+                    return None;
+                }
+            }
+        }
+
+        let now = Instant::now();
+        for _ in 0..waiting.len() {
+            let Some((connection, expires)) = waiting.pop_front() else {
+                break;
+            };
+            if now >= expires {
+                log::warn!("Rejected a connection for the recording: it did not present the token in time");
+                continue;
+            }
+            match advance_upload_handshake(connection, token) {
+                Ok(Progress::Proven(socket, mime)) => {
                     shared.lock().hub.upload_opened(id, mime);
                     shared.changed.notify_all();
                     return Some(socket);
                 }
+                Ok(Progress::Waiting(connection)) => waiting.push_back((connection, expires)),
                 Err(error) => log::warn!("Rejected a connection for the recording: {error:#}"),
-            },
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(UPLOAD_ACCEPT_POLL),
-            Err(error) => {
-                log::warn!("Cannot accept the recording from the extension: {error}");
-                return None;
             }
         }
+        std::thread::sleep(UPLOAD_ACCEPT_POLL);
     }
     None
 }
 
-/// Accepts a WebSocket only from the extension's pages, and only if its first message carries this recording's
-/// token. Until then the peer gets a small message and a short time.
-fn authenticate_upload(stream: TcpStream, token: &str) -> anyhow::Result<(WebSocket<TcpStream>, String)> {
-    // An accepted socket can inherit the listener's non-blocking mode.
-    stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(HELLO_TIMEOUT))?;
-    stream.set_write_timeout(Some(HELLO_TIMEOUT))?;
-    #[expect(clippy::result_large_err, reason = "tungstenite fixes the callback's error type")]
-    let only_the_extension = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
-        if is_extension_origin(request.headers().get("origin").map(|value| value.as_bytes())) {
-            return Ok(response);
-        }
-        let mut refusal = ErrorResponse::new(Some("Forbidden".to_owned()));
-        *refusal.status_mut() = tungstenite::http::StatusCode::FORBIDDEN;
-        Err(refusal)
-    };
+/// Accepts a WebSocket only from the extension's pages. Until the token is presented the peer may send only a small
+/// message.
+#[expect(clippy::result_large_err, reason = "tungstenite fixes the callback's error type")]
+fn only_the_extension(request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+    if is_extension_origin(request.headers().get("origin").map(|value| value.as_bytes())) {
+        return Ok(response);
+    }
+    let mut refusal = ErrorResponse::new(Some("Forbidden".to_owned()));
+    *refusal.status_mut() = tungstenite::http::StatusCode::FORBIDDEN;
+    Err(refusal)
+}
+
+fn start_upload_handshake(stream: TcpStream) -> anyhow::Result<Unproven> {
+    // Set explicitly: whether an accepted socket inherits the listener's mode differs between systems.
+    stream.set_nonblocking(true)?;
     let small = WebSocketConfig::default()
         .max_message_size(Some(MAX_HELLO_FRAME))
         .max_frame_size(Some(MAX_HELLO_FRAME));
-    let mut socket = tungstenite::accept_hdr_with_config(stream, only_the_extension, Some(small))
-        .map_err(|error| anyhow::anyhow!("not a WebSocket from the extension: {error}"))?;
+    match tungstenite::accept_hdr_with_config(stream, only_the_extension as OriginCheck, Some(small)) {
+        Ok(socket) => Ok(Unproven::AwaitingHello(socket)),
+        Err(HandshakeError::Interrupted(handshake)) => Ok(Unproven::Handshaking(handshake)),
+        Err(HandshakeError::Failure(error)) => anyhow::bail!("not a WebSocket from the extension: {error}"),
+    }
+}
 
-    let first = socket.read()?;
+/// Takes the handshake as far as the data that has arrived allows. The first message must carry this recording's
+/// token; then the socket becomes a blocking upload with the full message size.
+fn advance_upload_handshake(connection: Unproven, token: &str) -> anyhow::Result<Progress> {
+    let mut socket = match connection {
+        Unproven::Handshaking(handshake) => match handshake.handshake() {
+            Ok(socket) => socket,
+            Err(HandshakeError::Interrupted(handshake)) => {
+                return Ok(Progress::Waiting(Unproven::Handshaking(handshake)));
+            }
+            Err(HandshakeError::Failure(error)) => anyhow::bail!("not a WebSocket from the extension: {error}"),
+        },
+        Unproven::AwaitingHello(socket) => socket,
+    };
+    let first = match socket.read() {
+        Ok(first) => first,
+        Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
+            return Ok(Progress::Waiting(Unproven::AwaitingHello(socket)));
+        }
+        Err(error) => return Err(error.into()),
+    };
     let mime = accept_upload_hello(first.to_text().ok(), token).map_err(|reason| anyhow::anyhow!(reason))?;
 
     socket.set_config(|config| {
         config.max_message_size = Some(MAX_FRAME);
         config.max_frame_size = Some(MAX_FRAME);
     });
-    socket.get_ref().set_read_timeout(Some(UPLOAD_IDLE_TIMEOUT))?;
-    Ok((socket, mime))
+    let stream = socket.get_ref();
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(UPLOAD_IDLE_TIMEOUT))?;
+    stream.set_write_timeout(Some(HELLO_TIMEOUT))?;
+    Ok(Progress::Proven(socket, mime))
 }
 
 /// Finishes writing.
@@ -453,7 +554,10 @@ mod tests {
     use tungstenite::protocol::CloseFrame;
     use tungstenite::protocol::frame::coding::CloseCode;
 
-    use super::super::protocol::extension_web_origin;
+    use std::io::Read;
+
+    use super::super::peer::fakes::{CURRENT_USER, FakeLoopbackPeers};
+    use super::super::protocol::{extension_web_origin, hello_body};
 
     use super::*;
 
@@ -471,6 +575,7 @@ mod tests {
     /// A recording of tab 7 that is starting, with its upload listener served on another thread.
     struct Upload {
         shared: Arc<Shared>,
+        peers: Arc<FakeLoopbackPeers>,
         id: CaptureId,
         port: u16,
         sink: MemorySink,
@@ -478,14 +583,32 @@ mod tests {
     }
 
     const TOKEN: &str = "recording-token";
+    const RELAY_TOKEN: &str = "relay-token";
 
-    fn upload() -> Upload {
-        let shared = Arc::new(Shared {
+    fn shared(peers: &Arc<FakeLoopbackPeers>) -> Arc<Shared> {
+        Arc::new(Shared {
             state: Mutex::default(),
             changed: Condvar::new(),
-            token: "relay-token".into(),
+            token: RELAY_TOKEN.into(),
             unauthenticated: AtomicUsize::new(0),
-        });
+            peers: peers.clone(),
+            user: UserId(CURRENT_USER.into()),
+        })
+    }
+
+    /// Whether the app closed this connection, without having been sent anything, within `within`.
+    fn closed_unread(stream: &mut TcpStream, within: Duration) -> bool {
+        stream.set_read_timeout(Some(within)).unwrap();
+        match stream.read(&mut [0u8; 1]) {
+            Ok(0) => true,
+            Ok(_) => false,
+            Err(error) => !matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut),
+        }
+    }
+
+    fn upload() -> Upload {
+        let peers = Arc::new(FakeLoopbackPeers::default());
+        let shared = shared(&peers);
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let sink = MemorySink::default();
@@ -508,6 +631,7 @@ mod tests {
         });
         Upload {
             shared,
+            peers,
             id,
             port,
             sink,
@@ -581,6 +705,92 @@ mod tests {
 
         assert_eq!(phase(&upload.shared), Some(Phase::Stopped));
         assert_eq!(*upload.sink.0.lock().unwrap(), b"data");
+    }
+
+    #[test]
+    fn peers_that_connect_and_say_nothing_do_not_keep_the_recording_page_out() {
+        let upload = upload();
+        // More silent peers than may wait at once; they stay connected for the whole test.
+        let silent: Vec<TcpStream> = (0..=MAX_UNAUTHENTICATED)
+            .map(|_| TcpStream::connect((Ipv4Addr::LOCALHOST, upload.port)).unwrap())
+            .collect();
+        let mut slow = TcpStream::connect((Ipv4Addr::LOCALHOST, upload.port)).unwrap();
+        slow.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+
+        let started = Instant::now();
+        let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        page.send(hello(TOKEN)).unwrap();
+        while phase(&upload.shared) == Some(Phase::Starting) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(phase(&upload.shared), Some(Phase::Recording));
+        assert!(
+            started.elapsed() < HELLO_TIMEOUT,
+            "the page got in without waiting for the other peers to time out"
+        );
+
+        page.send(Message::binary(b"data".to_vec())).unwrap();
+        page.close(None).unwrap();
+        while page.read().is_ok() {}
+        upload.thread.join().unwrap();
+        assert_eq!(*upload.sink.0.lock().unwrap(), b"data");
+        drop((silent, slow));
+    }
+
+    #[test]
+    fn another_users_connections_to_the_upload_are_closed_unread_and_do_not_keep_the_page_out() {
+        let upload = upload();
+        upload.peers.set_foreign(true);
+        let mut others: Vec<TcpStream> = (0..3 * MAX_UNAUTHENTICATED)
+            .map(|_| TcpStream::connect((Ipv4Addr::LOCALHOST, upload.port)).unwrap())
+            .collect();
+        for other in &mut others {
+            assert!(
+                closed_unread(other, HELLO_TIMEOUT / 2),
+                "closed at once, not after the time for the token"
+            );
+        }
+        assert_eq!(phase(&upload.shared), Some(Phase::Starting));
+
+        upload.peers.set_foreign(false);
+        let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        page.send(hello(TOKEN)).unwrap();
+        page.send(Message::binary(b"data".to_vec())).unwrap();
+        page.close(None).unwrap();
+        while page.read().is_ok() {}
+        upload.thread.join().unwrap();
+        assert_eq!(*upload.sink.0.lock().unwrap(), b"data");
+    }
+
+    #[test]
+    fn another_users_connections_to_the_control_listener_are_closed_unread() {
+        let peers = Arc::new(FakeLoopbackPeers::default());
+        let shared = shared(&peers);
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn({
+            let shared = shared.clone();
+            move || accept_links(&shared, &listener)
+        });
+
+        peers.set_foreign(true);
+        let mut other = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        assert!(closed_unread(&mut other, HELLO_TIMEOUT / 2));
+        assert_eq!(
+            shared.unauthenticated.load(Ordering::Acquire),
+            0,
+            "it never took a place"
+        );
+
+        peers.set_foreign(false);
+        let relay = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        write_frame(&mut &relay, &hello_body(RELAY_TOKEN, 4242)).unwrap();
+        let deadline = Instant::now() + HELLO_TIMEOUT;
+        while shared.lock().hub.snapshot().0.is_empty() {
+            assert!(Instant::now() < deadline, "the relay of this user was not connected");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        drop(relay);
     }
 
     #[test]

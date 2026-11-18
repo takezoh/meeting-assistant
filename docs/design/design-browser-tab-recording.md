@@ -7,82 +7,123 @@ created: '2026-11-17'
 scope_type: component
 responsibilities:
 - id: RESP-001
-  statement: "Detect in the browser that a page on a supported meeting site holds a connected call and report it to the app."
+  statement: Detect in the browser that a page on a supported meeting site holds a
+    connected call and report it to the app.
 - id: RESP-002
-  statement: "Record one tab and the microphone inside the browser on the app's command and deliver the data to the app."
+  statement: Record one tab and the microphone inside the browser on the app's command
+    and deliver the data to the app.
 - id: RESP-003
-  statement: "Track extension connections, reported meetings and the single tab recording, and store its data in a file."
+  statement: Track extension connections, reported meetings and the single tab recording,
+    and store its data in a file.
 - id: RESP-004
-  statement: "Present the extension path and the operating system path as one signal source and one recorder."
+  statement: Present the extension path and the operating system path as one signal
+    source and one recorder.
 invariants:
 - id: INV-001
-  statement: "The app holds at most one tab recording across all connections."
+  statement: The app holds at most one tab recording across all connections.
   enforcement: test
 - id: INV-002
-  statement: "A tab recording is reported as started only after the extension's upload has connected and proved itself."
+  statement: A tab recording is reported as started only after the extension's upload
+    has connected and proved itself.
   enforcement: test
 - id: INV-003
-  statement: "When a connection is lost during a recording, the recording ends as failed and the received data stays in the file."
+  statement: When a connection is lost during a recording, the recording ends as failed
+    and the received data stays in the file.
   enforcement: test
 - id: INV-004
-  statement: "Recording data travels only on the upload WebSocket, as binary messages appended to the file as they are; the control channel carries no recording data."
+  statement: Recording data travels only on the upload WebSocket, as binary messages
+    appended to the file as they are; the control channel carries no recording data.
   enforcement: test
 - id: INV-005
-  statement: "Both listeners accept loopback connections only. The control listener requires the relay token in the first message; each upload listener requires the extension's Origin and that recording's one-time token, and closes once one connection has proved itself."
+  statement: Both listeners accept loopback connections only, and read a new connection
+    only after the operating system has named its other end as a process of the current
+    user; other connections are closed unread. Then the control listener requires
+    the relay token in the first message; each upload listener requires the extension's
+    Origin and that recording's one-time token, and closes once one connection has
+    proved itself.
   enforcement: test
 - id: INV-006
-  statement: "The extension ID, the host name and the message types are identical in the app and in the extension."
+  statement: The extension ID, the host name and the message types are identical in
+    the app and in the extension.
   enforcement: test
 boundaries:
   provides:
   - id: PROV-001
-    statement: "BrowserPort: snapshot of links and meetings, start_capture, stop_capture, take_failure."
+    statement: 'BrowserPort: snapshot of links and meetings, start_capture, stop_capture,
+      take_failure.'
   - id: PROV-002
-    statement: "The wire protocol in docs/technical/browser-link.md."
+    statement: The wire protocol in docs/technical/browser-link.md.
   consumes:
   - id: CONS-001
-    statement: "Browser APIs: native messaging, tabCapture, offscreen documents, MediaRecorder, RTCPeerConnection."
+    statement: 'Browser APIs: native messaging, tabCapture, offscreen documents, MediaRecorder,
+      RTCPeerConnection.'
   - id: CONS-002
-    statement: "The browser switch --allowlisted-extension-id for capture without a user gesture."
+    statement: The browser switch --allowlisted-extension-id for capture without a
+      user gesture.
+  - id: CONS-003
+    statement: 'LoopbackPeers: the user that owns the other end of a loopback connection,
+      and the user the app runs as.'
   forbidden:
   - id: FORB-001
-    statement: "Socket or file access from browser/hub or browser/protocol."
+    statement: Socket or file access from browser/hub or browser/protocol.
   - id: FORB-002
-    statement: "Recording decisions made in the extension; it records only on the app's command."
+    statement: Recording decisions made in the extension; it records only on the app's
+      command.
 variability:
   fixed:
   - id: FIX-001
-    statement: "The extension ID lnplioaidiniokndppmckdaflgefgale, fixed by the manifest key, and the host name com.meeting_assistant.host."
+    statement: The extension ID lnplioaidiniokndppmckdaflgefgale, fixed by the manifest
+      key, and the host name com.meeting_assistant.host.
   - id: FIX-002
-    statement: "Length-prefixed JSON framing for control messages and binary WebSocket messages for the recording, as described in docs/technical/browser-link.md. Neither side keeps compatibility with older versions of the other."
+    statement: Length-prefixed JSON framing for control messages and binary WebSocket
+      messages for the recording, as described in docs/technical/browser-link.md.
+      Neither side keeps compatibility with older versions of the other.
   free:
   - id: FREE-001
-    statement: "How a call is recognized in a page, the supported sites, encoder settings and chunk interval."
+    statement: How a call is recognized in a page, the supported sites, encoder settings
+      and chunk interval.
 capabilities: []
 failure_responsibilities:
 - id: FAIL-001
-  statement: "The extension reports a start or recording failure as an error message with its cause; the app surfaces it as a recorder failure and logs it."
+  statement: The extension reports a start or recording failure as an error message
+    with its cause; the app surfaces it as a recorder failure and logs it.
 - id: FAIL-002
-  statement: "When the extension link cannot be started, the app runs without it and the operating system path keeps working."
+  statement: When the extension link cannot be started, the app runs without it and
+    the operating system path keeps working.
 trust_boundaries:
 - id: TRUST-001
-  statement: "The browser starts the relay only for the extension ID in the native-host manifest; the app additionally requires the token from a file only the current user's processes are expected to read."
+  statement: The browser starts the relay only for the extension ID in the native-host
+    manifest; the app additionally requires the token from a file only the current
+    user's processes are expected to read.
 - id: TRUST-002
-  statement: "Page scripts are untrusted; the page hook reports only call state, and no page content is executed or interpreted by the app."
+  statement: Page scripts are untrusted; the page hook reports only call state, and
+    no page content is executed or interpreted by the app.
+- id: TRUST-003
+  statement: 'Any process on the computer can connect to a loopback port. The trust
+    boundary is the current user: another user''s connections are closed before anything
+    is read from them, so they cannot take the places kept for connections that have
+    not presented a token. The current user''s processes are trusted not to flood
+    the listeners; they can already read the token file.'
 compatibility_policies:
 - id: COMPAT-001
-  statement: "New message types and optional fields may be added; existing ones keep their meaning so that an extension and an app of different versions degrade instead of failing."
+  statement: 'None between versions: the extension is written out by the same executable
+    that runs the app, and neither keeps compatibility with an older version of the
+    other (FIX-002).'
 tags: []
 owners: []
 relations:
 - {type: references, target: adr-20261117-tab-recording-through-extension}
+- {type: references, target: adr-20261118-admit-loopback-connections-only-from-the}
 source_paths:
 - crates/app/src/browser
 - crates/app/src/linked.rs
 - crates/app/src/bundle.rs
 - extension
 - docs/technical/browser-link.md
-summary: Contract between the extension, the relay and the app for detecting browser calls and recording a single tab.
+- crates/app/src/platform/mac/peers.rs
+- crates/app/src/platform/win/peers.rs
+summary: Contract between the extension, the relay and the app for detecting browser
+  calls and recording a single tab.
 ---
 
 ## Purpose

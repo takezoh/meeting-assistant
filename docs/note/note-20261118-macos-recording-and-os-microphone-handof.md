@@ -96,3 +96,4 @@ These are for the design step, not decided here:
 
 - A test runner for the extension's JavaScript (Node's built-in test runner over pure functions such as `meetingTitle`) was proposed in the structure review and not started.
 - macOS 14.2 is stated as the minimum from the APIs used; the app has run only on macOS 26.
+- The loopback listeners now admit only the current user's connections ([ADR](../adr/adr-20261118-admit-loopback-connections-only-from-the.md)). The macOS lookup ran in its adapter test; no real browser has connected through it yet, because the installed copy is an older build. The Windows lookup is type-checked only: run `cargo test -p meeting-assistant peers` and a tab recording on Windows.

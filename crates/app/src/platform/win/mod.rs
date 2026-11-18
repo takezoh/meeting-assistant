@@ -1,5 +1,6 @@
 mod com;
 mod install;
+mod peers;
 mod recorder;
 mod registry;
 mod session;
@@ -14,6 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONINFORMATION, 
 use windows::core::{HSTRING, w};
 
 pub use self::install::PlatformInstaller;
+pub use self::peers::WindowsLoopbackPeers as PlatformLoopbackPeers;
 pub use self::recorder::{PlatformRecorder, recorder};
 pub use self::session::{request_quit, watch_exit_requests};
 pub use self::signals::WindowsSignalSource as PlatformSignalSource;

@@ -89,6 +89,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | --- | --- |
 | `PlatformSignalSource` | Processes with an active capture session, the process tree, the list of top-level windows, default device state |
 | `PlatformRecorder` | A `CaptureBackend`: open a window or display capture, take a picture, scale it, open audio inputs, write and finalize the file |
+| `PlatformLoopbackPeers` | A `LoopbackPeers`: the user that owns the other end of a loopback connection, and the user the app runs as. The browser listeners admit only the current user's connections ([ADR](docs/adr/adr-20261118-admit-loopback-connections-only-from-the.md)) |
 | `PlatformInstaller` | An `InstallSystem`: copy and remove files, registry or plist entries, native-host registration, shortcuts or launcher apps |
 | Other | Single-instance guard, quit requests, session-end notification, toasts and dialogs, the status panel's window style (the system material behind a transparent page and rounded corners: the popover material on macOS, the acrylic of flyouts on Windows), the accent color, how the tray icon follows the menu bar or the taskbar and whether text can be shown next to it, what the event loop needs before it runs, whether the screen can be recorded |
 
