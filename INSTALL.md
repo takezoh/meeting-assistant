@@ -107,9 +107,9 @@ meeting-assistant --config <path> ...  Use another configuration file
 
 ## macOS
 
-**The macOS code has only been type-checked on Windows. It has never been run on a Mac.** Treat the following as the intended behavior, to be verified first.
+Only meetings detected and recorded by the browser extension are implemented. The tab is recorded inside the browser, so the app only has to receive and store the data. Desktop apps, browser windows without the extension and manual recording need a native capture implementation (ScreenCaptureKit) that does not exist yet; `--self-test` and **Start recording now** report that.
 
-Only meetings detected and recorded by the browser extension are implemented. The tab is recorded inside the browser, so the app only has to receive and store the data. Desktop apps, browser windows without the extension and manual recording need a native capture implementation (ScreenCaptureKit) that does not exist yet.
+The macOS build needs Rust 1.89 or later and the Xcode Command Line Tools. It was built, installed and run on one Apple Silicon Mac with macOS 26 on 2026-11-18, with synthetic meetings only; [the verification note](docs/note/note-20261118-macos-verification-2026-11-18.md) lists what was and was not observed.
 
 ```
 cargo build --release
@@ -118,9 +118,17 @@ target/release/meeting-assistant --install
 
 | Step | Where |
 | --- | --- |
-| Copies the app and writes out the extension | `~/Library/Application Support/MeetingAssistant`, extension in its `extension` folder |
-| Starts the app at login | `~/Library/LaunchAgents/com.meeting-assistant.agent.plist` |
-| Registers the native-messaging host | The `NativeMessagingHosts` folder of each browser |
-| Creates a browser launcher | `~/Applications/Google Chrome (Meeting Assistant).app` and the Edge equivalent |
+| Installs the app | `~/Applications/Meeting Assistant.app`, listed by Finder, Launchpad and Spotlight. It lives in the menu bar and has no Dock icon |
+| Writes out the extension | `~/Library/Application Support/MeetingAssistant/extension` |
+| Starts the app at login | `~/Library/LaunchAgents/com.meeting-assistant.agent.plist`. macOS may notify you that a background item was added |
+| Registers the native-messaging host | The `NativeMessagingHosts` folder of Chrome and Edge, for each browser that has been used on this Mac |
+| Creates browser launchers | `~/Applications/Google Chrome (Meeting Assistant).app` and the Edge equivalent |
+| Starts the app | A circle appears in the menu bar |
 
-Recordings go to `~/Movies/MeetingAssistant`, the configuration to `~/Library/Application Support/MeetingAssistant/config.toml`, and logs to `logs` in the same folder. Loading the extension and starting the browser from the launcher work as on Windows.
+To start the app again after quitting it, open **Meeting Assistant** from Spotlight or `~/Applications`.
+
+Recordings go to `~/Movies/MeetingAssistant`, the configuration to `~/Library/Application Support/MeetingAssistant/config.toml`, and logs to `logs` in the same folder.
+
+The extension steps are the same as on Windows. In the **Load unpacked** dialog, `~/Library` is hidden; press Command-Shift-G and paste `~/Library/Application Support/MeetingAssistant/extension`. Quit the browser completely (Command-Q) before opening its launcher from `~/Applications`.
+
+`--uninstall` removes the app, the launchers, the login item and the native-host registrations, and keeps the configuration, logs and recordings.

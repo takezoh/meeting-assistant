@@ -10,7 +10,7 @@ This reference describes each test suite, what it establishes and what it leaves
 | Core architecture test | `crates/core/tests/architecture.rs` | Core sources use no file system, network, process, environment, thread, clock or OS crate, and `Cargo.toml` does not depend on one |
 | App unit tests | Inline `mod tests` in `crates/app/src/` | Argument parsing, the install procedure against a fake `InstallSystem`, the recording plan, timeline and mixer, the pipeline and threaded recorder against a fake `CaptureBackend`, the extension protocol and hub, the linked signal source and recorder, the worker loop, the configuration file adapter, the bundled extension files |
 | App architecture test | `crates/app/src/architecture.rs` | OS crates are used only under `platform`; deciding modules touch no file, socket, process, environment, platform or adapter; time and audio calculations use no clock or thread; both platform implementations expose the same names |
-| macOS type check | `cargo clippy --workspace --target aarch64-apple-darwin` | The macOS code compiles and passes lints. Nothing is executed |
+| Cross-platform type check | `cargo clippy --workspace --target aarch64-apple-darwin` from Windows, `--target x86_64-pc-windows-msvc` from macOS | The other platform's code compiles and passes lints. Nothing is executed. On macOS the whole suite also runs natively |
 
 Production code is scanned by the architecture tests with everything after `#[cfg(test)]` removed, so tests may use threads and temporary files to drive fakes.
 
@@ -32,7 +32,7 @@ Production code is scanned by the architecture tests with everything after `#[cf
 | Install, update, uninstall and start at logon on a real profile | By hand |
 | Finalizing on logoff and shutdown | The message handling was checked by sending the close request; a real logoff was not performed |
 | Behavior in real calls on each meeting service | Not done |
-| Anything on macOS | Not done |
+| The macOS installer, start at login and the extension path | By hand on one Mac with a throwaway Chrome profile; see [the macOS note](../note/note-20261118-macos-verification-2026-11-18.md). Do not pass `--use-fake-ui-for-media-stream` to a browser used for this: it refuses every tab capture |
 
 Manual results are dated observations, not guarantees. They are recorded in [the verification note](../note/note-20261117-local-verification.md); add a new note for a new round instead of editing an old one.
 

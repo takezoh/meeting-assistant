@@ -35,12 +35,14 @@ struct PendingSlot<'a>(&'a AtomicUsize);
 
 impl<'a> PendingSlot<'a> {
     fn take(pending: &'a AtomicUsize) -> Option<Self> {
-        pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < MAX_UNAUTHENTICATED).then_some(count + 1)
-            })
-            .ok()
-            .map(|_| Self(pending))
+        let mut count = pending.load(Ordering::Acquire);
+        while count < MAX_UNAUTHENTICATED {
+            match pending.compare_exchange_weak(count, count + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Some(Self(pending)),
+                Err(current) => count = current,
+            }
+        }
+        None
     }
 }
 
@@ -298,4 +300,24 @@ fn serve(shared: &Shared, stream: TcpStream) {
     }
     shared.changed.notify_all();
     log::info!("Connection to the browser extension closed.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unauthenticated_connections_are_limited_and_dropping_one_frees_its_place() {
+        let pending = AtomicUsize::new(0);
+        let mut slots: Vec<_> = (0..MAX_UNAUTHENTICATED)
+            .map(|_| PendingSlot::take(&pending).expect("a place below the limit"))
+            .collect();
+
+        assert!(PendingSlot::take(&pending).is_none());
+
+        slots.pop();
+        assert!(PendingSlot::take(&pending).is_some());
+        drop(slots);
+        assert_eq!(pending.load(Ordering::Acquire), 0);
+    }
 }

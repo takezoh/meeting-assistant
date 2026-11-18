@@ -4,16 +4,17 @@ This guide gets a contributor from a checkout to a meaningful local verification
 
 ## Set up
 
-The workspace uses Rust edition 2024 and needs Rust 1.85 or later. Development happens on Windows 11.
+The workspace uses Rust edition 2024 and needs Rust 1.85 or later; the macOS code needs 1.89 or later. Development happens on Windows 11 and macOS.
 
 ```
 cargo build --release
 ```
 
-To type-check the macOS target from Windows, add it once:
+To type-check the other platform, add its target once and pass it to clippy:
 
 ```
-rustup target add aarch64-apple-darwin
+rustup target add aarch64-apple-darwin      # on Windows
+rustup target add x86_64-pc-windows-msvc    # on macOS
 ```
 
 ## Verify a code change
@@ -25,7 +26,7 @@ cargo clippy --workspace --target aarch64-apple-darwin
 cargo test --workspace
 ```
 
-`cargo test` runs the unit tests and the architecture tests. It needs no meeting app, browser, microphone or display. The [testing reference](technical/testing.md) describes each suite and what it does not cover.
+On macOS, `cargo clippy --workspace --target aarch64-apple-darwin` is the native lint and `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc` type-checks the Windows code. `cargo test` runs the unit tests and the architecture tests. It needs no meeting app, browser, microphone or display. The [testing reference](technical/testing.md) describes each suite and what it does not cover.
 
 To check the real capture path on the current machine:
 
@@ -34,7 +35,7 @@ target\release\meeting-assistant.exe --self-test out.mp4
 target\release\meeting-assistant.exe --probe
 ```
 
-`--self-test` records five seconds of the primary display with the default audio devices. `--probe` prints the processes using the microphone, the windows found and the verdict of each rule; use it when changing rules or signal collection.
+`--self-test` records five seconds of the primary display with the default audio devices; on macOS it reports that native capture is not implemented, and the extension path is checked with a browser instead. `--probe` prints the processes using the microphone, the windows found and the verdict of each rule; use it when changing rules or signal collection.
 
 An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder.
 

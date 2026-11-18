@@ -88,7 +88,7 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 
 - Detection has been checked with synthetic meetings (a test process holding the microphone, and a test page holding a WebRTC connection), not in real calls on each service. Whether a given service releases the microphone while you are muted, and so ends the recording after the grace period, is unknown.
 - The browser switch that permits automatic tab recording, `--allowlisted-extension-id`, is undocumented and intended for testing. It worked in Chrome and Edge on 2026-11-17. A later browser version may remove it; recording then does not start and the log says why.
-- All macOS code has only been type-checked on Windows. Nothing has been run on a Mac.
+- On macOS the installer, start at login, the extension path and finalization on quit, update and uninstall were run on one Mac with synthetic meetings on 2026-11-18. A real logout during a recording, the browser launchers and the menu bar appearance were not checked.
 - The tray menu and notifications were not inspected by an automated test; their logic is tested, their appearance is not.
 - Long recordings, several displays with different scaling, and protected content have not been measured.
 

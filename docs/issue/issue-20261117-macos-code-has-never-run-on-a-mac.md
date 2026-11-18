@@ -2,7 +2,7 @@
 id: issue-20261117-macos-code-has-never-run-on-a-mac
 kind: issue
 title: macOS code has never run on a Mac
-status: open
+status: done
 created: '2026-11-17'
 issue_type: plan
 tags: []
@@ -11,7 +11,10 @@ relations: []
 subject_paths:
 - crates/app/src/platform/mac/mod.rs
 - crates/app/src/platform/mac/install.rs
-summary: The macOS installer, launcher, native-host registration and signal handling are type-checked on Windows only and need a first run on a Mac.
+summary: The macOS installer, launcher, native-host registration and signal handling
+  are type-checked on Windows only and need a first run on a Mac.
+disposition_target: note-20261118-macos-verification-2026-11-18
+updated: '2026-11-18'
 ---
 
 ## Opportunity

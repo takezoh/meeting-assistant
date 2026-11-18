@@ -3,8 +3,8 @@
 //!
 //! | Operation | Implementation |
 //! |---|---|
-//! | Deployment | `~/Library/Application Support/MeetingAssistant` |
-//! | Listing in the app list | none (it only lives in the menu bar, so there is nowhere to register) |
+//! | Deployment | The executable in `~/Applications/Meeting Assistant.app`, the extension in `~/Library/Application Support/MeetingAssistant` |
+//! | Listing in the app list | The bundle's `Info.plist`, which makes it an app for Finder, Launchpad and Spotlight |
 //! | Start at login | Definition file in `~/Library/LaunchAgents` |
 //! | Registration with browsers | Manifest file in each browser's `NativeMessagingHosts` folder |
 //! | Browser launchers | Small apps in `~/Applications` |
@@ -20,6 +20,8 @@ use crate::browser::protocol::HOST_NAME;
 use crate::install::{APP_NAME, InstallSystem};
 
 const LAUNCH_AGENT_LABEL: &str = "com.meeting-assistant.agent";
+const APP_BUNDLE_IDENTIFIER: &str = "com.meeting-assistant.app";
+const EXECUTABLE_NAME: &str = "meeting-assistant";
 
 /// A supported browser.
 struct Browser {
@@ -59,11 +61,26 @@ impl Browser {
     }
 
     fn launcher(&self) -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join("Applications")
-            .join(format!("{} ({APP_NAME}).app", self.name))
+        applications_directory().join(format!("{} ({APP_NAME}).app", self.name))
     }
+}
+
+/// The user's own Applications folder, which Finder, Launchpad and Spotlight list like `/Applications`.
+fn applications_directory() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join("Applications")
+}
+
+fn app_bundle() -> PathBuf {
+    applications_directory().join(format!("{APP_NAME}.app"))
+}
+
+/// The app bundle that contains `executable`, laid out as `<name>.app/Contents/MacOS/<executable>`.
+fn enclosing_bundle(executable: &Path) -> Option<&Path> {
+    let macos = executable.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    let laid_out = macos.file_name()? == "MacOS" && contents.file_name()? == "Contents";
+    (laid_out && bundle.extension()? == "app").then_some(bundle)
 }
 
 fn launch_agent() -> PathBuf {
@@ -75,6 +92,43 @@ fn launch_agent() -> PathBuf {
 
 fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Info.plist of the app. `LSUIElement` keeps it out of the Dock; it lives in the menu bar.
+fn app_info_plist(executable_name: &str) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>{APP_NAME}</string>
+    <key>CFBundleExecutable</key>
+    <string>{}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{APP_BUNDLE_IDENTIFIER}</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>{APP_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{version}</string>
+    <key>CFBundleVersion</key>
+    <string>{version}</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+"#,
+        xml_escape(executable_name),
+    )
 }
 
 fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
@@ -91,7 +145,17 @@ fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
 }
 
 /// LaunchAgent definition that starts `executable` at login.
+///
+/// When the executable is inside an app bundle, `AssociatedBundleIdentifiers` lets System Settings show the
+/// login item under the app's name.
 fn launch_agent_plist(executable: &Path) -> String {
+    let association = if enclosing_bundle(executable).is_some() {
+        format!(
+            "    <key>AssociatedBundleIdentifiers</key>\n    <array>\n        <string>{APP_BUNDLE_IDENTIFIER}</string>\n    </array>\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -99,7 +163,7 @@ fn launch_agent_plist(executable: &Path) -> String {
 <dict>
     <key>Label</key>
     <string>{LAUNCH_AGENT_LABEL}</string>
-    <key>ProgramArguments</key>
+{association}    <key>ProgramArguments</key>
     <array>
         <string>{}</string>
     </array>
@@ -153,7 +217,7 @@ impl InstallSystem for PlatformInstaller {
     }
 
     fn installed_executable(&self) -> PathBuf {
-        support_directory().join("meeting-assistant")
+        app_bundle().join("Contents/MacOS").join(EXECUTABLE_NAME)
     }
 
     fn extension_directory(&self) -> PathBuf {
@@ -186,28 +250,41 @@ impl InstallSystem for PlatformInstaller {
     }
 
     fn remove_installed_files(&mut self) -> anyhow::Result<()> {
-        // Settings and logs live in the same folder, so do not delete the whole folder.
-        remove_if_exists(&self.installed_executable())?;
+        remove_if_exists(&app_bundle())?;
+        // Settings and logs live in the same folder as the extension, so do not delete the whole folder.
         remove_if_exists(&self.extension_directory())
     }
 
     fn launch(&mut self, executable: &Path) -> anyhow::Result<()> {
-        // Do not let it inherit the caller's output (it would stay open as long as the resident app runs).
-        Command::new(executable)
+        let bundle = enclosing_bundle(executable)
+            .with_context(|| format!("Not inside an app bundle: {}", executable.display()))?;
+        // Through LaunchServices, as Finder would, so the app does not run as a child of this process or of the
+        // terminal it was started from. `-g` keeps the focus where it is.
+        let output = Command::new("/usr/bin/open")
+            .arg("-g")
+            .arg(bundle)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("Cannot launch the installed app")?;
+            .output()
+            .context("Cannot run open to launch the installed app")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "Cannot launch the installed app {}: {}",
+            bundle.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
         Ok(())
     }
 
-    fn register_app(&mut self, _executable: &Path) -> anyhow::Result<()> {
-        Ok(())
+    fn register_app(&mut self, executable: &Path) -> anyhow::Result<()> {
+        let bundle = enclosing_bundle(executable)
+            .with_context(|| format!("Not inside an app bundle: {}", executable.display()))?;
+        let name = executable.file_name().unwrap_or_default().to_string_lossy();
+        self.write_file(&bundle.join("Contents/Info.plist"), &app_info_plist(&name))
     }
 
     fn unregister_app(&mut self) -> anyhow::Result<()> {
-        Ok(())
+        // Without its Info.plist the folder is no longer an app; the folder itself goes with the installed files.
+        remove_if_exists(&app_bundle().join("Contents/Info.plist"))
     }
 
     fn autostart_enabled(&self) -> bool {
@@ -255,5 +332,56 @@ impl InstallSystem for PlatformInstaller {
 
     fn remove_browser_launcher(&mut self, browser: &str) -> anyhow::Result<()> {
         remove_if_exists(&Browser::named(browser)?.launcher())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BUNDLED: &str = "/Users/someone/Applications/Meeting Assistant.app/Contents/MacOS/meeting-assistant";
+
+    #[test]
+    fn finds_the_bundle_only_for_an_executable_laid_out_inside_one() {
+        assert_eq!(
+            enclosing_bundle(Path::new(BUNDLED)),
+            Some(Path::new("/Users/someone/Applications/Meeting Assistant.app"))
+        );
+        assert_eq!(
+            enclosing_bundle(Path::new("/Users/someone/dev/target/release/meeting-assistant")),
+            None
+        );
+        assert_eq!(
+            enclosing_bundle(Path::new("/Users/someone/Odd.app/Contents/Resources/meeting-assistant")),
+            None
+        );
+    }
+
+    #[test]
+    fn the_installed_executable_is_inside_the_app_bundle() {
+        let executable = PlatformInstaller.installed_executable();
+
+        assert_eq!(enclosing_bundle(&executable), Some(app_bundle().as_path()));
+        assert!(app_info_plist(EXECUTABLE_NAME).contains(&format!("<string>{EXECUTABLE_NAME}</string>")));
+    }
+
+    #[test]
+    fn app_info_plist_identifies_a_menu_bar_app() {
+        let plist = app_info_plist("meeting-assistant");
+
+        assert!(plist.contains(&format!("<string>{APP_BUNDLE_IDENTIFIER}</string>")));
+        assert!(plist.contains("<key>LSUIElement</key>\n    <true/>"));
+        assert!(plist.contains(&format!("<string>{}</string>", env!("CARGO_PKG_VERSION"))));
+    }
+
+    #[test]
+    fn login_item_names_the_app_only_when_the_executable_is_bundled() {
+        let bundled = launch_agent_plist(Path::new(BUNDLED));
+        assert!(bundled.contains("AssociatedBundleIdentifiers"));
+        assert!(bundled.contains(&format!("<string>{BUNDLED}</string>")));
+
+        let loose = launch_agent_plist(Path::new("/tmp/a&b/meeting-assistant"));
+        assert!(!loose.contains("AssociatedBundleIdentifiers"));
+        assert!(loose.contains("<string>/tmp/a&amp;b/meeting-assistant</string>"));
     }
 }

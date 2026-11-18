@@ -6,7 +6,7 @@ Meeting Assistant sits in the notification area, notices when a meeting starts i
 
 > A recording contains the video and audio of the other participants. Obtaining their consent and following your organization's rules and the law that applies to you is your responsibility. Meeting Assistant does not announce the recording to anyone.
 
-Windows is supported. On macOS only browser meetings recorded through the extension are implemented, and that code has not been run on a Mac yet; see [Platform support](#platform-support).
+Windows is supported. On macOS only browser meetings recorded through the extension are implemented; see [Platform support](#platform-support).
 
 ## Join a meeting; the file appears when it ends
 
@@ -47,17 +47,19 @@ target\release\meeting-assistant.exe --install
 
 The executable is its own installer. It changes only the current user's profile and needs no administrator rights: it copies itself to `%LOCALAPPDATA%\Programs\MeetingAssistant`, starts at logon, registers itself with Chrome and Edge for the extension, and adds an entry under Settings > Apps. `--uninstall` reverts this and keeps your configuration, logs and recordings.
 
+On macOS the same two commands install `~/Applications/Meeting Assistant.app`; see [INSTALL.md](INSTALL.md#macos).
+
 [INSTALL.md](INSTALL.md) covers the browser extension, updating, macOS and where files are kept.
 
 ## Platform support
 
 | | Windows | macOS |
 | --- | --- | --- |
-| Browser meetings with the extension, per tab | Supported | Implemented, never run on a Mac |
+| Browser meetings with the extension, per tab | Supported | Supported; run with synthetic meetings on one Mac |
 | Browser meetings without the extension, per window | Supported | Not implemented |
 | Desktop apps such as Zoom | Supported | Not implemented |
 | Manual recording | Supported | Not implemented |
-| Install, start at login, finalize on exit, browser launcher | Supported | Implemented, never run on a Mac |
+| Install, start at login, finalize on exit, browser launcher | Supported | Supported; the launcher and a real logout were not run |
 
 ## What to expect
 

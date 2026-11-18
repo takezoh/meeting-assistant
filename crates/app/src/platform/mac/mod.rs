@@ -4,8 +4,6 @@
 //! connection to the extension, installation, start at login, finalizing the recording on exit).
 //! Detecting and recording desktop apps (Zoom, etc.) needs macOS-specific screen and audio capture,
 //! which is not implemented yet.
-//!
-//! Note: this module has only been type-checked on Windows and has never been run on a real Mac.
 
 mod install;
 
@@ -129,8 +127,12 @@ pub fn request_quit() -> bool {
     false
 }
 
-/// On logout, shutdown, or a quit request from [`request_quit`] (all delivered as SIGTERM),
-/// calls `on_exit` and then exits the process. `on_exit` must finalize the recording before returning.
+/// On a termination signal, calls `on_exit` and then exits the process. `on_exit` must finalize the recording
+/// before returning.
+///
+/// SIGTERM comes from [`request_quit`] and from launchd when it stops the login agent; SIGINT and SIGHUP come
+/// from a terminal the app was started from. A request to terminate the application (logout, shutdown, a quit
+/// sent by another app) is not a signal; it ends the tray's event loop, which finalizes the recording itself.
 pub fn watch_exit_requests(on_exit: impl Fn() + Send + Sync + 'static) {
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 
@@ -153,10 +155,25 @@ pub fn watch_exit_requests(on_exit: impl Fn() + Send + Sync + 'static) {
     }
 }
 
-/// Whether a command-line output exists. There is none when started by autostart at login or from Finder.
+/// Whether a command-line output exists: a terminal, or output redirected to a file or pipe.
+///
+/// There is none when started from Finder, at login or from the tray menu of an app started that way: launchd
+/// and LaunchServices connect standard output to `/dev/null`, and a child process inherits it.
 pub fn has_output() -> bool {
-    // In those cases the parent process is launchd (process ID 1).
-    unsafe { libc::getppid() != 1 }
+    let mut status = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `fstat` fills `status` when it returns 0, and it is read only then.
+    let mode = unsafe {
+        if libc::fstat(libc::STDOUT_FILENO, status.as_mut_ptr()) != 0 {
+            return false;
+        }
+        status.assume_init().st_mode & libc::S_IFMT
+    };
+    match mode {
+        // `/dev/null` is a character device too; only a terminal counts.
+        libc::S_IFCHR => unsafe { libc::isatty(libc::STDOUT_FILENO) == 1 },
+        libc::S_IFREG | libc::S_IFIFO | libc::S_IFSOCK => true,
+        _ => false,
+    }
 }
 
 /// Escapes text so it can be safely embedded as an AppleScript string.

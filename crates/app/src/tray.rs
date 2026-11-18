@@ -71,16 +71,19 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
         move || shut_down(&commands)
     });
 
-    // On macOS, stay resident in the menu bar only, with no Dock icon.
+    // On macOS, stay resident in the menu bar only, with no Dock icon, and do not take the focus at start.
     #[cfg(target_os = "macos")]
     let mut event_loop = event_loop;
     #[cfg(target_os = "macos")]
     {
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
         event_loop.set_activation_policy(ActivationPolicy::Accessory);
+        event_loop.set_activate_ignoring_other_apps(false);
     }
 
     let mut tray: Option<Tray> = None;
+    // Several exit paths can reach the end of the loop; the recording is finalized by the first one.
+    let mut finalized = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -130,9 +133,17 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
                     }
                 } else if id == *tray.quit.id() {
                     let _ = tray.icon.set_tooltip(Some(format!("{APP_NAME} - Quitting")));
+                    finalized = true;
                     shut_down(&commands);
                     *control_flow = ControlFlow::Exit;
                 }
+            }
+            // The last event before the process ends. Besides a quit from the menu, it is how the end of the
+            // session reaches a macOS app: logout, restart, shutdown and a quit request from another app arrive
+            // as a request to terminate the application, and the process exits right after this event.
+            Event::LoopDestroyed if !std::mem::replace(&mut finalized, true) => {
+                log::info!("The application is being terminated.");
+                shut_down(&commands);
             }
             _ => {}
         }
