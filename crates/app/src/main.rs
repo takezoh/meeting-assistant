@@ -120,11 +120,10 @@ fn main() -> ExitCode {
             install::uninstall(&mut PlatformInstaller).map(|report| reporter.info(&report.join("\n")))
         }
         Command::Quit => quit(&reporter),
-        Command::Probe => load(&config_path).and_then(|config| diagnostics::probe(&config)),
-        Command::SelfTest { keep, seconds } => {
-            load(&config_path).and_then(|config| diagnostics::self_test(&config, keep, Duration::from_secs(seconds)))
-        }
-        Command::Run => load(&config_path).and_then(|config| run_tray(config, config_path, log_directory)),
+        Command::Probe => load(&config_path, false).and_then(|config| diagnostics::probe(&config)),
+        Command::SelfTest { keep, seconds } => load(&config_path, false)
+            .and_then(|config| diagnostics::self_test(&config, keep, Duration::from_secs(seconds))),
+        Command::Run => load(&config_path, true).and_then(|config| run_tray(config, config_path, log_directory)),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -132,8 +131,26 @@ fn main() -> ExitCode {
     }
 }
 
-fn load(config_path: &std::path::Path) -> anyhow::Result<Config> {
-    adapters::config_file::load_or_create(config_path)
+/// Reads the configuration. A file for another configuration version has been replaced with the defaults by then;
+/// that is said in the log and, when `notify` is set (the resident app, which has no console), in a notification.
+fn load(config_path: &std::path::Path, notify: bool) -> anyhow::Result<Config> {
+    let loaded = adapters::config_file::load_or_create(config_path)?;
+    if let Some(replaced) = &loaded.replaced {
+        let message = format!(
+            "The settings file was written for {}, which this version does not read, so it was replaced with the \
+             defaults. The old file is kept at {}.",
+            replaced.found.map_or_else(
+                || "an earlier version of the app".to_owned(),
+                |version| format!("configuration version {version}")
+            ),
+            replaced.kept_at.display()
+        );
+        log::warn!("{message}");
+        if notify {
+            platform::notify(install::APP_NAME, &message);
+        }
+    }
+    Ok(loaded.config)
 }
 
 /// Runs as a relay process launched by the browser.

@@ -50,7 +50,11 @@ The log shows the extension's error. The usual cause is that the browser was not
 
 ## The app is not running after logon
 
-Check **Start at logon** in the tray menu, or run `--install` again. An invalid `config.toml` also stops the app at startup; the message names the problem.
+Check **Start at logon** in the tray menu, or run `--install` again. An invalid `config.toml` also stops the app at startup; the message names the problem. A file from an older version does not: it is set aside and replaced with the defaults.
+
+## My settings are gone after an update
+
+The new version stores its settings in another format. Your old file is beside `config.toml` as `config.toml.unversioned.bak` or `config.toml.v<version>.bak`; copy the values you need into the new file and start the app again.
 
 ## Notifications are attributed to Windows PowerShell
 

@@ -74,7 +74,7 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 - Stopping a recording by hand starts no other recording, and that meeting is not recorded automatically again. Switching automatic recording off and on again clears this.
 - Quitting from the menu, `--quit`, logoff and shutdown finalize a recording before the process ends.
 - If a recording fails mid-way, the app keeps the partial file, reports the failure and tries again while the meeting continues.
-- Changes to `config.toml` take effect the next time the app starts. An invalid configuration is reported at startup instead of being partly applied.
+- Changes to `config.toml` take effect the next time the app starts. An invalid configuration is reported at startup instead of being partly applied. A file from a version of the app that wrote settings in another format is set aside and replaced with the defaults, and the app says so; older settings are not converted.
 
 ## What Meeting Assistant does not promise
 
@@ -96,7 +96,7 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 - On macOS, recording desktop apps and the screen is implemented, but on 2026-11-18 only its file writer (two seconds of generated pictures and sound, finished and playable) and its microphone capture were run on a Mac. Capturing a window, a display or an app's audio with ScreenCaptureKit, and whether an app's audio includes what its helper processes play, have not been observed.
 - The tray menu, the status panel and notifications were not inspected by an automated test; their logic is tested, their appearance is not. On one Mac on 2026-11-18 the panel, the menu bar icon and its running time were looked at by the user, with a stand-in for the extension reporting synthetic meetings. On one Windows 11 PC on 2026-11-18 the panel was opened from the tray and captured with no meeting detected; its other states were only rendered from sample content in Edge, and the tray icon, its tooltip and the menu were not looked at.
 - The status panel needs the system web view. On Windows this is the WebView2 runtime; without it only the menu is available.
-- Long recordings, several displays with different scaling, and protected content have not been measured.
+- On one Windows PC on 2026-11-18 a 60-minute self-test of a 3840x2160 display kept the sound where it started against the picture for the whole hour, without a gap; it recorded the output audio only, as there was no microphone ([the measurement note](docs/note/note-20261118-windows-recording-measured.md)). Long recordings with a microphone or of a meeting app, several displays with different scaling, and protected content have not been measured.
 
 [The verification note](docs/note/note-20261117-local-verification.md) records what was observed and on which date. Open gaps are tracked under [docs/issue](docs/issue/).
 

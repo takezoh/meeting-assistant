@@ -2,12 +2,17 @@
 
 Meeting Assistant reads one TOML file, `%APPDATA%\MeetingAssistant\config.toml` on Windows and `~/Library/Application Support/MeetingAssistant/config.toml` on macOS. It is created with the defaults the first time the app starts. The tray menu opens it.
 
-Changes take effect the next time the app starts. A file that cannot be parsed, contains an unknown key or fails validation stops the app at startup with a message that names the file and the reason; nothing is applied partially. Keys you leave out keep their defaults.
+Changes take effect the next time the app starts. Keys you leave out keep their defaults.
+
+The file starts with `version`, the format of the settings; leave it as it is. A file of another version, including one written by an earlier release that did not number its settings, is not read: the app moves it to `config.toml.unversioned.bak` (or `config.toml.v<version>.bak`) beside the new one, writes the defaults and starts with them, and says so in a notification and the log. Settings from the old file are not carried over; copy back what you need.
+
+A file of the current version that cannot be parsed, contains an unknown key or fails validation stops the app at startup with a message that names the file and the reason; nothing is applied partially, and the file is left for you to fix.
 
 ## Settings
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `version` | `1` | The format of this file. Not a setting; a file of another version is replaced with the defaults |
 | `output_directory` | `Videos\MeetingAssistant` (`~/Movies/MeetingAssistant` on macOS) | Folder for recordings |
 | `start_debounce_seconds` | `3.0` | How long a desktop app must use the microphone before its meeting is considered started |
 | `end_grace_seconds` | `15.0` | How long a desktop app's microphone use must be absent before its meeting is considered ended |

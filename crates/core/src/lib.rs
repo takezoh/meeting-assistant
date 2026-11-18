@@ -23,7 +23,7 @@ mod recording;
 mod rules;
 mod signals;
 
-pub use config::{AudioConfig, CaptureScope, Config, ConfigError, VideoConfig};
+pub use config::{AudioConfig, CONFIG_VERSION, CaptureScope, Config, ConfigError, VideoConfig};
 pub use coordinator::{
     CoordinatorStatus, ManualTarget, MeetingStatus, Notice, NoticeLevel, RecordingCoordinator, RecordingStatus,
     RecordingTrigger,

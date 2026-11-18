@@ -56,7 +56,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `coordinator` | `RecordingCoordinator`: turns meeting starts, ends and manual commands into recorder calls; chooses the video target and audio process; retries after failure; names the file |
 | `engine` | `Engine`: one tick = capture signals, evaluate, update the detector, tell the coordinator; returns state and notices |
 | `naming` | Recording file names and collision handling. Pure |
-| `config` | `Config`: TOML parsing, defaults and validation. Pure; reading the file is an adapter's job |
+| `config` | `Config`: the file's format version, TOML parsing, defaults and validation. Pure; reading the file, and replacing one of another version with the defaults, is an adapter's job |
 | `signals`, `recording`, `ports` | The ports and their value types: `SignalSource`, `Recorder`, `Clock`, `OutputFolder`, `Pause` |
 | `fakes` | Fakes for every core port, behind the `fakes` feature |
 

@@ -73,7 +73,7 @@ failure_responsibilities:
 trust_boundaries: []
 compatibility_policies:
 - id: COMPAT-001
-  statement: "A key is not repurposed, and an unknown or removed key is rejected at startup rather than ignored."
+  statement: "The configuration file names its format version. A file of another version, or of none, is not read: it is kept beside a new file of defaults, and the app starts with those. Within a version a key is not repurposed, and an unknown key is rejected at startup rather than ignored."
 tags: []
 owners: []
 relations:

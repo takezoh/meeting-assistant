@@ -4,8 +4,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::rules::{MeetingRule, RuleEvaluator, default_rules};
 
+/// The format of the configuration file. Raise it whenever a file of the current format would read differently or
+/// not at all: a key removed, renamed or given another meaning. A file of any other version is not read; it is
+/// replaced with the defaults. There is no conversion from an older format.
+pub const CONFIG_VERSION: u32 = 1;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// The file is for another format of the configuration, or names none, as files did before formats were
+    /// numbered. `found` is the version it names, if it names one as a number.
+    #[error(
+        "the file is for {}, and this app reads configuration version {CONFIG_VERSION}",
+        found.map_or("no configuration version".to_owned(), |version| format!("configuration version {version}"))
+    )]
+    UnsupportedVersion { found: Option<i64> },
     #[error("cannot parse the configuration: {0}")]
     Parse(String),
     #[error("invalid configuration: {0}")]
@@ -66,6 +78,8 @@ pub enum CaptureScope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// The format of the file, [`CONFIG_VERSION`].
+    pub version: u32,
     /// Where recordings are saved. Defaults to MeetingAssistant under the OS "Videos" folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_directory: Option<PathBuf>,
@@ -88,6 +102,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            version: CONFIG_VERSION,
             output_directory: None,
             start_debounce_seconds: 3.0,
             end_grace_seconds: 15.0,
@@ -106,6 +121,9 @@ impl Default for Config {
 const HEADER: &str = "\
 # Meeting Assistant settings. Changes take effect the next time the app starts.
 #
+# `version` is the format of this file; leave it as it is. A file of another version is not read:
+# the app keeps it beside this one and starts again from the defaults.
+#
 # To change where recordings are saved, uncomment the next line and edit it
 # (defaults to MeetingAssistant under the Videos folder).
 # output_directory = 'D:\\Recordings'
@@ -113,8 +131,18 @@ const HEADER: &str = "\
 ";
 
 impl Config {
-    /// Parses a TOML string and validates it. Omitted fields take their default values.
+    /// Parses a TOML string and validates it. Omitted fields take their default values. A file that does not name
+    /// [`CONFIG_VERSION`] as its version is not read further.
     pub fn from_toml(text: &str) -> Result<Self, ConfigError> {
+        let table: toml::Table = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        match table.get("version") {
+            Some(toml::Value::Integer(version)) if *version == i64::from(CONFIG_VERSION) => {}
+            Some(toml::Value::Integer(version)) => {
+                return Err(ConfigError::UnsupportedVersion { found: Some(*version) });
+            }
+            _ => return Err(ConfigError::UnsupportedVersion { found: None }),
+        }
+        // Parsed again from the text, so that an error names its line.
         let config: Self = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
         config.validate()?;
         Ok(config)
