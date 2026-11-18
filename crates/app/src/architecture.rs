@@ -90,6 +90,7 @@ fn decision_modules_have_no_side_effects() {
         "worker.rs",
         "browser/protocol.rs",
         "browser/hub.rs",
+        "browser/peer.rs",
         "recording/mod.rs",
         "recording/timeline.rs",
         "recording/mixer.rs",

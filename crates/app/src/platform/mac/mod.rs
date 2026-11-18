@@ -4,6 +4,7 @@
 //! and AVAssetWriter (`recorder`). Browser meetings are recorded by the extension.
 
 mod install;
+mod peers;
 mod recorder;
 mod signals;
 
@@ -14,6 +15,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 pub use self::install::PlatformInstaller;
+pub use self::peers::MacLoopbackPeers as PlatformLoopbackPeers;
 pub use self::recorder::{PlatformRecorder, recorder};
 pub use self::signals::MacSignalSource as PlatformSignalSource;
 use crate::install::APP_NAME;

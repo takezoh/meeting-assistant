@@ -9,6 +9,10 @@
 //! - `watch_exit_requests`: calls the finalize-recording handler when a logoff or quit request arrives
 //! - `request_quit`: asks the resident instance to finalize its recording and quit
 //!
+//! Browser link:
+//! - `PlatformLoopbackPeers`: implements `crate::browser::peer::LoopbackPeers` (which user owns the other end of a
+//!   loopback connection; whether to admit it is decided by `crate::browser::peer`)
+//!
 //! Installation:
 //! - `PlatformInstaller`: implements `crate::install::InstallSystem` (the procedure is decided by `crate::install`)
 //!
@@ -34,6 +38,6 @@ use self::mac as imp;
 compile_error!("This OS is not supported yet. Add an implementation under crates/app/src/platform.");
 
 pub use self::imp::{
-    PlatformInstaller, PlatformRecorder, PlatformSignalSource, SCREEN_CAPTURE, SingleInstance, has_output, notify,
-    panel_window, recorder, request_quit, show_error, show_info, style_panel, watch_exit_requests,
+    PlatformInstaller, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource, SCREEN_CAPTURE, SingleInstance,
+    has_output, notify, panel_window, recorder, request_quit, show_error, show_info, style_panel, watch_exit_requests,
 };

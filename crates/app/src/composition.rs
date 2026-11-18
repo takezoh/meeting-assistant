@@ -5,7 +5,7 @@
 //! and the clock and storage (`adapters`).
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use meeting_assistant_core::{Config, Engine, Notice, NoticeLevel, RecordingCoordinator};
@@ -13,7 +13,7 @@ use meeting_assistant_core::{Config, Engine, Notice, NoticeLevel, RecordingCoord
 use crate::adapters::real_ports;
 use crate::browser::BrowserLinkServer;
 use crate::linked::{LinkedRecorder, LinkedSignalSource};
-use crate::platform::{self, PlatformRecorder, PlatformSignalSource};
+use crate::platform::{self, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource};
 use crate::worker::{self, Command, Update};
 
 /// Starts the thread that runs detection and recording.
@@ -50,7 +50,7 @@ type AppEngine = Engine<
 
 fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<AppEngine> {
     // Even without the browser extension, the other detection and recording keep working.
-    let browser = BrowserLinkServer::start()
+    let browser = BrowserLinkServer::start(Arc::new(PlatformLoopbackPeers))
         .inspect_err(|error| log::warn!("not linking with the browser extension: {error:#}"))
         .ok();
 
