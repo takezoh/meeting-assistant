@@ -9,10 +9,12 @@ Changes take effect the next time the app starts. A file that cannot be parsed, 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `output_directory` | `Videos\MeetingAssistant` (`~/Movies/MeetingAssistant` on macOS) | Folder for recordings |
-| `start_debounce_seconds` | `3.0` | How long the start condition must hold before a meeting is considered started |
-| `end_grace_seconds` | `15.0` | How long microphone use must be absent before the meeting is considered ended |
+| `start_debounce_seconds` | `3.0` | How long a desktop app must use the microphone before its meeting is considered started |
+| `end_grace_seconds` | `15.0` | How long a desktop app's microphone use must be absent before its meeting is considered ended |
+| `browser_start_debounce_seconds` | `1.0` | How long the extension must report a call before the browser meeting is considered started |
+| `browser_end_grace_seconds` | `5.0` | How long the extension must report no call before the browser meeting is considered ended |
 | `poll_interval_milliseconds` | `1000` | How often signals are read. At least 100 |
-| `capture_scope` | `"app"` | `"app"` records the meeting app only. `"screen"` records the display that holds the meeting window and all audio of the output device |
+| `capture_scope` | `"app"` | `"app"` records the meeting app only. `"screen"` records the display that holds the meeting window and all audio of the output device (on macOS, everything apps play, whichever device they play to) |
 | `video.framerate` | `30` | Frames per second, 1 to 60 |
 | `video.quality` | `70` | Encoder quality, 1 to 100. Higher is sharper and larger |
 | `video.fallback_bitrate_kbps` | `4000` | Average bitrate used when the encoder does not support a quality setting, 100 to 100000 |
@@ -24,28 +26,20 @@ The video and audio settings apply to recordings made by the app itself. A tab r
 
 ## Rules
 
-A rule says which processes can be in a meeting.
+A rule names the processes of a desktop meeting app. Browser meetings are not configured here; they are detected by the browser extension.
 
 ```toml
 [[rules]]
 name = "Zoom"
 process_names = ["zoom"]
-
-[[rules]]
-name = "WebMeeting"
-process_names = ["chrome", "msedge"]
-require_window_title = true
-window_title_patterns = ['^Meet\s*[-–—:]\s', '\bMicrosoft Teams\b']
 ```
 
 | Key | Meaning |
 | --- | --- |
 | `name` | Used in the recording's file name and in the log |
 | `process_names` | Executable names without extension, case-insensitive. Child processes of a matching process count as that process |
-| `require_window_title` | When `true`, the start also requires a window of the process whose title matches a pattern. Use it for programs, such as browsers, that use the microphone for other things |
-| `window_title_patterns` | Case-insensitive regular expressions tested against window titles |
 
-A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`, and, if `require_window_title` is set, a title matches at that time. The title is needed only to start; the meeting then lasts as long as the microphone is in use.
+A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`; the meeting then lasts as long as the microphone is in use. The app's largest window is recorded.
 
 The first rule in the file that is satisfied names the recording. Writing a `rules` list replaces the defaults entirely, so copy the default rules from the generated file before editing them.
 
@@ -61,12 +55,12 @@ prints, for this moment, the processes with an active microphone session, the wi
 2. Take the process name listed as using the microphone and add a rule with it.
 3. Run `--probe` again and confirm the rule is satisfied, then restart the app.
 
-For a browser-based service, read the window title while in a call and add a pattern that matches it but not ordinary pages.
 
 ## Choosing the timings
 
 - A longer `start_debounce_seconds` avoids recordings of a brief microphone test at the cost of missing the first seconds.
 - A longer `end_grace_seconds` keeps one file across short interruptions, for example when an app releases the microphone while you are muted, at the cost of a longer tail after the meeting.
+- Browser meetings have their own, shorter timings. A connected call does not come and go while you are muted, so the recording can stop a few seconds after you leave; `browser_end_grace_seconds` still covers a brief reconnection.
 
 ## Using another file
 

@@ -78,6 +78,12 @@ A development build was run with its own configuration while the installed copy 
 
 The stand-in reported WebM, which exposed that notices and the panel name such a file `.mp4`; see [the issue](../issue/issue-20261118-a-tab-recording-saved-as-webm-is-reporte.md). The installed copy was started again through its LaunchAgent afterwards and reconnected to the browser extension. The installed copy and its extension were not updated.
 
+### Recording upload over WebSocket and the microphone, evening
+
+After the recording was moved from native messaging to a WebSocket upload, the build was installed with `--install` and the extension reloaded in the user's Chrome 157 (launcher profile). A Google Meet call was detected, the upload from the offscreen document to `ws://127.0.0.1` was accepted, 8,198,783 bytes arrived and were saved as MP4. AVFoundation read the file as playable, 27.4 seconds, H.264 2880x1566 with an audio track. Chrome's Local Network Access restrictions did not block the extension page's WebSocket to loopback in this setup.
+
+The extension's microphone was refused: the options page's **Allow microphone** failed at once with `NotAllowedError: Permission denied`, without a prompt, while the extension's site setting showed Microphone: Ask (default) and no block entry. Setting Microphone to **Allow** in the extension's site settings granted it. The user reported that in another Chrome profile the microphone also works only because it is set to Allow. Why Chrome did not prompt was not established.
+
 ### Not checked
 
 - A real logout, restart or shutdown during a recording. Only the quit Apple event and SIGTERM were exercised.

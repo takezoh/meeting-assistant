@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigError;
@@ -15,51 +14,23 @@ pub struct MeetingRule {
     pub name: String,
     /// Target executable name (extension and letter case are ignored). Descendant processes are also covered.
     pub process_names: Vec<String>,
-    /// If true, the start check additionally requires that "a window title of the target process matches one of
-    /// window_title_patterns". For processes such as browsers, where microphone use alone does not imply a
-    /// meeting.
-    #[serde(default)]
-    pub require_window_title: bool,
-    /// Regular expressions for window titles (case-insensitive).
-    #[serde(default)]
-    pub window_title_patterns: Vec<String>,
 }
 
-/// Default rules. Process names are for Windows (split per OS when supporting other OSes).
+/// Default rules: desktop meeting apps, with their executable names on Windows and on macOS (`zoom.us`, `MSTeams`).
+/// Browser meetings are detected by the browser extension, not by rules.
 pub fn default_rules() -> Vec<MeetingRule> {
     fn app(name: &str, process_names: &[&str]) -> MeetingRule {
         MeetingRule {
             name: name.into(),
             process_names: process_names.iter().map(|s| s.to_string()).collect(),
-            require_window_title: false,
-            window_title_patterns: Vec::new(),
         }
     }
 
     vec![
-        app("Zoom", &["zoom"]),
-        app("Teams", &["ms-teams", "teams"]),
+        app("Zoom", &["zoom", "zoom.us"]),
+        app("Teams", &["ms-teams", "teams", "msteams"]),
         app("Webex", &["webexmta", "atmgr", "ciscocollabhost", "webex"]),
         app("Slack", &["slack"]),
-        MeetingRule {
-            require_window_title: true,
-            window_title_patterns: [
-                r"^(\(\d+\)\s*)?Meet\s*[-–—:]\s",
-                r"\bGoogle Meet\b",
-                r"\bMicrosoft Teams\b",
-                r"\bZoom\b",
-                r"\bWebex\b",
-                r"\bSlack\b",
-                r"\bWhereby\b",
-                r"\bJitsi Meet\b",
-            ]
-            .map(String::from)
-            .to_vec(),
-            ..app(
-                "WebMeeting",
-                &["chrome", "msedge", "firefox", "brave", "vivaldi", "opera", "arc"],
-            )
-        },
     ]
 }
 
@@ -67,17 +38,14 @@ pub fn default_rules() -> Vec<MeetingRule> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleEvidence {
     pub rule_name: String,
-    /// A process of the rule's target (including descendants) is using the microphone.
-    pub mic_active: bool,
-    /// A window title of the target process matches a pattern.
-    pub window_title_matched: bool,
-    /// The meeting start condition is met.
-    pub can_start: bool,
+    /// The meeting's condition holds now: a process of the rule's target (including descendants) is using the
+    /// microphone, or the extension reports a connected call.
+    pub active: bool,
     pub capture_device_id: Option<String>,
     pub render_device_id: Option<String>,
     /// Top-level process of the app that is using the microphone. Used to record only that app's sound.
     pub process_id: Option<u32>,
-    /// The window considered to be showing the meeting.
+    /// The window considered to be showing the meeting: the app's largest window.
     pub window: Option<u64>,
     /// The display that holds that window.
     pub display: Option<String>,
@@ -108,8 +76,6 @@ pub struct RuleEvaluator {
 struct CompiledRule {
     name: String,
     process_names: HashSet<String>,
-    require_window_title: bool,
-    title_patterns: Vec<Regex>,
 }
 
 const MAX_ANCESTOR_DEPTH: usize = 32;
@@ -137,29 +103,15 @@ impl RuleEvaluator {
                     .iter()
                     .find_map(|s| owned(s.process_id).map(|o| (s, o)));
                 let render = snapshot.render_sessions.iter().find(|s| owned(s.process_id).is_some());
-                let windows: Vec<_> = snapshot
+                let window = snapshot
                     .windows
                     .iter()
                     .filter(|w| owned(w.process_id).is_some())
-                    .collect();
-                let matched: Vec<_> = windows
-                    .iter()
-                    .copied()
-                    .filter(|w| rule.title_patterns.iter().any(|p| p.is_match(&w.title)))
-                    .collect();
-
-                let mic_active = capture.is_some();
-                let window_title_matched = !matched.is_empty();
-                // Record the window whose title matched, or else the largest window.
-                let window = if window_title_matched { &matched } else { &windows }
-                    .iter()
                     .max_by_key(|w| w.area);
 
                 RuleEvidence {
                     rule_name: rule.name.clone(),
-                    mic_active,
-                    window_title_matched,
-                    can_start: mic_active && (!rule.require_window_title || window_title_matched),
+                    active: capture.is_some(),
                     capture_device_id: capture.map(|(s, _)| s.device_id.clone()),
                     render_device_id: render.map(|s| s.device_id.clone()),
                     process_id: capture.map(|(_, o)| o.root_process_id),
@@ -180,20 +132,17 @@ impl RuleEvaluator {
             .collect();
         for evidence in &mut by_rule {
             if evidence.process_id.is_some_and(|pid| linked.contains(&pid)) {
-                evidence.mic_active = false;
-                evidence.can_start = false;
+                evidence.active = false;
             }
         }
 
-        // A meeting reported by the extension meets the start condition by itself. It takes priority over rules.
+        // A meeting reported by the extension is active by itself. It takes priority over rules.
         let mut result: Vec<RuleEvidence> = snapshot
             .browser_meetings
             .iter()
             .map(|meeting| RuleEvidence {
                 rule_name: meeting.service.clone(),
-                mic_active: true,
-                window_title_matched: false,
-                can_start: true,
+                active: true,
                 capture_device_id: None,
                 render_device_id: None,
                 process_id: None,
@@ -268,27 +217,9 @@ fn compile(rule: &MeetingRule) -> Result<CompiledRule, ConfigError> {
     if rule.process_names.is_empty() {
         return Err(invalid("process_names is missing".into()));
     }
-    if rule.require_window_title && rule.window_title_patterns.is_empty() {
-        return Err(invalid(
-            "require_window_title is true but window_title_patterns is missing".into(),
-        ));
-    }
-
-    let title_patterns = rule
-        .window_title_patterns
-        .iter()
-        .map(|pattern| {
-            RegexBuilder::new(pattern)
-                .case_insensitive(true)
-                .build()
-                .map_err(|e| invalid(format!("regex '{pattern}' is invalid: {e}")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(CompiledRule {
         name: rule.name.clone(),
         process_names: rule.process_names.iter().map(|n| normalize_process_name(n)).collect(),
-        require_window_title: rule.require_window_title,
-        title_patterns,
     })
 }

@@ -2,7 +2,9 @@
 //! state decisions to [`Hub`].
 //!
 //! At the extension's request the browser launches a relay process ([`super::relay`]), which connects
-//! to this app over loopback TCP.
+//! to this app over loopback TCP and carries the control messages. For each recording the app opens a second,
+//! short-lived loopback listener; the extension's recording page connects to it with a WebSocket and sends the
+//! recording as binary messages, which are appended to the file as they are.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -16,16 +18,26 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use base64::Engine as _;
 use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab, naming};
+use tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tungstenite::protocol::WebSocketConfig;
+use tungstenite::{Message, WebSocket};
 
 use super::endpoint::Endpoint;
-use super::hub::{ChunkSink, Finished, Hub, Phase};
-use super::protocol::{Incoming, MAX_HELLO_FRAME, Outgoing, read_frame, read_frame_within, tokens_match, write_frame};
+use super::hub::{CaptureId, ChunkSink, Finished, Hub, Phase, Upload};
+use super::protocol::{
+    Incoming, MAX_FRAME, MAX_HELLO_FRAME, Outgoing, UploadWarning, accept_upload_hello, is_extension_origin,
+    read_frame, read_frame_within, tokens_match, upload_close_outcome, write_frame,
+};
 use crate::linked::BrowserPort;
 
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a new connection may take to present the token. The relay sends it immediately after connecting.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+/// The recording page sends data every second; this long without any means it is gone.
+const UPLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often the upload listener checks for a connection while it waits for the recording page.
+const UPLOAD_ACCEPT_POLL: Duration = Duration::from_millis(20);
 /// How many connections may be waiting to present the token at once. Any local process can connect to
 /// the loopback port, so those that have not proved themselves are kept few and short-lived.
 const MAX_UNAUTHENTICATED: usize = 8;
@@ -123,9 +135,7 @@ impl BrowserLinkServer {
     pub fn start() -> anyhow::Result<Self> {
         let listener =
             TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("Cannot listen for connections from the extension")?;
-        let mut random = [0u8; 24];
-        getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("Cannot obtain random bytes: {e}"))?;
-        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random);
+        let token = random_token()?;
         Endpoint {
             port: listener.local_addr()?.port(),
             token: token.clone(),
@@ -160,12 +170,28 @@ impl BrowserPort for BrowserLinkServer {
 
     /// Writes incoming data to `path`, renamed to the extension of the container the browser records in.
     fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf> {
+        // The recording page connects here and nowhere else; the listener lives only until it has.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .context("Cannot listen for the recording from the extension")?;
+        let upload = Upload {
+            url: format!("ws://127.0.0.1:{}/", listener.local_addr()?.port()),
+            token: random_token()?,
+        };
+        let token = upload.token.clone();
+
         let mut state = self.0.lock();
         let file = File::create(path).with_context(|| format!("Cannot create the output file: {}", path.display()))?;
         let started = state
             .hub
-            .begin_capture(tab, Box::new(FileSink(file)))
-            .and_then(|instruction| state.send(tab.link, &instruction));
+            .begin_capture(tab, Box::new(FileSink(file)), upload)
+            .and_then(|(id, instruction)| {
+                let shared = self.0.clone();
+                std::thread::Builder::new()
+                    .name("browser-upload".into())
+                    .spawn(move || receive_upload(&shared, &listener, id, &token))
+                    .context("Cannot start receiving the recording")?;
+                state.send(tab.link, &instruction)
+            });
         if let Err(error) = started {
             state.hub.end_capture();
             drop(state);
@@ -234,16 +260,125 @@ fn name_for_container(path: &Path, extension: &str) -> io::Result<PathBuf> {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let renamed = (1..)
-        .map(|attempt| path.with_file_name(naming::candidate_file_name_with_extension(&stem, attempt, extension)))
-        .find(|candidate| !candidate.exists())
-        .expect("candidates never run out");
+    let name =
+        naming::first_unused_file_name_with_extension(&stem, extension, |name| path.with_file_name(name).exists());
+    let renamed = path.with_file_name(name);
     std::fs::rename(path, &renamed)?;
     log::info!(
         "Recording as .{extension}, the format the browser records: {}",
         renamed.display()
     );
     Ok(renamed)
+}
+
+/// A random secret, for the relay and for each recording's upload.
+fn random_token() -> anyhow::Result<String> {
+    let mut random = [0u8; 24];
+    getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("Cannot obtain random bytes: {e}"))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random))
+}
+
+/// Takes the recording page's upload for recording `id` and appends what it sends, until it closes.
+fn receive_upload(shared: &Shared, listener: &TcpListener, id: CaptureId, token: &str) {
+    let Some(mut socket) = accept_upload(shared, listener, id, token) else {
+        return;
+    };
+    let outcome = loop {
+        let message = socket.read();
+        let mut state = shared.lock();
+        if !state.hub.is_capturing(id) {
+            // The recording was ended or failed on this side; the page notices the close and stops.
+            break None;
+        }
+        match message {
+            Ok(Message::Binary(bytes)) => state.hub.upload_data(id, &bytes),
+            Ok(Message::Text(text)) => match serde_json::from_str::<UploadWarning>(&text) {
+                Ok(warning) => log::warn!("Warning from the extension: {}", warning.warning),
+                Err(_) => log::warn!("Ignored an unexpected text message in the recording upload."),
+            },
+            Ok(Message::Close(frame)) => {
+                break Some(upload_close_outcome(
+                    frame
+                        .as_ref()
+                        .map(|frame| (u16::from(frame.code), frame.reason.as_str())),
+                ));
+            }
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(error))
+                if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+            {
+                break Some(Err(format!(
+                    "No recording data arrived for {} seconds",
+                    UPLOAD_IDLE_TIMEOUT.as_secs()
+                )));
+            }
+            Err(error) => break Some(Err(format!("The recording upload broke off: {error}"))),
+        }
+    };
+    if let Some(outcome) = outcome {
+        shared.lock().hub.upload_closed(id, outcome);
+        shared.changed.notify_all();
+    }
+    let _ = socket.close(None);
+    let _ = socket.flush();
+}
+
+/// Waits, while recording `id` is starting, for the recording page to connect and prove itself. Other connections
+/// are turned away and do not end the wait.
+fn accept_upload(shared: &Shared, listener: &TcpListener, id: CaptureId, token: &str) -> Option<WebSocket<TcpStream>> {
+    listener.set_nonblocking(true).ok()?;
+    let deadline = Instant::now() + START_TIMEOUT;
+    while Instant::now() < deadline && shared.lock().hub.is_capturing(id) {
+        match listener.accept() {
+            Ok((stream, _)) => match authenticate_upload(stream, token) {
+                Ok((socket, mime)) => {
+                    shared.lock().hub.upload_opened(id, mime);
+                    shared.changed.notify_all();
+                    return Some(socket);
+                }
+                Err(error) => log::warn!("Rejected a connection for the recording: {error:#}"),
+            },
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(UPLOAD_ACCEPT_POLL),
+            Err(error) => {
+                log::warn!("Cannot accept the recording from the extension: {error}");
+                return None;
+            }
+        }
+    }
+    None
+}
+
+/// Accepts a WebSocket only from the extension's pages, and only if its first message carries this recording's
+/// token. Until then the peer gets a small message and a short time.
+fn authenticate_upload(stream: TcpStream, token: &str) -> anyhow::Result<(WebSocket<TcpStream>, String)> {
+    // An accepted socket can inherit the listener's non-blocking mode.
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(HELLO_TIMEOUT))?;
+    stream.set_write_timeout(Some(HELLO_TIMEOUT))?;
+    #[expect(clippy::result_large_err, reason = "tungstenite fixes the callback's error type")]
+    let only_the_extension = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
+        if is_extension_origin(request.headers().get("origin").map(|value| value.as_bytes())) {
+            return Ok(response);
+        }
+        let mut refusal = ErrorResponse::new(Some("Forbidden".to_owned()));
+        *refusal.status_mut() = tungstenite::http::StatusCode::FORBIDDEN;
+        Err(refusal)
+    };
+    let small = WebSocketConfig::default()
+        .max_message_size(Some(MAX_HELLO_FRAME))
+        .max_frame_size(Some(MAX_HELLO_FRAME));
+    let mut socket = tungstenite::accept_hdr_with_config(stream, only_the_extension, Some(small))
+        .map_err(|error| anyhow::anyhow!("not a WebSocket from the extension: {error}"))?;
+
+    let first = socket.read()?;
+    let mime = accept_upload_hello(first.to_text().ok(), token).map_err(|reason| anyhow::anyhow!(reason))?;
+
+    socket.set_config(|config| {
+        config.max_message_size = Some(MAX_FRAME);
+        config.max_frame_size = Some(MAX_FRAME);
+    });
+    socket.get_ref().set_read_timeout(Some(UPLOAD_IDLE_TIMEOUT))?;
+    Ok((socket, mime))
 }
 
 /// Finishes writing.
@@ -314,7 +449,174 @@ fn serve(shared: &Shared, stream: TcpStream) {
 
 #[cfg(test)]
 mod tests {
+    use tungstenite::client::IntoClientRequest;
+    use tungstenite::protocol::CloseFrame;
+    use tungstenite::protocol::frame::coding::CloseCode;
+
+    use super::super::protocol::extension_web_origin;
+
     use super::*;
+
+    /// A sink that only remembers the data written to it.
+    #[derive(Clone, Default)]
+    struct MemorySink(Arc<Mutex<Vec<u8>>>);
+
+    impl ChunkSink for MemorySink {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    /// A recording of tab 7 that is starting, with its upload listener served on another thread.
+    struct Upload {
+        shared: Arc<Shared>,
+        id: CaptureId,
+        port: u16,
+        sink: MemorySink,
+        thread: std::thread::JoinHandle<()>,
+    }
+
+    const TOKEN: &str = "recording-token";
+
+    fn upload() -> Upload {
+        let shared = Arc::new(Shared {
+            state: Mutex::default(),
+            changed: Condvar::new(),
+            token: "relay-token".into(),
+            unauthenticated: AtomicUsize::new(0),
+        });
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let sink = MemorySink::default();
+        let id = {
+            let mut state = shared.lock();
+            let link = state.hub.connect(301);
+            let upload = super::Upload {
+                url: format!("ws://127.0.0.1:{port}/"),
+                token: TOKEN.into(),
+            };
+            state
+                .hub
+                .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload)
+                .unwrap()
+                .0
+        };
+        let thread = std::thread::spawn({
+            let shared = shared.clone();
+            move || receive_upload(&shared, &listener, id, TOKEN)
+        });
+        Upload {
+            shared,
+            id,
+            port,
+            sink,
+            thread,
+        }
+    }
+
+    fn connect(port: u16, origin: &str) -> tungstenite::Result<WebSocket<TcpStream>> {
+        let mut request = format!("ws://127.0.0.1:{port}/").into_client_request().unwrap();
+        request.headers_mut().insert("Origin", origin.parse().unwrap());
+        let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        tungstenite::client(request, stream)
+            .map(|(socket, _)| socket)
+            .map_err(|error| match error {
+                tungstenite::HandshakeError::Failure(error) => error,
+                tungstenite::HandshakeError::Interrupted(_) => unreachable!("blocking stream"),
+            })
+    }
+
+    fn hello(token: &str) -> Message {
+        Message::text(format!(r#"{{"token":"{token}","mime":"video/webm;codecs=vp9,opus"}}"#))
+    }
+
+    fn phase(shared: &Shared) -> Option<Phase> {
+        shared.lock().hub.capture_phase().cloned()
+    }
+
+    #[test]
+    fn the_recording_page_streams_binary_data_into_the_file_and_closes_it() {
+        let upload = upload();
+        let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        page.send(hello(TOKEN)).unwrap();
+        page.send(Message::text(r#"{"warning":"no microphone"}"#)).unwrap();
+        page.send(Message::binary(b"\x1a\x45\xdf\xa3".to_vec())).unwrap();
+        page.send(Message::binary(vec![7u8; 300_000])).unwrap();
+        page.close(None).unwrap();
+        // Wait for the app to acknowledge the close, as the page does before it lets itself be closed.
+        while page.read().is_ok() {}
+        upload.thread.join().unwrap();
+
+        assert_eq!(phase(&upload.shared), Some(Phase::Stopped));
+        assert_eq!(upload.shared.lock().hub.capture_extension(), Some("webm"));
+        let written = upload.sink.0.lock().unwrap();
+        assert_eq!(written.len(), 4 + 300_000);
+        assert_eq!(&written[..4], b"\x1a\x45\xdf\xa3");
+    }
+
+    #[test]
+    fn only_the_extension_with_this_recordings_token_is_let_in() {
+        let upload = upload();
+        assert!(
+            connect(upload.port, "https://example.com").is_err(),
+            "a page that is not the extension is refused at the handshake"
+        );
+
+        let mut impostor = connect(upload.port, &extension_web_origin()).unwrap();
+        impostor.send(hello("guessed")).unwrap();
+        assert!(impostor.read().is_err(), "a wrong token is turned away");
+        assert_eq!(
+            phase(&upload.shared),
+            Some(Phase::Starting),
+            "and does not end the wait"
+        );
+
+        let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        page.send(hello(TOKEN)).unwrap();
+        page.send(Message::binary(b"data".to_vec())).unwrap();
+        page.close(None).unwrap();
+        while page.read().is_ok() {}
+        upload.thread.join().unwrap();
+
+        assert_eq!(phase(&upload.shared), Some(Phase::Stopped));
+        assert_eq!(*upload.sink.0.lock().unwrap(), b"data");
+    }
+
+    #[test]
+    fn an_upload_closed_with_an_error_fails_the_recording_with_its_reason() {
+        let upload = upload();
+        let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        page.send(hello(TOKEN)).unwrap();
+        page.close(Some(CloseFrame {
+            code: CloseCode::Error,
+            reason: "Recording failed (NotReadableError)".into(),
+        }))
+        .unwrap();
+        while page.read().is_ok() {}
+        upload.thread.join().unwrap();
+
+        assert_eq!(
+            phase(&upload.shared),
+            Some(Phase::Failed("Recording failed (NotReadableError)".into()))
+        );
+    }
+
+    #[test]
+    fn the_upload_is_closed_when_the_recording_ends_on_this_side() {
+        let upload = upload();
+        let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        page.send(hello(TOKEN)).unwrap();
+        while phase(&upload.shared) != Some(Phase::Recording) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(upload.shared.lock().hub.is_capturing(upload.id));
+        upload.shared.lock().hub.end_capture();
+        page.send(Message::binary(b"late".to_vec())).unwrap();
+
+        upload.thread.join().unwrap();
+        assert!(upload.sink.0.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn a_recording_is_renamed_to_its_container_while_it_is_written_and_replaces_no_file() {

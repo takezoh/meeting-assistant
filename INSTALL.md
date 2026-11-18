@@ -8,7 +8,7 @@ This page takes you from a checkout to a running app that records desktop meetin
 - A Rust toolchain that supports edition 2024 (Rust 1.85 or later). No prebuilt binaries are published.
 - For per-tab recording: Google Chrome or Microsoft Edge.
 
-For macOS see [macOS](#macos) first; most of the app is not implemented there.
+For macOS see [macOS](#macos) first; it needs two permissions and parts of it have not been run there.
 
 ## Build and install
 
@@ -45,10 +45,10 @@ Then join a test call in a desktop meeting app. The tray icon should turn red a 
 
 ## Browser extension
 
-Without the extension a browser meeting is recorded as a browser window. With it, the meeting tab alone is recorded, and a call is detected when it connects rather than when the microphone is used.
+Browser meetings are detected and recorded only through the extension. The meeting tab alone is recorded, and a call is detected when it connects rather than when the microphone is used.
 
 1. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, choose **Load unpacked** and select `%LOCALAPPDATA%\Programs\MeetingAssistant\extension`.
-2. The extension's options page opens. Allow the microphone there, so that your own voice is recorded.
+2. The extension's options page opens. Allow the microphone there, so that your own voice is recorded. If the browser refuses without asking, the page says so: choose **Open microphone settings** and set Microphone to **Allow**.
 3. Quit the browser completely, including background processes, and start it from the shortcut the installer created (`Google Chrome (Meeting Assistant)` or `Microsoft Edge (Meeting Assistant)`). Keep using that shortcut.
 
 The shortcut starts the browser with:
@@ -107,7 +107,18 @@ meeting-assistant --config <path> ...  Use another configuration file
 
 ## macOS
 
-Only meetings detected and recorded by the browser extension are implemented. The tab is recorded inside the browser, so the app only has to receive and store the data. Desktop apps, browser windows without the extension and manual recording need a native capture implementation (ScreenCaptureKit) that does not exist yet; `--self-test` and **Start recording now** report that.
+Desktop meeting apps, manual recording and the browser extension are implemented. macOS 14.2 or later is needed: detection reads which apps use the microphone from Core Audio, and ScreenCaptureKit captures windows, displays and app audio.
+
+Recording a desktop app or the screen needs two permissions, which macOS asks for the first time the app records:
+
+| Permission | Where | Without it |
+| --- | --- | --- |
+| Screen & System Audio Recording | System Settings > Privacy & Security. Turn on **Meeting Assistant**, then quit and start it again | Recordings of desktop apps and of the screen fail to start; browser tabs are recorded by the extension and are not affected |
+| Microphone | System Settings > Privacy & Security > Microphone | Recordings have no microphone |
+
+The app is signed ad hoc, so after an update macOS may treat it as a new app and ask again, or list it twice; turn the new entry on.
+
+What has been run on a Mac is listed in [Product](PRODUCT.md#what-is-not-established). `--self-test` records the main display, the output audio and the microphone for five seconds.
 
 The macOS build needs Rust 1.89 or later and the Xcode Command Line Tools. It was built, installed and run on one Apple Silicon Mac with macOS 26 on 2026-11-18, with synthetic meetings only; [the verification note](docs/note/note-20261118-macos-verification-2026-11-18.md) lists what was and was not observed.
 

@@ -1,11 +1,11 @@
 //! macOS implementation.
 //!
-//! Supported: meeting detection and tab recording through the browser extension (resident app,
-//! connection to the extension, installation, start at login, finalizing the recording on exit).
-//! Detecting and recording desktop apps (Zoom, etc.) needs macOS-specific screen and audio capture,
-//! which is not implemented yet.
+//! Detection reads Core Audio, libproc and Core Graphics (`signals`); recording uses ScreenCaptureKit, AVAudioEngine
+//! and AVAssetWriter (`recorder`). Browser meetings are recorded by the extension.
 
 mod install;
+mod recorder;
+mod signals;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{AudioConfig, Recorder, RecordingRequest, SignalSnapshot, SignalSource, VideoConfig};
-
 pub use self::install::PlatformInstaller;
+pub use self::recorder::{PlatformRecorder, recorder};
+pub use self::signals::MacSignalSource as PlatformSignalSource;
 use crate::install::APP_NAME;
 use crate::panel::view::Surface;
 
@@ -25,48 +25,6 @@ const QUIT_TIMEOUT: Duration = Duration::from_secs(90);
 /// Where the app's data lives (`~/Library/Application Support/MeetingAssistant`).
 fn support_directory() -> PathBuf {
     dirs::data_dir().unwrap_or_default().join("MeetingAssistant")
-}
-
-/// There is no OS-level detection yet, so this observes nothing.
-/// Meetings reported by the browser extension are added by the caller through a separate path.
-pub struct PlatformSignalSource;
-
-impl PlatformSignalSource {
-    pub fn new() -> anyhow::Result<Self> {
-        Ok(Self)
-    }
-}
-
-impl SignalSource for PlatformSignalSource {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot> {
-        Ok(SignalSnapshot::default())
-    }
-}
-
-/// There is no OS-level recording yet. The caller routes browser tab recording to the extension.
-pub struct PlatformRecorder;
-
-/// Creates the recorder.
-pub fn recorder(_video: VideoConfig, _audio: AudioConfig) -> PlatformRecorder {
-    PlatformRecorder
-}
-
-impl Recorder for PlatformRecorder {
-    fn start(&mut self, _request: &RecordingRequest) -> anyhow::Result<PathBuf> {
-        anyhow::bail!("On macOS only tab recording through the browser extension is supported")
-    }
-
-    fn stop(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn retarget(&mut self, _window: u64) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn take_failure(&mut self) -> Option<String> {
-        None
-    }
 }
 
 fn lock_file() -> PathBuf {
@@ -206,8 +164,8 @@ pub fn show_info(message: &str) {
     dialog(message, "note");
 }
 
-/// Whether the whole screen can be recorded. Not yet: only browser tabs are recorded, through the extension.
-pub const SCREEN_CAPTURE: bool = false;
+/// Whether the whole screen can be recorded.
+pub const SCREEN_CAPTURE: bool = true;
 
 /// The status panel's window is transparent, so that the system material and the page's rounded edge show.
 pub fn panel_window(builder: tao::window::WindowBuilder) -> tao::window::WindowBuilder {

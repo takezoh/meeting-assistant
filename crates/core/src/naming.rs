@@ -36,8 +36,13 @@ pub fn candidate_file_name_with_extension(stem: &str, attempt: u32, extension: &
 
 /// Returns the first candidate that is not yet used. `is_taken` answers whether a name is in use.
 pub fn first_unused_file_name(stem: &str, is_taken: impl Fn(&str) -> bool) -> String {
+    first_unused_file_name_with_extension(stem, RECORDING_EXTENSION, is_taken)
+}
+
+/// Like [`first_unused_file_name`], for a file whose container has another extension.
+pub fn first_unused_file_name_with_extension(stem: &str, extension: &str, is_taken: impl Fn(&str) -> bool) -> String {
     (1..)
-        .map(|attempt| candidate_file_name(stem, attempt))
+        .map(|attempt| candidate_file_name_with_extension(stem, attempt, extension))
         .find(|name| !is_taken(name))
         .expect("candidates never run out")
 }
@@ -107,6 +112,10 @@ mod tests {
         assert_eq!(
             first_unused_file_name("a", |name| ["a.mp4", "a_2.mp4"].contains(&name)),
             "a_3.mp4"
+        );
+        assert_eq!(
+            first_unused_file_name_with_extension("a", "webm", |name| name == "a.webm"),
+            "a_2.webm"
         );
     }
 }

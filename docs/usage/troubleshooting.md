@@ -8,9 +8,8 @@ Run `meeting-assistant --probe` while the meeting is in progress.
 
 | What `--probe` shows | Cause and remedy |
 | --- | --- |
-| The meeting app is not listed as using the microphone | The app has not opened the microphone, for example because you joined listen-only. Start the recording from the tray menu, or use the browser extension for browser meetings |
+| The meeting app is not listed as using the microphone | The app has not opened the microphone, for example because you joined listen-only. Record it by hand from the status panel. Browser meetings are detected only by the browser extension |
 | The process is listed but no rule is satisfied | No rule names that process. Add a rule; see [Configuration](configuration.md#tuning-with---probe) |
-| A browser rule is not satisfied although the browser uses the microphone | No window title matches. The title belongs to the visible tab of each window, so the meeting tab must be visible when the meeting starts, or the title pattern needs adjusting |
 | The rule is satisfied | Check that automatic recording is not paused in the tray menu, then read the log for a start failure |
 
 ## The recording stopped during the meeting
@@ -35,7 +34,7 @@ For apps with several windows the largest one is chosen. A shared screen shown i
 ## My own voice is missing
 
 - The microphone is muted in Windows, not just in the meeting. The log has a warning at the start of the recording.
-- For a tab recording, the extension has not been allowed to use the microphone. Open the extension's options page and allow it.
+- For a tab recording, the extension has not been allowed to use the microphone. Open the extension's options page and allow it. If the browser refuses without asking, set Microphone to **Allow** in the extension's site settings (the page's **Open microphone settings** button); leaving it at Ask is not enough then.
 
 ## A browser meeting is recorded as a window, not a tab
 

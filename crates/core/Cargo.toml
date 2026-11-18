@@ -8,7 +8,6 @@ description = "OS-independent logic that detects meetings and coordinates record
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
-regex.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true

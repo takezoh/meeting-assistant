@@ -9,7 +9,7 @@ responsibilities:
 - id: RESP-001
   statement: "Decide from a signal snapshot which rule is satisfied and by which process and window."
 - id: RESP-002
-  statement: "Decide when each meeting starts and ends by applying a start debounce and an end grace period to that meeting alone; several meetings can be in progress at once."
+  statement: "Decide when each meeting starts and ends by applying a start debounce and an end grace period to that meeting alone, with separate timings for desktop apps and for meetings the extension reports; several meetings can be in progress at once."
 - id: RESP-003
   statement: "Turn meeting starts, ends and manual commands into at most one recording, choosing which detected meeting it records, its video target, audio source and file name."
 - id: RESP-005
@@ -24,7 +24,7 @@ invariants:
   statement: "In app scope a recording is never widened to the whole display or to all output audio as a fallback."
   enforcement: test
 - id: INV-003
-  statement: "A window title is required only to start a title-matched meeting; the meeting continues while the microphone stays in use."
+  statement: "A meeting in a browser is detected only from the extension's reports. Rules detect desktop apps from microphone use; the default rules name no browser, and nothing matches window titles."
   enforcement: test
 - id: INV-004
   statement: "A browser process with a connected extension is not detected through microphone and window signals."
@@ -60,7 +60,7 @@ boundaries:
 variability:
   fixed:
   - id: FIX-001
-    statement: "The meaning of the configuration keys start_debounce_seconds, end_grace_seconds, capture_scope and of the rule fields."
+    statement: "The meaning of the configuration keys start_debounce_seconds and end_grace_seconds (desktop apps), browser_start_debounce_seconds and browser_end_grace_seconds (meetings the extension reports), capture_scope and of the rule fields."
   free:
   - id: FREE-001
     statement: "The default rules, the heuristics that choose a window, and the retry timing."
@@ -73,7 +73,7 @@ failure_responsibilities:
 trust_boundaries: []
 compatibility_policies:
 - id: COMPAT-001
-  statement: "An existing config.toml keeps its meaning; a key is not repurposed, and an unknown key is rejected at startup."
+  statement: "A key is not repurposed, and an unknown or removed key is rejected at startup rather than ignored."
 tags: []
 owners: []
 relations:
@@ -96,7 +96,7 @@ Decide, from what can be observed about the machine, when the user is in a meeti
 
 ## Responsibilities
 
-`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and, where a rule asks for it, the window whose title matched. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after its microphone use has been absent for the grace period. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick.
+`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and the largest window of that app. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after its microphone use has been absent for the grace period. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick.
 
 ## Boundaries
 
@@ -120,7 +120,7 @@ A failed start is retried on later ticks while the meeting lasts, with a notice 
 
 ## Variability
 
-Rules are user data. The window heuristic (the title-matched window, otherwise the largest window of the app) and the retry timing may change without changing this contract. The meaning of configuration keys is fixed.
+Rules are user data. The window heuristic (the largest window of the app) and the retry timing may change without changing this contract. The meaning of configuration keys is fixed.
 
 ## Conformance
 

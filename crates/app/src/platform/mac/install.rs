@@ -177,6 +177,8 @@ fn app_info_plist(executable_name: &str) -> String {
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>{APP_NAME} records your voice in the meetings it records.</string>
 </dict>
 </plist>
 "#,
@@ -450,6 +452,8 @@ mod tests {
         assert!(plist.contains(&format!("<string>{APP_BUNDLE_IDENTIFIER}</string>")));
         assert!(plist.contains("<key>LSUIElement</key>\n    <true/>"));
         assert!(plist.contains(&format!("<string>{}</string>", env!("CARGO_PKG_VERSION"))));
+        // Without it macOS ends the app the moment it opens the microphone.
+        assert!(plist.contains("<key>NSMicrophoneUsageDescription</key>"));
     }
 
     #[test]

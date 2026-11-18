@@ -18,7 +18,7 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 use crate::composition::spawn_engine;
 use crate::install::{self, InstallSystem};
 use crate::panel::Panel;
-use crate::panel::view::{self, Activity, PanelMessage, RecordCommand, Rect};
+use crate::panel::view::{self, Activity, PanelMessage, RecordCommand, RecordingClock, Rect};
 use crate::platform::{self, PlatformInstaller};
 use crate::worker::{Command, Update};
 
@@ -70,31 +70,21 @@ struct Icons {
 #[derive(Default)]
 struct State {
     status: Option<CoordinatorStatus>,
-    /// The file being recorded and when this process first saw it recording.
-    recording_since: Option<(PathBuf, Instant)>,
+    clock: RecordingClock,
     /// When the running time next to the icon changes next.
     next_tick: Option<Instant>,
 }
 
 impl State {
     fn elapsed(&self) -> Duration {
-        self.recording_since
-            .as_ref()
-            .map_or(Duration::ZERO, |(_, since)| since.elapsed())
+        self.clock.elapsed(Instant::now())
     }
 
     fn set_status(&mut self, status: CoordinatorStatus) {
-        let path = status.recording.as_ref().map(|recording| recording.path.clone());
-        self.recording_since = match (path, self.recording_since.take()) {
-            (Some(path), Some((seen, since))) if seen == path => Some((seen, since)),
-            (Some(path), _) => Some((path, Instant::now())),
-            (None, _) => None,
-        };
-        self.next_tick = self
-            .recording_since
-            .as_ref()
-            .filter(|_| SHOWS_ELAPSED_TIME)
-            .map(|_| Instant::now());
+        let now = Instant::now();
+        self.clock
+            .update(status.recording.as_ref().map(|recording| recording.path.as_path()), now);
+        self.next_tick = (SHOWS_ELAPSED_TIME && self.clock.is_running()).then_some(now);
         self.status = Some(status);
     }
 }
@@ -305,9 +295,7 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
                 if let Some(tray) = &tray {
                     tray.icon.set_title(Some(view::elapsed_label(state.elapsed())));
                 }
-                let elapsed = state.elapsed();
-                let to_next_second = Duration::from_secs(1) - Duration::from_nanos(u64::from(elapsed.subsec_nanos()));
-                state.next_tick = Some(now + to_next_second);
+                state.next_tick = Some(now + view::until_next_second(state.elapsed()));
             }
             *control_flow = ControlFlow::WaitUntil(state.next_tick.unwrap_or(now));
         }

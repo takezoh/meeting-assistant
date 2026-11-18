@@ -277,12 +277,3 @@ pub fn snapshot(
 pub fn zoom_in_meeting() -> SignalSnapshot {
     snapshot(&[process(100, 1, "Zoom.exe")], &[100], &[], &[])
 }
-
-pub fn meet_in_chrome() -> SignalSnapshot {
-    snapshot(
-        &[process(200, 1, "chrome.exe"), process(201, 200, "chrome.exe")],
-        &[201],
-        &[],
-        &[window(200, "Meet - abc-defg-hij - Google Chrome", "DISPLAY2", 1000)],
-    )
-}

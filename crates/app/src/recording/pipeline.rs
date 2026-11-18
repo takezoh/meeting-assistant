@@ -151,7 +151,30 @@ impl<B: CaptureBackend> Pipeline<B> {
     }
 
     /// Writes until told to stop, then finalizes the file.
+    ///
+    /// A failure while writing ends the recording, and the file is still finalized so that it keeps what was written.
+    /// The writing failure is the one returned.
     pub fn run(mut self, control: &mut dyn Control, pacer: &mut dyn Pacer) -> anyhow::Result<()> {
+        let written = self.write_until_stopped(control, pacer);
+
+        // Stop capture first, then finalize the file.
+        let Self {
+            video,
+            audio,
+            writer,
+            mut backend,
+            ..
+        } = self;
+        drop(audio);
+        let finalized = backend.finalize(writer);
+        drop(video);
+        if let (Err(_), Err(error)) = (&written, &finalized) {
+            log::warn!("Could not finalize the recording after it failed: {error:#}");
+        }
+        written.and(finalized)
+    }
+
+    fn write_until_stopped(&mut self, control: &mut dyn Control, pacer: &mut dyn Pacer) -> anyhow::Result<()> {
         let started = pacer.elapsed();
         let mut timeline = Timeline::new(self.framerate, SAMPLE_RATE);
 
@@ -186,19 +209,7 @@ impl<B: CaptureBackend> Pipeline<B> {
                     .write_audio(&mut self.writer, &self.mix, step.audio_time, step.audio_duration)?;
             }
         }
-
-        // Stop capture first, then finalize the file.
-        let Self {
-            video,
-            audio,
-            writer,
-            mut backend,
-            ..
-        } = self;
-        drop(audio);
-        let finalized = backend.finalize(writer);
-        drop(video);
-        finalized
+        Ok(())
     }
 
     /// Moves the video target to another window. If that fails, continues with the previous video.
@@ -718,16 +729,18 @@ mod tests {
     }
 
     #[test]
-    fn ends_as_a_failure_when_video_capture_can_no_longer_continue() {
+    fn ends_as_a_failure_when_video_capture_can_no_longer_continue_and_still_finalizes() {
         let (backend, pipeline) = opened_window();
         backend.state().video_broken = true;
 
+        let error = pipeline
+            .run(&mut StopAfter::steps(5), &mut FakePacer::default())
+            .unwrap_err();
+        assert!(error.to_string().contains("display lost"));
         assert!(
-            pipeline
-                .run(&mut StopAfter::steps(5), &mut FakePacer::default())
-                .is_err()
+            backend.state().finalized,
+            "the file keeps what was written before the failure"
         );
-        assert!(!backend.state().finalized);
     }
 
     #[test]

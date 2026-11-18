@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use meeting_assistant_core::fakes::{
-    FakeRecorder, ScriptedSignals, fake_ports, meet_in_chrome, process, snapshot, window, window_id, zoom_in_meeting,
+    FakeRecorder, ScriptedSignals, fake_ports, process, snapshot, window, window_id, zoom_in_meeting,
 };
 use meeting_assistant_core::{
     BrowserLink, BrowserMeeting, BrowserTab, Config, Engine, NoticeLevel, RecordingCoordinator, VideoTarget,
@@ -61,57 +61,16 @@ fn records_a_desktop_app_meeting_from_start_to_end() {
 }
 
 #[test]
-fn records_a_browser_meeting_from_start_to_end() {
-    let mut f = fixture();
-    f.signals.set(meet_in_chrome());
-    f.run(10);
-    {
-        let state = f.recorder.state();
-        assert_eq!(state.started.len(), 1);
-        assert!(
-            state.started[0]
-                .output_path
-                .ends_with("2026-11-17_10-00-00_WebMeeting.mp4")
-        );
-        assert_eq!(
-            state.started[0].video,
-            VideoTarget::Window(window_id("Meet - abc-defg-hij - Google Chrome"))
-        );
-        assert_eq!(state.started[0].audio_process_id, Some(200));
-    }
-
-    // Even if switching to another tab changes the title, recording continues while the microphone is in use.
-    // Switching tabs leaves the window itself the same.
-    let same_window = meeting_assistant_core::WindowEntry {
-        id: window_id("Meet - abc-defg-hij - Google Chrome"),
-        ..window(200, "Slides - Google Chrome", "DISPLAY2", 1000)
-    };
-    f.signals.set(snapshot(
-        &[process(200, 1, "chrome.exe"), process(201, 200, "chrome.exe")],
-        &[201],
-        &[],
-        &[same_window],
-    ));
-    f.run(60);
-    assert!(f.recording());
-    // The window is the same, so the recording target does not change.
-    assert!(f.recorder.state().retargets.is_empty());
-
-    f.signals.set(snapshot(&[process(200, 1, "chrome.exe")], &[], &[], &[]));
-    f.run(20);
-    assert!(!f.recording());
-}
-
-#[test]
 fn does_not_record_while_no_meeting_is_taking_place() {
     let mut f = fixture();
+    // Zoom is open but silent; a voice recorder and a browser (without the extension) use the microphone.
     f.signals.set(snapshot(
         &[
             process(100, 1, "Zoom.exe"),
             process(200, 1, "chrome.exe"),
             process(300, 1, "VoiceRecorder.exe"),
         ],
-        &[300],
+        &[300, 200],
         &[],
         &[window(200, "Meet - abc-defg-hij - Google Chrome", "DISPLAY1", 1000)],
     ));

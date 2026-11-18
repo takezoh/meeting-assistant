@@ -21,7 +21,8 @@ flowchart LR
     Relay[Relay process: native messaging to TCP]
   end
   Mic --> Signals[SignalSource]
-  Ext --> Relay --> Server[browser/server + hub]
+  Ext -- control --> Relay --> Server[browser/server + hub]
+  Ext -- recording, WebSocket binary --> Server
   Server --> Signals
   Signals --> Engine[core: Engine]
   Engine --> Rules[rules + detector]
@@ -70,8 +71,8 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `recording/pipeline` | How one recording proceeds: open, first picture, write loop, retarget, finalize. Uses `CaptureBackend`, `Pacer` and `Control` |
 | `recording/session` | `ThreadedRecorder`: runs a pipeline on its own thread and presents it as a core `Recorder` |
 | `browser/protocol` | Message types and length-prefixed framing shared with the extension. Pure apart from generic `Read`/`Write` |
-| `browser/hub` | State machine of extension connections, reported meetings and the single tab recording. Writes data to a `ChunkSink`; touches no socket or file |
-| `browser/server`, `endpoint`, `relay` | Loopback listener, the published endpoint file, and the relay the browser launches |
+| `browser/hub` | State machine of extension connections, reported meetings and the single tab recording and its upload. Writes data to a `ChunkSink`; touches no socket or file |
+| `browser/server`, `endpoint`, `relay` | The loopback control listener and the per-recording WebSocket upload listener, the published endpoint file, and the relay the browser launches |
 | `linked` | `LinkedSignalSource` and `LinkedRecorder`: combine the OS path and the extension path behind the core ports, using `BrowserPort` |
 | `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
 | `panel/view` | What the status panel and the tray icon show, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
@@ -89,7 +90,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `PlatformInstaller` | An `InstallSystem`: copy and remove files, registry or plist entries, native-host registration, shortcuts or launcher apps |
 | Other | Single-instance guard, quit requests, session-end notification, toasts and dialogs, the status panel's window style (transparency and material on macOS, rounded corners on Windows), whether the screen can be recorded |
 
-On Windows these use WASAPI session enumeration, Windows.Graphics.Capture, the Direct3D 11 video processor, WASAPI process loopback and the Media Foundation sink writer. On macOS only the installer, single-instance and signal handling exist; `PlatformRecorder` reports that capture is not implemented.
+On Windows these use WASAPI session enumeration, Windows.Graphics.Capture, the Direct3D 11 video processor, WASAPI process loopback and the Media Foundation sink writer. On macOS they use Core Audio process objects, libproc and CGWindowList for signals; ScreenCaptureKit for window, display and app-audio capture (the system scales pictures to the recording's size); AVAudioEngine for the microphone; and AVAssetWriter for the file. Float audio is converted and resampled by the pure `recording::pcm`. [The macOS capture ADR](docs/adr/adr-20261118-capture-on-macos-with-screencapturekit-a.md) records why.
 
 ## Detection and recording flow
 
@@ -112,9 +113,9 @@ The [meeting detection design](docs/design/design-meeting-detection.md) holds th
 
 ## Recording through the extension
 
-`hook.js` runs in the page and observes `RTCPeerConnection` state; `bridge.js` forwards it to `background.js`, which reports meetings over native messaging. On a start command the background script obtains a tab-capture stream ID, and `offscreen.js` records the tab and the microphone with `MediaRecorder` and sends one-second chunks back. The relay copies frames between the browser and the app's loopback socket; the `Hub` validates the sequence and the server appends the bytes to the file.
+`hook.js` runs in the page and observes `RTCPeerConnection` state; `bridge.js` forwards it to `background.js`, which reports meetings over native messaging. On a start command the background script obtains a tab-capture stream ID, and `offscreen.js` records the tab and the microphone with `MediaRecorder`. The recording does not go back through native messaging, which carries only JSON: `offscreen.js` opens a WebSocket to a loopback port the app opened for this recording and sends each one-second piece as a binary message, which the server appends to the file as it is. The relay carries only the control messages; the `Hub` keeps the state of both channels.
 
-The app listens on `127.0.0.1` at a random port and writes the port and a random token to `browser-link.json` in the user's local application data. The relay reads that file and must present the token first. The browser starts the relay only for the extension ID named in the native-host manifest. See the [browser tab recording design](docs/design/design-browser-tab-recording.md) and [the protocol reference](docs/technical/browser-link.md).
+The app listens on `127.0.0.1` at a random port and writes the port and a random token to `browser-link.json` in the user's local application data. The relay reads that file and must present the token first. The browser starts the relay only for the extension ID named in the native-host manifest. Each recording's upload listener is another loopback port with a one-time token sent in the start command; it accepts only the extension's `Origin` and closes once the upload has proved itself. See the [browser tab recording design](docs/design/design-browser-tab-recording.md) and [the protocol reference](docs/technical/browser-link.md).
 
 ## Correctness boundaries
 
@@ -124,8 +125,8 @@ The app listens on `127.0.0.1` at a random port and writes the port and a random
 - **Scope is never widened silently.** In app scope a missing window gives a black picture and a failed app-audio capture gives no app audio. Neither falls back to the display or the output device.
 - **A started file is finalized.** Stop, drop of the recorder, quit, logoff and shutdown all reach `finalize`. On macOS a logout or a quit sent by another app ends the tray's event loop instead of sending a signal, so the tray also finalizes on the loop's last event. A recording that fails keeps its partial file.
 - **Start reports the real outcome.** `Recorder::start` returns only after capture is running or has failed, so the coordinator never reports a recording that did not begin.
-- **The extension link is local and authenticated.** The listener binds to loopback only and rejects a connection whose first message does not carry the token. Before that, a connection is held to a small first message, a short deadline and a small number of waiting peers.
-- **Unknown messages are ignored, not fatal.** A newer extension may send message types an older app does not know.
+- **The extension link is local and authenticated.** Both listeners bind to loopback only. The control listener rejects a connection whose first message does not carry the token; before that, a connection is held to a small first message, a short deadline and a small number of waiting peers. An upload listener exists only while a recording starts and accepts only the extension's origin with that recording's token.
+- **The app and the extension change together.** Neither keeps compatibility with older versions of the other; a control message the app cannot parse is logged and ignored.
 
 ## Verification boundary
 

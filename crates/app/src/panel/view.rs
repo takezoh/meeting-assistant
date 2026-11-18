@@ -232,7 +232,7 @@ pub fn display_name(rule_name: &str) -> String {
         "WebexWeb" => "Webex",
         "SlackWeb" => "Slack",
         "Jitsi" => "Jitsi Meet",
-        "WebMeeting" | "BrowserMeeting" => "Meeting in a browser",
+        "BrowserMeeting" => "Meeting in a browser",
         other => other,
     }
     .to_owned()
@@ -346,6 +346,39 @@ pub fn tray_summary(status: &CoordinatorStatus, screen_capture: bool) -> TraySum
         record_label,
         record_command,
     }
+}
+
+/// How long the current recording has been running, followed from the statuses the UI receives. Time is passed in.
+#[derive(Debug, Default)]
+pub struct RecordingClock {
+    since: Option<(std::path::PathBuf, std::time::Instant)>,
+}
+
+impl RecordingClock {
+    /// Takes the file being recorded now: another file starts the clock again, the same file keeps it running,
+    /// and no recording stops it.
+    pub fn update(&mut self, recording: Option<&Path>, now: std::time::Instant) {
+        self.since = match (recording, self.since.take()) {
+            (Some(path), Some((seen, since))) if seen == path => Some((seen, since)),
+            (Some(path), _) => Some((path.to_owned(), now)),
+            (None, _) => None,
+        };
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.since.is_some()
+    }
+
+    pub fn elapsed(&self, now: std::time::Instant) -> Duration {
+        self.since
+            .as_ref()
+            .map_or(Duration::ZERO, |(_, since)| now.saturating_duration_since(*since))
+    }
+}
+
+/// How long until the shown running time turns over to the next whole second.
+pub fn until_next_second(elapsed: Duration) -> Duration {
+    Duration::from_secs(1) - Duration::from_nanos(u64::from(elapsed.subsec_nanos()))
 }
 
 /// A recording's running time as `m:ss`, or `h:mm:ss` from one hour on.
@@ -661,6 +694,42 @@ mod tests {
     }
 
     #[test]
+    fn the_recording_clock_keeps_running_for_the_same_file_and_restarts_for_another() {
+        let start = std::time::Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        let mut clock = RecordingClock::default();
+        assert!(!clock.is_running());
+
+        clock.update(Some(Path::new("a.mp4")), at(0));
+        clock.update(Some(Path::new("a.mp4")), at(5));
+        assert_eq!(
+            clock.elapsed(at(12)),
+            Duration::from_secs(12),
+            "the same file keeps its start"
+        );
+
+        clock.update(Some(Path::new("b.mp4")), at(20));
+        assert_eq!(
+            clock.elapsed(at(21)),
+            Duration::from_secs(1),
+            "another file starts again"
+        );
+
+        clock.update(None, at(30));
+        assert!(!clock.is_running());
+        assert_eq!(clock.elapsed(at(31)), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_running_time_turns_over_on_whole_seconds() {
+        assert_eq!(
+            until_next_second(Duration::from_millis(12_250)),
+            Duration::from_millis(750)
+        );
+        assert_eq!(until_next_second(Duration::from_secs(3)), Duration::from_secs(1));
+    }
+
+    #[test]
     fn elapsed_time_is_shown_in_minutes_and_hours() {
         assert_eq!(elapsed_label(Duration::from_secs(0)), "0:00");
         assert_eq!(elapsed_label(Duration::from_secs(754)), "12:34");
@@ -682,7 +751,7 @@ mod tests {
     #[test]
     fn known_services_get_readable_names() {
         assert_eq!(display_name("TeamsWeb"), "Microsoft Teams");
-        assert_eq!(display_name("WebMeeting"), "Meeting in a browser");
+        assert_eq!(display_name("BrowserMeeting"), "Meeting in a browser");
         assert_eq!(display_name("My call app"), "My call app");
     }
 

@@ -50,11 +50,9 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
         let window = evidence.window.map(|w| format!(" window={w:#x}")).unwrap_or_default();
         let display = evidence.display.map(|d| format!(" display={d}")).unwrap_or_default();
         println!(
-            "  {}: mic in use={} title match={} start condition={}{process}{window}{display}",
+            "  {}: active={}{process}{window}{display}",
             evidence.rule_name,
-            mark(evidence.mic_active),
-            mark(evidence.window_title_matched),
-            mark(evidence.can_start),
+            mark(evidence.active),
         );
     }
     Ok(())

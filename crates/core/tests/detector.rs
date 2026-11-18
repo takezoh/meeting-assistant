@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{BrowserTab, DetectorEvent, MeetingDetector, RuleEvidence};
+use meeting_assistant_core::{BrowserTab, DetectorEvent, MeetingDetector, RuleEvidence, Timing};
 
 struct Clock(Instant);
 
@@ -10,19 +10,25 @@ impl Clock {
     }
 }
 
+fn timing(start_debounce: f64, end_grace: f64) -> Timing {
+    Timing {
+        start_debounce: Duration::from_secs_f64(start_debounce),
+        end_grace: Duration::from_secs_f64(end_grace),
+    }
+}
+
+/// Desktop apps: start after 3 s, end after 15 s. Browser meetings: start after 1 s, end after 5 s.
 fn detector() -> (MeetingDetector, Clock) {
     (
-        MeetingDetector::new(Duration::from_secs(3), Duration::from_secs(15)),
+        MeetingDetector::new(timing(3.0, 15.0), timing(1.0, 5.0)),
         Clock(Instant::now()),
     )
 }
 
-fn can_start(rule: &str) -> RuleEvidence {
+fn active(rule: &str) -> RuleEvidence {
     RuleEvidence {
         rule_name: rule.into(),
-        mic_active: true,
-        window_title_matched: true,
-        can_start: true,
+        active: true,
         capture_device_id: Some("mic".into()),
         render_device_id: Some("speaker".into()),
         process_id: Some(100),
@@ -34,32 +40,14 @@ fn can_start(rule: &str) -> RuleEvidence {
 }
 
 fn start(rule: &str) -> Vec<RuleEvidence> {
-    vec![can_start(rule)]
-}
-
-fn mic_only(rule: &str) -> Vec<RuleEvidence> {
-    vec![RuleEvidence {
-        rule_name: rule.into(),
-        mic_active: true,
-        window_title_matched: false,
-        can_start: false,
-        capture_device_id: Some("mic".into()),
-        render_device_id: None,
-        process_id: Some(100),
-        window: None,
-        display: None,
-        browser_tab: None,
-        title: None,
-    }]
+    vec![active(rule)]
 }
 
 /// A meeting reported by the extension in tab `tab`.
 fn tab(service: &str, tab: u64) -> RuleEvidence {
     RuleEvidence {
         rule_name: service.into(),
-        mic_active: true,
-        window_title_matched: false,
-        can_start: true,
+        active: true,
         capture_device_id: None,
         render_device_id: None,
         process_id: None,
@@ -133,16 +121,6 @@ fn start_is_notified_only_once() {
 }
 
 #[test]
-fn after_start_continues_while_the_microphone_is_in_use_even_if_the_title_no_longer_matches() {
-    let (mut d, t) = detector();
-    d.update(t.at(0.0), &start("WebMeeting"));
-    d.update(t.at(3.0), &start("WebMeeting"));
-    assert!(d.update(t.at(60.0), &mic_only("WebMeeting")).is_empty());
-    assert!(d.update(t.at(3600.0), &mic_only("WebMeeting")).is_empty());
-    assert_eq!(detected(&d), ["WebMeeting"]);
-}
-
-#[test]
 fn ends_when_microphone_use_lapses_for_the_grace_period() {
     let (mut d, t) = detector();
     d.update(t.at(0.0), &start("Zoom"));
@@ -159,19 +137,23 @@ fn does_not_end_on_a_lapse_shorter_than_the_grace_period() {
     d.update(t.at(0.0), &start("Zoom"));
     d.update(t.at(3.0), &start("Zoom"));
     assert!(d.update(t.at(100.0), NOTHING).is_empty());
-    assert!(d.update(t.at(110.0), &mic_only("Zoom")).is_empty());
+    assert!(d.update(t.at(110.0), &start("Zoom")).is_empty());
     assert!(d.update(t.at(120.0), NOTHING).is_empty());
     assert!(d.update(t.at(134.9), NOTHING).is_empty());
     assert_eq!(ended_rule(d.update(t.at(135.0), NOTHING)), "Zoom");
 }
 
 #[test]
-fn microphone_use_by_another_rule_does_not_keep_the_meeting_going() {
+fn another_meeting_being_active_does_not_keep_this_one_going() {
     let (mut d, t) = detector();
     d.update(t.at(0.0), &start("Zoom"));
     d.update(t.at(3.0), &start("Zoom"));
-    assert!(d.update(t.at(100.0), &mic_only("WebMeeting")).is_empty());
-    assert_eq!(ended_rule(d.update(t.at(115.0), &mic_only("WebMeeting"))), "Zoom");
+    d.update(t.at(100.0), &start("Teams"));
+    let events = d.update(t.at(115.0), &start("Teams"));
+    assert!(
+        matches!(&events[0], DetectorEvent::Ended(m) if m.rule_name == "Zoom"),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -187,7 +169,7 @@ fn the_next_meeting_can_start_after_the_end() {
 
 #[test]
 fn with_a_zero_grace_period_start_and_end_are_notified_immediately() {
-    let mut d = MeetingDetector::new(Duration::ZERO, Duration::ZERO);
+    let mut d = MeetingDetector::new(timing(0.0, 0.0), timing(0.0, 0.0));
     let t = Clock(Instant::now());
     assert_eq!(started_rule(d.update(t.at(0.0), &start("Zoom"))), "Zoom");
     assert_eq!(ended_rule(d.update(t.at(1.0), NOTHING)), "Zoom");
@@ -199,7 +181,7 @@ fn a_meeting_that_starts_during_another_is_detected_too_and_each_ends_on_its_own
     d.update(t.at(0.0), &start("Zoom"));
     started_rule(d.update(t.at(3.0), &start("Zoom")));
 
-    let both = [can_start("Zoom"), can_start("Teams")];
+    let both = [active("Zoom"), active("Teams")];
     assert!(d.update(t.at(10.0), &both).is_empty());
     assert_eq!(started_rule(d.update(t.at(13.0), &both)), "Teams");
     assert_eq!(detected(&d), ["Zoom", "Teams"], "in the order they started");
@@ -212,7 +194,7 @@ fn a_meeting_that_starts_during_another_is_detected_too_and_each_ends_on_its_own
 
 #[test]
 fn two_tabs_of_the_same_service_are_two_meetings() {
-    let mut d = MeetingDetector::new(Duration::ZERO, Duration::ZERO);
+    let mut d = MeetingDetector::new(timing(0.0, 0.0), timing(0.0, 0.0));
     let t = Clock(Instant::now());
     let events = d.update(t.at(0.0), &[tab("GoogleMeet", 1), tab("GoogleMeet", 2)]);
     assert_eq!(events.len(), 2);
@@ -229,7 +211,7 @@ fn two_tabs_of_the_same_service_are_two_meetings() {
 
 #[test]
 fn ends_are_reported_before_starts_in_the_same_update() {
-    let mut d = MeetingDetector::new(Duration::ZERO, Duration::ZERO);
+    let mut d = MeetingDetector::new(timing(0.0, 0.0), timing(0.0, 0.0));
     let t = Clock(Instant::now());
     d.update(t.at(0.0), &start("Zoom"));
 
@@ -239,4 +221,32 @@ fn ends_are_reported_before_starts_in_the_same_update() {
         matches!(&events[..], [DetectorEvent::Ended(z), DetectorEvent::Started(m)]
         if z.rule_name == "Zoom" && m.rule_name == "Teams")
     );
+}
+
+#[test]
+fn a_browser_meeting_starts_and_ends_on_its_own_shorter_timing() {
+    let (mut d, t) = detector();
+    let meet = [tab("GoogleMeet", 1)];
+    assert!(d.update(t.at(0.0), &meet).is_empty());
+    assert_eq!(started_rule(d.update(t.at(1.0), &meet)), "GoogleMeet");
+
+    assert!(d.update(t.at(10.0), NOTHING).is_empty());
+    assert!(d.update(t.at(14.9), NOTHING).is_empty());
+    assert_eq!(ended_rule(d.update(t.at(15.0), NOTHING)), "GoogleMeet");
+}
+
+#[test]
+fn a_desktop_app_keeps_its_longer_timing_while_a_browser_meeting_uses_its_own() {
+    let (mut d, t) = detector();
+    let both = [active("Zoom"), tab("GoogleMeet", 1)];
+    assert!(d.update(t.at(0.0), &both).is_empty());
+    assert_eq!(started_rule(d.update(t.at(1.0), &both)), "GoogleMeet");
+    assert!(d.update(t.at(2.9), &both).is_empty());
+    assert_eq!(started_rule(d.update(t.at(3.0), &both)), "Zoom");
+
+    // Both stop at 10 s: the browser meeting ends 5 s later, the app 15 s later.
+    assert!(d.update(t.at(10.0), NOTHING).is_empty());
+    assert_eq!(ended_rule(d.update(t.at(15.0), NOTHING)), "GoogleMeet");
+    assert!(d.update(t.at(24.9), NOTHING).is_empty());
+    assert_eq!(ended_rule(d.update(t.at(25.0), NOTHING)), "Zoom");
 }

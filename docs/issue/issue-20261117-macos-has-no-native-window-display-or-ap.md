@@ -10,17 +10,19 @@ owners: []
 relations: []
 subject_paths:
 - crates/app/src/platform/mac/mod.rs
-summary: On macOS only extension-based tab recording exists; signal collection and the capture backend are not implemented.
+- crates/app/src/platform/mac/recorder/mod.rs
+- crates/app/src/platform/mac/signals.rs
+summary: macOS signal collection and the ScreenCaptureKit capture backend are implemented; capture has not yet run on a Mac.
 ---
 
 ## Opportunity
 
-On macOS, desktop meeting apps, browser meetings without the extension and manual recording should work as they do on Windows. Today the macOS `PlatformSignalSource` reports no microphone use and no windows, and `PlatformRecorder` returns an error for every target other than a browser tab.
+On macOS, desktop meeting apps and manual recording should work as they do on Windows. Both are implemented as of 2026-11-18 (see [the macOS capture ADR](../adr/adr-20261118-capture-on-macos-with-screencapturekit-a.md)), but the capture itself has not run on a Mac.
 
 ## Evidence
 
-`crates/app/src/platform/mac/mod.rs` implements the installer, the single-instance guard and signal handling only. The platform support tables in `README.md` and `INSTALL.md` list these capabilities as not implemented.
+On 2026-11-18 on one Apple Silicon Mac (macOS 26): the signal source listed processes and windows through `--probe`; the AVAssetWriter writer finished a playable two-second MP4 with video and audio; AVAudioEngine delivered microphone sound in the mixer's format. ScreenCaptureKit was not run, because the only process that could run it was the terminal app, which does not have the Screen & System Audio Recording permission and should not be given it for this.
 
 ## Context for follow-up
 
-The work is to implement two ports for macOS: `SignalSource` (processes using the microphone, the process tree, windows) and `CaptureBackend` (window and display capture, per-app audio, the file writer), most likely with ScreenCaptureKit and AVFoundation. The shared procedures in `crates/core` and `crates/app/src/recording` already exist and are governed by the [meeting detection](../design/design-meeting-detection.md) and [capture pipeline](../design/design-capture-pipeline.md) designs. The default rules name Windows process names; macOS needs its own. Screen recording and microphone permissions on macOS affect what a background app can capture. The macOS code that does exist should be run on a Mac first; see the related issue on that.
+Install the build, give **Meeting Assistant** the Screen & System Audio Recording and Microphone permissions, and record: `--self-test` through `open` (see [testing](../technical/testing.md)), a manual screen recording from the status panel, and a real call in Zoom, Teams or Slack. Check whether the app-audio filter includes sound played by the meeting app's helper processes, and whether the ad-hoc signature makes macOS ask for the permissions again after an update. Record the outcome as a dated note and close this issue against it.

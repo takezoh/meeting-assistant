@@ -56,6 +56,10 @@ impl SourceBuffer {
     }
 
     /// When what arrived was silence.
+    #[cfg_attr(
+        not(windows),
+        allow(dead_code, reason = "only the Windows capture reports silent packets")
+    )]
     pub fn push_silence(&mut self, samples: usize) {
         self.queue.extend(std::iter::repeat_n(0, samples));
         self.enforce_hard_limit();

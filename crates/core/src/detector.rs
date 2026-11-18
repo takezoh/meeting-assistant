@@ -34,6 +34,13 @@ impl MeetingInfo {
     }
 }
 
+/// How long a meeting must be active before it starts, and inactive before it ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    pub start_debounce: Duration,
+    pub end_grace: Duration,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectorEvent {
     Started(MeetingInfo),
@@ -43,18 +50,22 @@ pub enum DetectorEvent {
 /// A state machine that decides, for each meeting separately, when it starts and ends from the time series of
 /// evidence. Several meetings can be in progress at once.
 ///
-/// - Start: when a meeting's start condition holds for `start_debounce`.
-/// - Continue: while that meeting's process keeps using the microphone (the window title does not matter).
-/// - End: when the continue condition lapses for `end_grace`.
+/// - Start: when a meeting has been active (its app uses the microphone, or the extension reports a call) for the
+///   start debounce.
+/// - Continue: while it stays active.
+/// - End: when it has not been active for the end grace.
+///
+/// Desktop apps and browser meetings have their own [`Timing`]: an app's microphone use comes and goes while
+/// muted, while a call the extension reports is either connected or not.
 ///
 /// The caller supplies the time. It has no side effects.
 #[derive(Debug)]
 pub struct MeetingDetector {
-    start_debounce: Duration,
-    end_grace: Duration,
+    apps: Timing,
+    browser: Timing,
     /// Meetings in progress, in the order they started.
     meetings: Vec<Tracked>,
-    /// Meetings whose start condition holds but not yet for `start_debounce`, with the time it began to hold.
+    /// Meetings that are active but not yet for their start debounce, with the time they became active.
     candidates: Vec<(MeetingKey, Instant)>,
 }
 
@@ -65,10 +76,11 @@ struct Tracked {
 }
 
 impl MeetingDetector {
-    pub fn new(start_debounce: Duration, end_grace: Duration) -> Self {
+    /// `apps` applies to meetings detected from a desktop app, `browser` to meetings the extension reports.
+    pub fn new(apps: Timing, browser: Timing) -> Self {
         Self {
-            start_debounce,
-            end_grace,
+            apps,
+            browser,
             meetings: Vec::new(),
             candidates: Vec::new(),
         }
@@ -88,10 +100,11 @@ impl MeetingDetector {
 
     fn update_meetings(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
         let mut ended = Vec::new();
-        let end_grace = self.end_grace;
+        let (apps, browser) = (self.apps, self.browser);
         self.meetings.retain_mut(|tracked| {
+            let end_grace = timing_of(&tracked.info.key(), apps, browser).end_grace;
             let key = tracked.info.key();
-            if evidence.iter().any(|e| e.mic_active && e.key() == key) {
+            if evidence.iter().any(|e| e.active && e.key() == key) {
                 tracked.absent_since = None;
                 return true;
             }
@@ -108,19 +121,19 @@ impl MeetingDetector {
     fn update_candidates(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
         let previous = std::mem::take(&mut self.candidates);
         let mut started = Vec::new();
-        for found in evidence.iter().filter(|e| e.can_start) {
+        for found in evidence.iter().filter(|e| e.active) {
             let key = found.key();
             let in_progress = self.meetings.iter().any(|tracked| tracked.info.key() == key);
             let already_seen = self.candidates.iter().any(|(candidate, _)| *candidate == key);
             if in_progress || already_seen {
                 continue;
             }
-            // Keep the time the condition began to hold while it keeps holding.
+            // Keep the time it became active while it stays active.
             let since = previous
                 .iter()
                 .find(|(candidate, _)| *candidate == key)
                 .map_or(now, |(_, since)| *since);
-            if now.duration_since(since) < self.start_debounce {
+            if now.duration_since(since) < timing_of(&key, self.apps, self.browser).start_debounce {
                 self.candidates.push((key, since));
                 continue;
             }
@@ -142,4 +155,9 @@ impl MeetingDetector {
         }
         started
     }
+}
+
+/// Browser meetings are the ones the extension reports, which carry their tab.
+fn timing_of(key: &MeetingKey, apps: Timing, browser: Timing) -> Timing {
+    if key.browser_tab.is_some() { browser } else { apps }
 }

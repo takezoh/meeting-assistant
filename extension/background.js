@@ -55,7 +55,7 @@ function post(message) {
 }
 
 function onAppMessage(message) {
-  if (message.type === "start") startRecording(message.tab);
+  if (message.type === "start") startRecording(message.tab, message.upload, message.token);
   else if (message.type === "stop") stopRecording();
 }
 
@@ -128,7 +128,8 @@ chrome.tabs.onRemoved.addListener((tab) => {
 
 // ---- Recording
 
-async function startRecording(tab) {
+/** Records `tab`; the recording page sends the recording to `upload` itself, presenting `token`. */
+async function startRecording(tab, upload, token) {
   try {
     if (recordingTab !== null) throw new Error("Another tab is already being recorded");
     recordingTab = tab;
@@ -144,9 +145,16 @@ async function startRecording(tab) {
     const { width, height } = await chrome.tabs.get(tab);
     const ratio = pixelRatios.get(tab) ?? 1;
     const size = width && height ? { width: Math.round(width * ratio), height: Math.round(height * ratio) } : null;
-    const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "start", streamId, tab, size });
+    const result = await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "start",
+      streamId,
+      tab,
+      size,
+      upload,
+      token,
+    });
     if (result?.error) throw new Error(result.error);
-    post({ type: "started", tab, mime: result.mime });
   } catch (error) {
     recordingTab = null;
     let message = String(error?.message ?? error);
@@ -163,7 +171,7 @@ async function startRecording(tab) {
 
 function stopRecording() {
   if (recordingTab === null) return;
-  // offscreen.js returns "stopped" after it has finished sending the remaining data.
+  // offscreen.js reports "finished" after it has sent the remaining data and closed its upload.
   // If recording had not started, there is nothing to stop, so only clean up.
   const reset = () => {
     recordingTab = null;
@@ -182,12 +190,11 @@ async function closeOffscreen() {
   }
 }
 
-// Forward recording data and results from offscreen.js to the resident app as is.
+// The recording itself goes from offscreen.js to the app directly; here only its end is noted.
 chrome.runtime.onConnect.addListener((recording) => {
   if (recording.name !== "recording") return;
   recording.onMessage.addListener((message) => {
-    post(message);
-    if (message.type === "stopped" || message.type === "error") {
+    if (message.type === "finished") {
       recordingTab = null;
       closeOffscreen();
     }

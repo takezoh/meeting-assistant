@@ -18,15 +18,16 @@ fn default_settings_output_starts_with_an_explanatory_comment() {
 }
 
 #[test]
-fn default_settings_have_desktop_app_and_browser_rules() {
+fn default_settings_have_desktop_app_rules_and_no_browser_rule() {
     let config = Config::default();
 
     assert!(config.rules.iter().any(|r| r.name == "Zoom"));
+    // Browser meetings are detected by the extension only.
     assert!(
         config
             .rules
             .iter()
-            .any(|r| r.name == "WebMeeting" && r.require_window_title)
+            .all(|r| !r.process_names.iter().any(|n| n == "chrome" || n == "msedge"))
     );
 }
 
@@ -48,9 +49,10 @@ fn edited_values_are_loaded_and_omitted_values_become_defaults() {
     assert_eq!(config.output_directory, Some(PathBuf::from(r"D:\Recordings")));
     assert_eq!(config.end_grace_seconds, 30.0);
     assert_eq!(config.start_debounce_seconds, 3.0);
+    assert_eq!(config.browser_start_debounce_seconds, 1.0);
+    assert_eq!(config.browser_end_grace_seconds, 5.0);
     assert_eq!(config.rules.len(), 1);
     assert_eq!(config.rules[0].name, "Custom");
-    assert!(!config.rules[0].require_window_title);
 }
 
 #[test]
@@ -63,12 +65,15 @@ fn invalid_content_is_a_config_error() {
     for content in [
         "not toml = = =",
         "end_grace_seconds = -1",
+        "browser_end_grace_seconds = -1",
+        "browser_start_debounce_seconds = -0.5",
         "poll_interval_milliseconds = 10",
         "rules = []",
         "unknown_key = 1",
         "capture_scope = \"tab\"",
         "[video]\nframerate = 0",
-        "[[rules]]\nname = \"Bad\"\nprocess_names = [\"x\"]\nwindow_title_patterns = [\"(\"]",
+        // Window-title matching for browsers without the extension no longer exists.
+        "[[rules]]\nname = \"Bad\"\nprocess_names = [\"x\"]\nrequire_window_title = true",
         "[[rules]]\nname = \"Bad\"\nprocess_names = []",
     ] {
         assert!(Config::from_toml(content).is_err(), "{content}");

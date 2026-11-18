@@ -1,12 +1,13 @@
 //! State of the connections to the extension and its transitions. Touches no sockets or files.
 //!
 //! Tracks, per connection, which tabs are in a meeting, and holds at most one tab recording overall.
-//! Incoming recording data goes to a [`ChunkSink`]; commands to send to the extension are returned to the caller.
+//! Control messages arrive through [`Hub::receive`]. The recording itself arrives on a separate upload connection,
+//! whose events the caller passes to [`Hub::upload_opened`], [`Hub::upload_data`] and [`Hub::upload_closed`]; the
+//! data goes to a [`ChunkSink`]. Commands to send to the extension are returned to the caller.
 
 use std::collections::BTreeMap;
 use std::io;
 
-use base64::Engine as _;
 use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab};
 
 use super::protocol::{Incoming, Outgoing};
@@ -22,10 +23,10 @@ pub trait ChunkSink: Send {
 /// Progress of a tab recording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Phase {
-    /// Start was requested; waiting for the extension to respond.
+    /// Start was requested; waiting for the extension to connect its upload.
     Starting,
     Recording,
-    /// The extension finished recording and all data, including the last piece, has arrived.
+    /// The extension finished recording and closed its upload after the last piece.
     Stopped,
     Failed(String),
 }
@@ -37,7 +38,19 @@ impl Phase {
     }
 }
 
+/// Identifies one recording, so that an upload connection that outlives its recording cannot touch the next one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureId(u64);
+
+/// Where the extension sends the recording, and the token that proves it was told to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upload {
+    pub url: String,
+    pub token: String,
+}
+
 struct Capture {
+    id: CaptureId,
     tab: BrowserTab,
     sink: Box<dyn ChunkSink>,
     phase: Phase,
@@ -90,6 +103,7 @@ const MAX_TITLE_CHARS: usize = 120;
 #[derive(Default)]
 pub struct Hub {
     next_link: u64,
+    next_capture: u64,
     links: BTreeMap<u64, Link>,
     capture: Option<Capture>,
 }
@@ -143,25 +157,48 @@ impl Hub {
         (links, meetings)
     }
 
-    /// Starts recording a tab. Returns the command to send to the extension.
-    pub fn begin_capture(&mut self, tab: BrowserTab, sink: Box<dyn ChunkSink>) -> anyhow::Result<Outgoing> {
+    /// Starts recording a tab into `sink`, received at `upload`. Returns the recording's identifier and the command
+    /// to send to the extension.
+    pub fn begin_capture(
+        &mut self,
+        tab: BrowserTab,
+        sink: Box<dyn ChunkSink>,
+        upload: Upload,
+    ) -> anyhow::Result<(CaptureId, Outgoing)> {
         anyhow::ensure!(self.capture.is_none(), "A tab is already being recorded");
         anyhow::ensure!(
             self.links.contains_key(&tab.link),
             "Not connected to the browser extension"
         );
+        self.next_capture += 1;
+        let id = CaptureId(self.next_capture);
         self.capture = Some(Capture {
+            id,
             tab,
             sink,
             phase: Phase::Starting,
             mime: String::new(),
             bytes: 0,
         });
-        Ok(Outgoing::Start { tab: tab.tab })
+        Ok((
+            id,
+            Outgoing::Start {
+                tab: tab.tab,
+                upload: upload.url,
+                token: upload.token,
+            },
+        ))
     }
 
     pub fn capture_phase(&self) -> Option<&Phase> {
         self.capture.as_ref().map(|capture| &capture.phase)
+    }
+
+    /// Whether `id` is the recording being made and is still waiting for its upload or receiving it.
+    pub fn is_capturing(&self, id: CaptureId) -> bool {
+        self.capture
+            .as_ref()
+            .is_some_and(|capture| capture.id == id && capture.phase.is_in_progress())
     }
 
     /// File extension of the container being recorded, once the extension has said which it is.
@@ -199,10 +236,44 @@ impl Hub {
         }
     }
 
-    /// Applies a message received from the extension.
+    /// The extension connected its upload for recording `id` and records in the container `mime`.
+    pub fn upload_opened(&mut self, id: CaptureId, mime: String) {
+        if let Some(capture) = self.capture_with(id)
+            && capture.phase == Phase::Starting
+        {
+            capture.phase = Phase::Recording;
+            capture.mime = mime;
+        }
+    }
+
+    /// The next piece of recording `id`, in order.
+    pub fn upload_data(&mut self, id: CaptureId, bytes: &[u8]) {
+        let Some(capture) = self.capture_with(id).filter(|c| c.phase == Phase::Recording) else {
+            return;
+        };
+        match capture.sink.write(bytes) {
+            Ok(()) => capture.bytes += bytes.len() as u64,
+            Err(error) => capture.phase = Phase::Failed(format!("Cannot write recording data: {error}")),
+        }
+    }
+
+    /// The upload of recording `id` ended: `Ok` after the last piece, otherwise with the reason it broke off.
+    pub fn upload_closed(&mut self, id: CaptureId, outcome: Result<(), String>) {
+        if let Some(capture) = self.capture_with(id)
+            && capture.phase.is_in_progress()
+        {
+            capture.phase = match outcome {
+                Ok(()) if capture.phase == Phase::Recording => Phase::Stopped,
+                Ok(()) => Phase::Failed("The extension closed the upload before recording".to_owned()),
+                Err(reason) => Phase::Failed(reason),
+            };
+        }
+    }
+
+    /// Applies a control message received from the extension.
     pub fn receive(&mut self, link: u64, message: Incoming) {
         match message {
-            Incoming::Hello { .. } | Incoming::Unknown => {}
+            Incoming::Hello { .. } => {}
             Incoming::Meeting {
                 tab,
                 active,
@@ -223,62 +294,24 @@ impl Hub {
                     entry.meetings.remove(&tab);
                 }
             }
-            Incoming::Started { tab, mime } => {
-                if let Some(capture) = self.capture_of(link, tab)
-                    && capture.phase == Phase::Starting
-                {
-                    capture.phase = Phase::Recording;
-                    capture.mime = mime;
-                }
-            }
-            Incoming::Chunk { tab, data } => {
-                let Some(capture) = self.capture_of(link, tab) else {
-                    return;
-                };
-                let written = base64::engine::general_purpose::STANDARD
-                    .decode(data.as_bytes())
-                    .map_err(|error| error.to_string())
-                    .and_then(|bytes| {
-                        capture
-                            .sink
-                            .write(&bytes)
-                            .map(|()| bytes.len())
-                            .map_err(|error| error.to_string())
-                    });
-                match written {
-                    Ok(length) => capture.bytes += length as u64,
-                    Err(error) => capture.phase = Phase::Failed(format!("Cannot write recording data: {error}")),
-                }
-            }
-            Incoming::Stopped { tab } => {
-                if let Some(capture) = self.capture_of(link, tab)
-                    && capture.phase.is_in_progress()
-                {
-                    capture.phase = Phase::Stopped;
-                }
-            }
             Incoming::Error { tab, message } => {
                 log::error!("The extension reported an error: {message}");
                 // An error without a tab is treated as concerning the tab being recorded on that connection.
-                let capture = match tab {
-                    Some(tab) => self.capture_of(link, tab),
-                    None => self.capture.as_mut().filter(|capture| capture.tab.link == link),
-                };
+                let capture = self
+                    .capture
+                    .as_mut()
+                    .filter(|capture| capture.tab.link == link && tab.is_none_or(|tab| capture.tab.tab == tab));
                 if let Some(capture) = capture
                     && capture.phase.is_in_progress()
                 {
                     capture.phase = Phase::Failed(message);
                 }
             }
-            Incoming::Warning { message } => log::warn!("Warning from the extension: {message}"),
         }
     }
 
-    /// The recording, if the tab being recorded is `tab` on `link`.
-    fn capture_of(&mut self, link: u64, tab: u64) -> Option<&mut Capture> {
-        self.capture
-            .as_mut()
-            .filter(|capture| capture.tab == BrowserTab { link, tab })
+    fn capture_with(&mut self, id: CaptureId) -> Option<&mut Capture> {
+        self.capture.as_mut().filter(|capture| capture.id == id)
     }
 }
 
@@ -305,13 +338,6 @@ mod tests {
         }
     }
 
-    fn chunk(tab: u64, bytes: &[u8]) -> Incoming {
-        Incoming::Chunk {
-            tab,
-            data: base64::engine::general_purpose::STANDARD.encode(bytes),
-        }
-    }
-
     fn meeting(tab: u64, active: bool, service: &str) -> Incoming {
         Incoming::Meeting {
             tab,
@@ -319,6 +345,31 @@ mod tests {
             service: service.into(),
             title: String::new(),
         }
+    }
+
+    fn upload() -> Upload {
+        Upload {
+            url: "ws://127.0.0.1:5000/".into(),
+            token: "secret".into(),
+        }
+    }
+
+    /// State right after one connection exists and recording of tab 7 was requested.
+    fn capturing() -> (Hub, u64, CaptureId, MemorySink) {
+        let mut hub = Hub::default();
+        let link = hub.connect(301);
+        let sink = MemorySink::default();
+        let (id, _) = hub
+            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload())
+            .unwrap();
+        (hub, link, id, sink)
+    }
+
+    /// Recording of tab 7, with its upload connected.
+    fn recording() -> (Hub, u64, CaptureId, MemorySink) {
+        let (mut hub, link, id, sink) = capturing();
+        hub.upload_opened(id, "video/mp4".into());
+        (hub, link, id, sink)
     }
 
     #[test]
@@ -339,16 +390,6 @@ mod tests {
         assert_eq!(titles[0].as_deref(), Some("abc-defg-hij"));
         assert_eq!(titles[1], None, "a blank title is no title");
         assert_eq!(titles[2].as_ref().map(|t| t.chars().count()), Some(MAX_TITLE_CHARS));
-    }
-
-    /// State right after one connection exists and recording of tab 7 was requested.
-    fn capturing() -> (Hub, u64, MemorySink) {
-        let mut hub = Hub::default();
-        let link = hub.connect(301);
-        let sink = MemorySink::default();
-        hub.begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()))
-            .unwrap();
-        (hub, link, sink)
     }
 
     #[test]
@@ -404,16 +445,24 @@ mod tests {
     }
 
     #[test]
-    fn starting_a_recording_returns_a_command_and_waits_for_response() {
+    fn starting_a_recording_tells_the_extension_where_to_upload_and_waits() {
         let mut hub = Hub::default();
         let link = hub.connect(301);
 
-        let instruction = hub
-            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(MemorySink::default()))
+        let (id, instruction) = hub
+            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(MemorySink::default()), upload())
             .unwrap();
 
-        assert_eq!(instruction, Outgoing::Start { tab: 7 });
+        assert_eq!(
+            instruction,
+            Outgoing::Start {
+                tab: 7,
+                upload: "ws://127.0.0.1:5000/".into(),
+                token: "secret".into()
+            }
+        );
         assert_eq!(hub.capture_phase(), Some(&Phase::Starting));
+        assert!(hub.is_capturing(id));
     }
 
     #[test]
@@ -421,45 +470,44 @@ mod tests {
         let mut hub = Hub::default();
 
         assert!(
-            hub.begin_capture(BrowserTab { link: 9, tab: 7 }, Box::new(MemorySink::default()))
-                .is_err()
+            hub.begin_capture(
+                BrowserTab { link: 9, tab: 7 },
+                Box::new(MemorySink::default()),
+                upload()
+            )
+            .is_err()
         );
         assert_eq!(hub.capture_phase(), None);
     }
 
     #[test]
     fn cannot_start_another_recording_while_recording() {
-        let (mut hub, link, _) = capturing();
+        let (mut hub, link, _, _) = capturing();
 
         assert!(
-            hub.begin_capture(BrowserTab { link, tab: 8 }, Box::new(MemorySink::default()))
+            hub.begin_capture(BrowserTab { link, tab: 8 }, Box::new(MemorySink::default()), upload())
                 .is_err()
         );
     }
 
     #[test]
-    fn follows_recording_from_start_response_through_data_to_stop() {
-        let (mut hub, link, sink) = capturing();
+    fn follows_recording_from_upload_through_data_to_its_close() {
+        let (mut hub, link, id, sink) = capturing();
 
-        hub.receive(
-            link,
-            Incoming::Started {
-                tab: 7,
-                mime: "video/mp4".into(),
-            },
-        );
+        hub.upload_opened(id, "video/mp4".into());
         assert_eq!(hub.capture_phase(), Some(&Phase::Recording));
 
-        hub.receive(link, chunk(7, b"abc"));
-        hub.receive(link, chunk(7, b"de"));
+        hub.upload_data(id, b"abc");
+        hub.upload_data(id, b"de");
         assert_eq!(hub.stop_request(), Some((link, Outgoing::Stop { tab: 7 })));
 
-        hub.receive(link, Incoming::Stopped { tab: 7 });
+        hub.upload_closed(id, Ok(()));
         assert_eq!(
             hub.stop_request(),
             None,
             "no stop command is issued after it has stopped"
         );
+        assert!(!hub.is_capturing(id));
 
         let finished = hub.end_capture().unwrap();
         assert_eq!(finished.outcome(), Ok(()));
@@ -469,28 +517,51 @@ mod tests {
     }
 
     #[test]
-    fn data_from_another_tab_or_connection_is_not_mixed_in() {
-        let (mut hub, link, sink) = capturing();
-        let other = hub.connect(401);
-        hub.receive(
-            link,
-            Incoming::Started {
-                tab: 7,
-                mime: "video/mp4".into(),
-            },
-        );
+    fn an_upload_left_over_from_an_earlier_recording_touches_nothing() {
+        let (mut hub, link, earlier, _) = recording();
+        hub.end_capture();
+        let sink = MemorySink::default();
+        let (current, _) = hub
+            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload())
+            .unwrap();
+        hub.upload_opened(current, "video/mp4".into());
 
-        hub.receive(link, chunk(8, b"other tab"));
-        hub.receive(other, chunk(7, b"other link"));
-        hub.receive(other, Incoming::Stopped { tab: 7 });
+        hub.upload_data(earlier, b"late data");
+        hub.upload_closed(earlier, Err("gone".into()));
 
         assert!(sink.written.lock().unwrap().is_empty());
         assert_eq!(hub.capture_phase(), Some(&Phase::Recording));
+        assert!(!hub.is_capturing(earlier));
+    }
+
+    #[test]
+    fn data_before_the_upload_says_its_format_is_not_written() {
+        let (mut hub, _, id, sink) = capturing();
+        hub.upload_data(id, b"early");
+
+        assert!(sink.written.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_upload_closed_with_a_reason_is_a_failure() {
+        let (mut hub, _, id, _) = recording();
+        hub.upload_closed(id, Err("Recording failed (NotReadableError)".into()));
+
+        let failed = hub.take_failed().unwrap();
+        assert_eq!(failed.outcome(), Err("Recording failed (NotReadableError)".to_owned()));
+    }
+
+    #[test]
+    fn an_upload_closed_before_it_said_its_format_is_a_failure() {
+        let (mut hub, _, id, _) = capturing();
+        hub.upload_closed(id, Ok(()));
+
+        assert!(matches!(hub.capture_phase(), Some(Phase::Failed(_))));
     }
 
     #[test]
     fn extension_error_can_be_taken_as_a_failure() {
-        let (mut hub, link, _) = capturing();
+        let (mut hub, link, _, _) = capturing();
         hub.receive(
             link,
             Incoming::Error {
@@ -506,7 +577,7 @@ mod tests {
 
     #[test]
     fn error_without_tab_fails_the_recording_on_that_connection() {
-        let (mut hub, link, _) = capturing();
+        let (mut hub, link, _, _) = capturing();
         let other = hub.connect(401);
 
         hub.receive(
@@ -529,15 +600,22 @@ mod tests {
     }
 
     #[test]
-    fn connection_loss_during_recording_is_a_failure() {
-        let (mut hub, link, _) = capturing();
+    fn an_error_about_another_tab_is_not_this_recordings_failure() {
+        let (mut hub, link, _, _) = capturing();
         hub.receive(
             link,
-            Incoming::Started {
-                tab: 7,
-                mime: "video/mp4".into(),
+            Incoming::Error {
+                tab: Some(8),
+                message: "other tab".into(),
             },
         );
+
+        assert_eq!(hub.capture_phase(), Some(&Phase::Starting));
+    }
+
+    #[test]
+    fn connection_loss_during_recording_is_a_failure() {
+        let (mut hub, link, _, _) = recording();
         hub.disconnect(link);
 
         assert!(matches!(hub.capture_phase(), Some(Phase::Failed(_))));
@@ -545,15 +623,8 @@ mod tests {
 
     #[test]
     fn connection_loss_after_stopping_is_not_a_failure() {
-        let (mut hub, link, _) = capturing();
-        hub.receive(
-            link,
-            Incoming::Started {
-                tab: 7,
-                mime: "video/mp4".into(),
-            },
-        );
-        hub.receive(link, Incoming::Stopped { tab: 7 });
+        let (mut hub, link, id, _) = recording();
+        hub.upload_closed(id, Ok(()));
         hub.disconnect(link);
 
         assert_eq!(hub.capture_phase(), Some(&Phase::Stopped));
@@ -561,38 +632,17 @@ mod tests {
 
     #[test]
     fn write_failure_is_a_failure() {
-        let (mut hub, link, sink) = capturing();
-        hub.receive(
-            link,
-            Incoming::Started {
-                tab: 7,
-                mime: "video/mp4".into(),
-            },
-        );
+        let (mut hub, _, id, sink) = recording();
         *sink.fails.lock().unwrap() = true;
-        hub.receive(link, chunk(7, b"abc"));
+        hub.upload_data(id, b"abc");
 
         let error = hub.take_failed().unwrap().outcome().unwrap_err();
         assert!(error.contains("disk full"), "{error}");
     }
 
     #[test]
-    fn corrupt_data_is_a_failure() {
-        let (mut hub, link, _) = capturing();
-        hub.receive(
-            link,
-            Incoming::Chunk {
-                tab: 7,
-                data: "this is not base64".into(),
-            },
-        );
-
-        assert!(matches!(hub.capture_phase(), Some(Phase::Failed(_))));
-    }
-
-    #[test]
     fn recording_ended_without_a_response_is_reported_as_failed() {
-        let (mut hub, _, _) = capturing();
+        let (mut hub, _, _, _) = capturing();
 
         assert!(hub.end_capture().unwrap().outcome().is_err());
     }
@@ -600,15 +650,9 @@ mod tests {
     #[test]
     fn file_extension_is_chosen_from_recording_format_once_recording_has_started() {
         let extension = |mime: &str| {
-            let (mut hub, link, _) = capturing();
+            let (mut hub, _, id, _) = capturing();
             assert_eq!(hub.capture_extension(), None, "unknown before the extension says");
-            hub.receive(
-                link,
-                Incoming::Started {
-                    tab: 7,
-                    mime: mime.into(),
-                },
-            );
+            hub.upload_opened(id, mime.into());
             hub.capture_extension()
         };
 

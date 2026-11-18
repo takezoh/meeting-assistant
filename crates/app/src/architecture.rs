@@ -54,6 +54,9 @@ fn os_apis_are_used_only_inside_platform() {
         "signal_hook::",
         "notify_rust::",
         "window_vibrancy::",
+        "objc2",
+        "block2::",
+        "dispatch2::",
     ];
     let files = sources();
 
@@ -90,6 +93,7 @@ fn decision_modules_have_no_side_effects() {
         "recording/mod.rs",
         "recording/timeline.rs",
         "recording/mixer.rs",
+        "recording/pcm.rs",
         "recording/plan.rs",
         "recording/pipeline.rs",
     ];

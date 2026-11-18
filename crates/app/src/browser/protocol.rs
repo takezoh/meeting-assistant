@@ -1,6 +1,8 @@
 //! Messages exchanged with the extension and how they are framed. Independent of where I/O goes.
 //!
-//! Like the browser's native messaging, one message is a 4-byte length followed by JSON.
+//! Control messages travel through the browser's native messaging, where one message is a 4-byte length followed by
+//! JSON. The recording itself travels as binary WebSocket messages on a separate upload connection (see
+//! [`UploadHello`]), so it is neither base64-encoded nor wrapped in JSON.
 
 use std::io::{self, Read, Write};
 
@@ -27,50 +29,33 @@ pub fn extension_origin() -> String {
     format!("chrome-extension://{EXTENSION_ID}/")
 }
 
+/// The `Origin` header the extension's pages send when they open a WebSocket.
+pub fn extension_web_origin() -> String {
+    format!("chrome-extension://{EXTENSION_ID}")
+}
+
 /// Messages arriving from the extension (and the relay process).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Incoming {
     /// Sent first by the relay process.
-    Hello {
-        token: String,
-        host_pid: u32,
-    },
-    /// A meeting started or ended in a tab.
+    Hello { token: String, host_pid: u32 },
+    /// A meeting started or ended in a tab. `service` and `title` come with a start.
     Meeting {
         tab: u64,
         active: bool,
         #[serde(default)]
         service: String,
         /// What tells this meeting apart from others of the same service (a Google Meet code, or the tab's title).
-        /// Older extensions do not send it.
         #[serde(default)]
         title: String,
     },
-    Started {
-        tab: u64,
-        #[serde(default)]
-        mime: String,
-    },
-    /// Next piece of recorded data (base64).
-    Chunk {
-        tab: u64,
-        data: String,
-    },
-    Stopped {
-        tab: u64,
-    },
+    /// Recording a tab could not start.
     Error {
         #[serde(default)]
         tab: Option<u64>,
         message: String,
     },
-    Warning {
-        message: String,
-    },
-    /// A type this app does not know. Can happen with a newer extension and an older app, so it is ignored.
-    #[serde(other)]
-    Unknown,
 }
 
 impl Incoming {
@@ -83,8 +68,58 @@ impl Incoming {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Outgoing {
-    Start { tab: u64 },
-    Stop { tab: u64 },
+    /// Record `tab` and send the recording to the WebSocket at `upload`, presenting `token` first.
+    Start {
+        tab: u64,
+        upload: String,
+        token: String,
+    },
+    Stop {
+        tab: u64,
+    },
+}
+
+/// The first message on an upload connection, as text: proves the peer was told about this recording, and says
+/// which container it records in. Binary messages with the recording follow, in order. A normal close ends the
+/// recording; a close with another code fails it, with the reason given.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UploadHello {
+    pub token: String,
+    pub mime: String,
+}
+
+/// A later text message on an upload connection: something degraded, and recording goes on.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UploadWarning {
+    pub warning: String,
+}
+
+/// WebSocket close code for a recording that ended normally.
+pub const CLOSE_NORMAL: u16 = 1000;
+
+/// Whether an upload's WebSocket handshake comes from the extension's pages, judged by its `Origin` header.
+pub fn is_extension_origin(origin: Option<&[u8]>) -> bool {
+    origin == Some(extension_web_origin().as_bytes())
+}
+
+/// Checks the first message of an upload. Returns the container it announces when it carries `token`.
+pub fn accept_upload_hello(first: Option<&str>, token: &str) -> Result<String, String> {
+    let text = first.ok_or("the first message is not text")?;
+    let hello: UploadHello = serde_json::from_str(text).map_err(|_| "the first message is not a hello")?;
+    if !tokens_match(&hello.token, token) {
+        return Err("token mismatch".to_owned());
+    }
+    Ok(hello.mime)
+}
+
+/// What the close of an upload means: the recording ended normally, or it failed for the reason given.
+/// `close` is the close code and reason, `None` for a close without a code.
+pub fn upload_close_outcome(close: Option<(u16, &str)>) -> Result<(), String> {
+    match close {
+        None | Some((CLOSE_NORMAL, _)) => Ok(()),
+        Some((code, "")) => Err(format!("The recording ended abnormally (close code {code})")),
+        Some((_, reason)) => Err(reason.to_owned()),
+    }
 }
 
 impl Outgoing {
@@ -204,16 +239,6 @@ mod tests {
                 title: "abc-defg-hij".into()
             }
         );
-        // An extension from before titles were reported.
-        assert_eq!(
-            parse(r#"{"type":"meeting","tab":7,"active":true,"service":"GoogleMeet"}"#),
-            Incoming::Meeting {
-                tab: 7,
-                active: true,
-                service: "GoogleMeet".into(),
-                title: String::new()
-            }
-        );
         assert_eq!(
             parse(r#"{"type":"meeting","tab":7,"active":false}"#),
             Incoming::Meeting {
@@ -224,45 +249,73 @@ mod tests {
             }
         );
         assert_eq!(
-            parse(r#"{"type":"started","tab":7,"mime":"video/mp4"}"#),
-            Incoming::Started {
-                tab: 7,
-                mime: "video/mp4".into()
-            }
-        );
-        assert_eq!(
-            parse(r#"{"type":"chunk","tab":7,"data":"AAEC"}"#),
-            Incoming::Chunk {
-                tab: 7,
-                data: "AAEC".into()
-            }
-        );
-        assert_eq!(parse(r#"{"type":"stopped","tab":7}"#), Incoming::Stopped { tab: 7 });
-        assert_eq!(
-            parse(r#"{"type":"error","message":"x"}"#),
+            parse(r#"{"type":"error","tab":7,"message":"x"}"#),
             Incoming::Error {
-                tab: None,
+                tab: Some(7),
                 message: "x".into()
             }
-        );
-        assert_eq!(
-            parse(r#"{"type":"warning","message":"w"}"#),
-            Incoming::Warning { message: "w".into() }
         );
     }
 
     #[test]
-    fn unknown_message_type_is_received_as_ignorable() {
-        assert_eq!(
-            Incoming::parse(br#"{"type":"future-feature","x":1}"#).unwrap(),
-            Incoming::Unknown
-        );
+    fn recording_data_does_not_travel_through_native_messaging() {
+        for removed in [
+            r#"{"type":"chunk","tab":7,"data":"AAEC"}"#,
+            r#"{"type":"started","tab":7,"mime":"video/mp4"}"#,
+            r#"{"type":"stopped","tab":7}"#,
+        ] {
+            assert!(Incoming::parse(removed.as_bytes()).is_err(), "{removed}");
+        }
     }
 
     #[test]
     fn malformed_message_is_an_error() {
         assert!(Incoming::parse(b"not json").is_err());
-        assert!(Incoming::parse(br#"{"type":"chunk","tab":"seven"}"#).is_err());
+        assert!(Incoming::parse(br#"{"type":"meeting","tab":"seven"}"#).is_err());
+    }
+
+    #[test]
+    fn only_the_extensions_origin_may_upload() {
+        assert!(is_extension_origin(Some(
+            b"chrome-extension://lnplioaidiniokndppmckdaflgefgale"
+        )));
+        assert!(!is_extension_origin(Some(
+            b"chrome-extension://lnplioaidiniokndppmckdaflgefgale/"
+        )));
+        assert!(!is_extension_origin(Some(b"https://meet.google.com")));
+        assert!(!is_extension_origin(None));
+    }
+
+    #[test]
+    fn the_first_upload_message_must_carry_this_recordings_token() {
+        let hello = r#"{"token":"secret","mime":"video/mp4"}"#;
+        assert_eq!(accept_upload_hello(Some(hello), "secret"), Ok("video/mp4".into()));
+        assert!(accept_upload_hello(Some(hello), "other").is_err());
+        assert!(accept_upload_hello(Some(r#"{"mime":"video/mp4"}"#), "secret").is_err());
+        assert!(accept_upload_hello(None, "secret").is_err(), "binary first is refused");
+    }
+
+    #[test]
+    fn a_normal_close_ends_the_recording_and_any_other_fails_it_with_its_reason() {
+        assert_eq!(upload_close_outcome(None), Ok(()));
+        assert_eq!(upload_close_outcome(Some((1000, ""))), Ok(()));
+        assert_eq!(
+            upload_close_outcome(Some((1011, "Recording failed (NotReadableError)"))),
+            Err("Recording failed (NotReadableError)".into())
+        );
+        assert_eq!(
+            upload_close_outcome(Some((1006, ""))),
+            Err("The recording ended abnormally (close code 1006)".into())
+        );
+    }
+
+    #[test]
+    fn upload_text_messages_parse() {
+        let hello: UploadHello = serde_json::from_str(r#"{"token":"t","mime":"video/webm;codecs=vp9,opus"}"#).unwrap();
+        assert_eq!(hello.mime, "video/webm;codecs=vp9,opus");
+        let warning: UploadWarning = serde_json::from_str(r#"{"warning":"no microphone"}"#).unwrap();
+        assert_eq!(warning.warning, "no microphone");
+        assert!(serde_json::from_str::<UploadHello>(r#"{"mime":"video/mp4"}"#).is_err());
     }
 
     #[test]
@@ -280,7 +333,14 @@ mod tests {
     fn commands_serialize_in_a_form_the_extension_reads() {
         let json = |message: Outgoing| String::from_utf8(message.to_body()).unwrap();
 
-        assert_eq!(json(Outgoing::Start { tab: 7 }), r#"{"type":"start","tab":7}"#);
+        assert_eq!(
+            json(Outgoing::Start {
+                tab: 7,
+                upload: "ws://127.0.0.1:5000/".into(),
+                token: "t".into()
+            }),
+            r#"{"type":"start","tab":7,"upload":"ws://127.0.0.1:5000/","token":"t"}"#
+        );
         assert_eq!(json(Outgoing::Stop { tab: 7 }), r#"{"type":"stop","tab":7}"#);
     }
 
@@ -293,6 +353,10 @@ mod tests {
         assert_eq!(
             extension_origin(),
             "chrome-extension://lnplioaidiniokndppmckdaflgefgale/"
+        );
+        assert_eq!(
+            extension_web_origin(),
+            "chrome-extension://lnplioaidiniokndppmckdaflgefgale"
         );
     }
 }

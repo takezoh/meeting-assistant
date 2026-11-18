@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, ConfigError};
 use crate::coordinator::{CoordinatorStatus, ManualTarget, Notice, NoticeLevel, RecordingCoordinator};
-use crate::detector::MeetingDetector;
+use crate::detector::{MeetingDetector, Timing};
 use crate::recording::Recorder;
 use crate::rules::{RuleEvaluator, RuleEvidence};
 use crate::signals::SignalSource;
@@ -32,8 +32,14 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             source,
             evaluator: RuleEvaluator::new(&config.rules)?,
             detector: MeetingDetector::new(
-                Duration::from_secs_f64(config.start_debounce_seconds),
-                Duration::from_secs_f64(config.end_grace_seconds),
+                Timing {
+                    start_debounce: Duration::from_secs_f64(config.start_debounce_seconds),
+                    end_grace: Duration::from_secs_f64(config.end_grace_seconds),
+                },
+                Timing {
+                    start_debounce: Duration::from_secs_f64(config.browser_start_debounce_seconds),
+                    end_grace: Duration::from_secs_f64(config.browser_end_grace_seconds),
+                },
             ),
             coordinator,
             signal_outage_limit: Self::DEFAULT_SIGNAL_OUTAGE_LIMIT,

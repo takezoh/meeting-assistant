@@ -7,55 +7,67 @@ created: '2026-11-17'
 scope_type: component
 responsibilities:
 - id: RESP-001
-  statement: "Decide from a recording request and the configuration which video and audio sources to open and the output format."
+  statement: Decide from a recording request and the configuration which video and
+    audio sources to open and the output format.
 - id: RESP-002
-  statement: "Run one recording: open sources and the writer, obtain the first picture, write video and audio on a common timeline, switch windows on request, finalize."
+  statement: 'Run one recording: open sources and the writer, obtain the first picture,
+    write video and audio on a common timeline, switch windows on request, finalize.'
 - id: RESP-003
-  statement: "Present a pipeline running on its own thread as a core Recorder."
+  statement: Present a pipeline running on its own thread as a core Recorder.
 invariants:
 - id: INV-001
-  statement: "The output size is fixed when the recording opens, is even in both dimensions and is at least the encoder minimum."
+  statement: The output size is fixed when the recording opens, is even in both dimensions
+    and is at least the encoder minimum.
   enforcement: test
 - id: INV-002
-  statement: "Video and audio timestamps derive from the same elapsed time."
+  statement: Video and audio timestamps derive from the same elapsed time.
   enforcement: test
 - id: INV-003
-  statement: "A recording that opened its writer finalizes it on stop, on failure and when the recorder is dropped."
+  statement: A recording that opened its writer finalizes it on stop, on failure and
+    when the recorder is dropped.
   enforcement: test
 - id: INV-004
-  statement: "An audio source that cannot be opened is skipped and is not replaced by a wider source."
+  statement: An audio source that cannot be opened is skipped and is not replaced
+    by a wider source.
   enforcement: test
 - id: INV-005
-  statement: "A window recording starts with a black picture when no picture arrives in time; a display recording fails to start instead."
+  statement: A window recording starts with a black picture when no picture arrives
+    in time; a display recording fails to start instead.
   enforcement: test
 - id: INV-006
-  statement: "start returns only after the pipeline has opened or has failed to open."
+  statement: start returns only after the pipeline has opened or has failed to open.
   enforcement: test
 boundaries:
   provides:
   - id: PROV-001
-    statement: "ThreadedRecorder, an implementation of the core Recorder port."
+    statement: ThreadedRecorder, an implementation of the core Recorder port.
   consumes:
   - id: CONS-001
-    statement: "CaptureBackend: open video, audio and writer; take, scale and write pictures; mix and write audio; finalize."
+    statement: 'CaptureBackend: open video, audio and writer; take, scale and write
+      pictures; mix and write audio; finalize.'
   - id: CONS-002
-    statement: "Pacer for elapsed time and sleeping, and Control for stop and retarget requests."
+    statement: Pacer for elapsed time and sleeping, and Control for stop and retarget
+      requests.
   forbidden:
   - id: FORB-001
-    statement: "Calling an operating system API, reading a clock or spawning a thread from plan, timeline, mixer or pipeline."
+    statement: Calling an operating system API, reading a clock or spawning a thread
+      from plan, timeline, mixer or pipeline.
 variability:
   fixed:
   - id: FIX-001
-    statement: "Audio is handled as 48 kHz, two-channel, 16-bit PCM between the backend and the pipeline."
+    statement: Audio is handled as 48 kHz, two-channel, 16-bit PCM between the backend
+      and the pipeline.
   free:
   - id: FREE-001
-    statement: "The container, codecs, scaling method and capture APIs of a backend."
+    statement: The container, codecs, scaling method and capture APIs of a backend.
 capabilities: []
 failure_responsibilities:
 - id: FAIL-001
-  statement: "A failure while opening is returned from start; a failure while running ends the thread and is delivered once through take_failure."
+  statement: A failure while opening is returned from start; a failure while running
+    ends the thread and is delivered once through take_failure.
 - id: FAIL-002
-  statement: "A failed switch to another window leaves the recording on its current picture."
+  statement: A failed switch to another window leaves the recording on its current
+    picture.
 trust_boundaries: []
 compatibility_policies: []
 tags: []
@@ -69,7 +81,10 @@ source_paths:
 - crates/app/src/recording/pipeline.rs
 - crates/app/src/recording/session.rs
 - crates/app/src/platform/win/recorder
-summary: Contract of one OS-path recording, from the plan through the write loop to finalization, and of the CaptureBackend port.
+- crates/app/src/recording/pcm.rs
+- crates/app/src/platform/mac/recorder
+summary: Contract of one OS-path recording, from the plan through the write loop to
+  finalization, and of the CaptureBackend port.
 ---
 
 ## Purpose

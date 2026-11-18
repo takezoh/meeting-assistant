@@ -6,7 +6,7 @@ Meeting Assistant sits in the notification area, notices when a meeting starts i
 
 > A recording contains the video and audio of the other participants. Obtaining their consent and following your organization's rules and the law that applies to you is your responsibility. Meeting Assistant does not announce the recording to anyone.
 
-Windows is supported. On macOS only browser meetings recorded through the extension are implemented; see [Platform support](#platform-support).
+Windows is supported. On macOS desktop apps and manual recording are implemented but have not yet recorded a real window or display on a Mac; see [Platform support](#platform-support).
 
 ## Join a meeting; the file appears when it ends
 
@@ -28,7 +28,7 @@ Your microphone is captured directly, so your voice is recorded even while you a
 
 ## Browser meetings are recorded per tab
 
-With the bundled Chrome/Edge extension, a browser meeting is detected when the call connects in the page, including when you only listen, and only that tab is recorded, even while you look at another tab. Without the extension the browser window is recorded instead, which follows whatever tab is visible in that window.
+With the bundled Chrome/Edge extension, a browser meeting is detected when the call connects in the page, including when you only listen, and only that tab is recorded, even while you look at another tab. Browser meetings are detected only through the extension.
 
 Automatic tab recording needs the browser to be started with an undocumented switch. The installer creates a browser shortcut that adds it; see [INSTALL.md](INSTALL.md#browser-extension) for the steps and the caveat.
 
@@ -56,14 +56,13 @@ On macOS the same two commands install `~/Applications/Meeting Assistant.app`; s
 | | Windows | macOS |
 | --- | --- | --- |
 | Browser meetings with the extension, per tab | Supported | Supported; run with synthetic meetings on one Mac |
-| Browser meetings without the extension, per window | Supported | Not implemented |
-| Desktop apps such as Zoom | Supported | Not implemented |
-| Manual recording | Supported | Not implemented |
+| Desktop apps such as Zoom | Supported | Implemented; screen and app-audio capture not yet run on a Mac |
+| Manual recording | Supported | Implemented; not yet run on a Mac |
 | Install, start at login, finalize on exit, browser launcher | Supported | Supported; the launcher and a real logout were not run |
 
 ## What to expect
 
-- A meeting you join without ever using the microphone, and without the extension, is not detected. On Windows, record the entire screen from the status panel.
+- A desktop-app meeting you join without ever using the microphone is not detected, and neither is a browser meeting without the extension. On Windows, record the entire screen from the status panel.
 - Detection has been exercised with synthetic meetings on one PC, not with every meeting service. [Product](PRODUCT.md#what-is-not-established) lists what is and is not established.
 - [Troubleshooting](docs/usage/troubleshooting.md) covers a meeting that was not recorded, missing audio and a black picture.
 

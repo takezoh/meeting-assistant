@@ -69,10 +69,14 @@ pub struct Config {
     /// Where recordings are saved. Defaults to MeetingAssistant under the OS "Videos" folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_directory: Option<PathBuf>,
-    /// A meeting is considered started once the start condition holds for this many seconds.
+    /// A desktop app's meeting is considered started once the app has used the microphone for this many seconds.
     pub start_debounce_seconds: f64,
-    /// A meeting is considered ended once microphone use stops for this many seconds.
+    /// A desktop app's meeting is considered ended once its microphone use has stopped for this many seconds.
     pub end_grace_seconds: f64,
+    /// A browser meeting is considered started once the extension has reported its call for this many seconds.
+    pub browser_start_debounce_seconds: f64,
+    /// A browser meeting is considered ended once the extension has reported no call for this many seconds.
+    pub browser_end_grace_seconds: f64,
     pub poll_interval_milliseconds: u64,
     /// Recording scope: "app" (the meeting app only) or "screen" (the whole display and all audio output).
     pub capture_scope: CaptureScope,
@@ -87,6 +91,9 @@ impl Default for Config {
             output_directory: None,
             start_debounce_seconds: 3.0,
             end_grace_seconds: 15.0,
+            // A connected call is a firmer signal than microphone use, which apps drop while muted.
+            browser_start_debounce_seconds: 1.0,
+            browser_end_grace_seconds: 5.0,
             poll_interval_milliseconds: 1000,
             capture_scope: CaptureScope::default(),
             video: VideoConfig::default(),
@@ -130,6 +137,12 @@ impl Config {
         }
         if !(self.end_grace_seconds.is_finite() && self.end_grace_seconds >= 0.0) {
             return invalid("end_grace_seconds must be 0 or greater");
+        }
+        if !(self.browser_start_debounce_seconds.is_finite() && self.browser_start_debounce_seconds >= 0.0) {
+            return invalid("browser_start_debounce_seconds must be 0 or greater");
+        }
+        if !(self.browser_end_grace_seconds.is_finite() && self.browser_end_grace_seconds >= 0.0) {
+            return invalid("browser_end_grace_seconds must be 0 or greater");
         }
         if self.poll_interval_milliseconds < 100 {
             return invalid("poll_interval_milliseconds must be 100 or greater");

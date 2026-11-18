@@ -19,17 +19,17 @@ invariants:
   statement: "The app holds at most one tab recording across all connections."
   enforcement: test
 - id: INV-002
-  statement: "A tab recording is reported as started only after the extension has confirmed it."
+  statement: "A tab recording is reported as started only after the extension's upload has connected and proved itself."
   enforcement: test
 - id: INV-003
   statement: "When a connection is lost during a recording, the recording ends as failed and the received data stays in the file."
   enforcement: test
 - id: INV-004
-  statement: "A message of an unknown type is ignored."
+  statement: "Recording data travels only on the upload WebSocket, as binary messages appended to the file as they are; the control channel carries no recording data."
   enforcement: test
 - id: INV-005
-  statement: "The listener accepts loopback connections only and requires the token in the first message."
-  enforcement: review
+  statement: "Both listeners accept loopback connections only. The control listener requires the relay token in the first message; each upload listener requires the extension's Origin and that recording's one-time token, and closes once one connection has proved itself."
+  enforcement: test
 - id: INV-006
   statement: "The extension ID, the host name and the message types are identical in the app and in the extension."
   enforcement: test
@@ -54,7 +54,7 @@ variability:
   - id: FIX-001
     statement: "The extension ID lnplioaidiniokndppmckdaflgefgale, fixed by the manifest key, and the host name com.meeting_assistant.host."
   - id: FIX-002
-    statement: "Length-prefixed JSON framing and the existing message types and fields."
+    statement: "Length-prefixed JSON framing for control messages and binary WebSocket messages for the recording, as described in docs/technical/browser-link.md. Neither side keeps compatibility with older versions of the other."
   free:
   - id: FREE-001
     statement: "How a call is recognized in a page, the supported sites, encoder settings and chunk interval."
@@ -95,7 +95,7 @@ In the browser, `hook.js` observes `RTCPeerConnection` in the page, `bridge.js` 
 
 ## Boundaries
 
-The hub decides and the server acts: the hub receives parsed messages and returns the commands to send; it writes recording bytes only to a `ChunkSink`. The extension holds no policy. It reports what it sees and records when told, so that the rules for when to record stay in `crates/core`.
+The hub decides and the server acts: the hub receives parsed control messages and the upload's events, and returns the commands to send; it writes recording bytes only to a `ChunkSink`. The recording goes from the offscreen document to the app over its own WebSocket rather than through native messaging, which carries only JSON, so the data is never base64-encoded or copied through the service worker and the relay. See [ADR: binary upload](../adr/adr-20261118-send-tab-recordings-to-the-app-over-a-we.md). The extension holds no policy. It reports what it sees and records when told, so that the rules for when to record stay in `crates/core`.
 
 A tab recording does not pass through the capture pipeline. Its video and audio settings are the extension's, not `config.toml`'s.
 
