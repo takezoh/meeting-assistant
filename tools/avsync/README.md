@@ -29,5 +29,5 @@ cargo build --release --manifest-path tools/avsync/Cargo.toml
 ## What the numbers include
 
 - The stimulus itself: drawing the square reaches the screen a display refresh or so after the tone is queued, and the tone waits about 15 ms in the output buffer. On the PC it was written on, a recording whose log showed 179 ms of sound queued at the start measured 146 ms, so the stimulus makes sound look about 30 ms earlier than it is. Compare runs with each other rather than reading one offset as absolute.
-- Frames: the picture side is quantized to the frame interval (33 ms at 30 fps), so single offsets jump by about one frame. Use the medians.
+- Frames: the picture side is quantized to the frame interval (33 ms at 30 fps). The stimulus and the recording run on the same clock, so the flash falls at the same point of a frame interval every time, and even the medians sit at one of two values a frame apart, switching between them now and then. A difference of less than a frame between two runs cannot be read; a change over time within one run can.
 - The square and the tone are seen and heard on the PC while it runs.

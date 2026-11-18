@@ -24,7 +24,7 @@ topic: verification
 
 ## Summary
 
-On 2026-11-18 the Windows recording path was measured on one PC, following [the performance handoff](note-20261118-windows-recording-performance-handoff.md), before and after the changes made from it. Sound started about 150 ms behind the picture and stayed there for the whole file; after dropping the backlog it started within a frame. Dropping the backlog alone made the sound run short a few times in ten minutes; the mixer's depth control that followed was checked in simulation, and its long run on this PC had not finished when this note was written. The encoder was the NVIDIA hardware encoder taking ARGB32 directly, and the recording used little CPU, so the handoff's GPU-path work brought nothing measurable on this PC and was left as an issue. The same day the status panel was given the Windows 11 flyout look and was seen on this PC.
+On 2026-11-18 the Windows recording path was measured on one PC, following [the performance handoff](note-20261118-windows-recording-performance-handoff.md), before and after the changes made from it. Sound started about 150 ms behind the picture and stayed there for the whole file; after dropping the backlog it started within a frame of where it should. Dropping the backlog alone made the sound run short a few times in ten minutes; with the mixer's depth control it did not run short once in an hour, and where it sat against the picture did not move over that hour. The encoder was the NVIDIA hardware encoder taking ARGB32 directly, and the recording used little CPU, so the handoff's GPU-path work brought nothing measurable on this PC and was left as an issue. The same day the status panel was given the Windows 11 flyout look and was seen on this PC.
 
 These are observations from one machine on one day, over Remote Desktop and without a microphone. They do not establish behavior on other hardware, other encoders or in real calls.
 
@@ -59,7 +59,16 @@ Keeping only 40 ms against a mix of 33 ms left about 7 ms of margin, and the sou
 
 ### After the mixer's depth control and writing each interval's sound a step later
 
-A 60-minute run of this change was still recording when this note was written, and its result is not recorded here. The change was checked only by unit tests that simulate 20 minutes of 10 ms and 100 ms packets on a clock up to 200 ppm off, with no underrun. Two fixes from review came after that run started: a packet size is forgotten after two seconds of mixing, and the sound queued while writing jumped over a stall is dropped.
+Recorded from 23:15 to 00:15, with a tone every 4 s. Two fixes from review came after this run started and are not in it: a packet size is forgotten after two seconds of mixing, and the sound queued while writing jumped over a stall is dropped. Neither applies to a run without a stall and with even packets.
+
+| Run | Sound behind picture (median) | Course | Log |
+| --- | --- | --- | --- |
+| 60 min | 41 ms | 40 ms in the first minute and 42 ms in the last; most minutes 41 ms, 19 of them 8 to 12 ms; trend +0.2 ms/min | 166 ms dropped when writing started, 73 ms queued when mixing began; 3180 frames dropped and 3330 repeated to follow the clock; no catch-up, no underrun; no late frame, 0.19 ms per frame on average; 2.1% of one core; 423 MB |
+
+- The sound did not run short once in the hour, and where it sat against the picture did not move: the first and the last minutes read the same.
+- The median minutes sit at 41 or at 8 ms, a frame apart, never between. The tone and the frames run on the same clock, so the flash falls at the same point of a frame interval every time and is read as one frame or the next. The level is therefore known only to within a frame: 41 ms here and 7 to 13 ms in the run without the depth control are not different readings. That matches the design: about 30 ms more is kept queued, and writing each interval a step later takes 33 ms off.
+- About 1.8 single frames a second were dropped and about as many repeated: the lowest amount queued strays across the 5 ms tolerance with the arrival of packets, and is moved back each time. A frame is 21 µs.
+- GPU use averaged 23% over the hour, during which this PC also built the app and ran the panel checks below, so it is not compared with the other runs.
 
 ### Window pictures
 
