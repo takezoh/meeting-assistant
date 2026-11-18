@@ -94,6 +94,11 @@ impl AudioCapture {
         })
     }
 
+    /// Writing starts now; drops what was captured before.
+    pub fn start_writing(&mut self) {
+        self.buffer.lock().unwrap().start_writing();
+    }
+
     /// Adds this input's sound to `out`.
     pub fn mix_into(&mut self, out: &mut [i16]) {
         self.buffer.lock().unwrap().mix_into(out);
@@ -106,13 +111,35 @@ impl Drop for AudioCapture {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        let seconds = self.stats.samples.load(Ordering::Relaxed) as f64 / (SAMPLE_RATE as f64 * CHANNELS as f64);
+        let seconds = milliseconds(self.stats.samples.load(Ordering::Relaxed) as usize) / 1000.0;
         let peak = self.stats.peak.load(Ordering::Relaxed) as f64 / i16::MAX as f64 * 100.0;
+        let report = self.buffer.lock().unwrap().report();
         log::info!(
-            "audio input {}: captured {seconds:.1} s, peak volume {peak:.1}%",
-            self.label
+            "audio input {}: captured {seconds:.1} s, peak volume {peak:.1}%, {:.0} ms dropped when writing started, \
+             delay when mixing began {}, {} frames dropped and {} repeated to follow the clock, \
+             {} catch-ups dropping {:.0} ms, {} underruns missing {:.0} ms, {:.0} ms dropped over the cap",
+            self.label,
+            milliseconds(report.dropped_at_start),
+            report
+                .queued_at_start
+                .map_or("(never mixed)".to_owned(), |queued| format!(
+                    "{:.0} ms",
+                    milliseconds(queued)
+                )),
+            report.frames_dropped,
+            report.frames_repeated,
+            report.catch_ups,
+            milliseconds(report.caught_up),
+            report.underruns,
+            milliseconds(report.missing),
+            milliseconds(report.overflow),
         );
     }
+}
+
+/// Duration of a number of samples (all channels combined) in milliseconds.
+fn milliseconds(samples: usize) -> f64 {
+    samples as f64 * 1000.0 / (SAMPLE_RATE as f64 * CHANNELS as f64)
 }
 
 fn open_client(spec: &AudioSource) -> anyhow::Result<(IAudioClient, IAudioCaptureClient)> {

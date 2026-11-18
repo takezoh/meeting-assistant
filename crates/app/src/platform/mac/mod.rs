@@ -17,7 +17,7 @@ pub use self::install::PlatformInstaller;
 pub use self::recorder::{PlatformRecorder, recorder};
 pub use self::signals::MacSignalSource as PlatformSignalSource;
 use crate::install::APP_NAME;
-use crate::panel::view::Surface;
+use crate::panel::view::{Design, Surface, TrayLook};
 
 /// Upper bound on waiting for the other process to exit after asking it to quit (includes finalizing the recording).
 const QUIT_TIMEOUT: Duration = Duration::from_secs(90);
@@ -188,9 +188,36 @@ pub fn style_panel(window: &tao::window::Window) -> Surface {
         log::warn!("Cannot give the panel a translucent background: {error}");
     }
     Surface {
+        design: Design::MacOs,
         translucent: applied.is_ok(),
         rounded_by_system: false,
+        accent: None,
     }
+}
+
+/// The idle icon is a template that the system tints like the rest of the menu bar, and the menu bar shows the
+/// recording's running time next to the icon.
+pub fn tray_look() -> TrayLook {
+    TrayLook {
+        idle_color: None,
+        text_beside_icon: true,
+    }
+}
+
+/// Shows `image` as the menu bar icon, drawn as a template when `template` is set.
+pub fn set_tray_icon(tray: &tray_icon::TrayIcon, image: tray_icon::Icon, template: bool) -> tray_icon::Result<()> {
+    if template {
+        tray.set_icon_templated(Some(image))
+    } else {
+        tray.set_icon(Some(image))
+    }
+}
+
+/// Stays resident in the menu bar only, with no Dock icon, and does not take the focus at start.
+pub fn prepare_event_loop<T>(event_loop: &mut tao::event_loop::EventLoop<T>) {
+    use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+    event_loop.set_activation_policy(ActivationPolicy::Accessory);
+    event_loop.set_activate_ignoring_other_apps(false);
 }
 
 /// Shows a notification.

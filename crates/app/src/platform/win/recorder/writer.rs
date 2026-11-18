@@ -50,6 +50,7 @@ impl Mp4Writer {
                 None
             };
             writer.BeginWriting().context("cannot begin writing")?;
+            log::info!("video is encoded by: {}", describe_transforms(&writer, video_stream));
 
             Ok(Self {
                 writer,
@@ -90,7 +91,29 @@ impl Mp4Writer {
 
     /// Writes out the rest and finalizes the file.
     pub fn finalize(self) -> anyhow::Result<()> {
+        self.log_statistics();
         unsafe { self.writer.Finalize() }.context("cannot finalize the file")
+    }
+
+    /// How far each stream got before finalizing. Samples received but not yet encoded are what the encoder has
+    /// fallen behind by.
+    fn log_statistics(&self) {
+        for (name, stream) in [("video", Some(self.video_stream)), ("audio", self.audio_stream)] {
+            let Some(stream) = stream else { continue };
+            let mut statistics = MF_SINK_WRITER_STATISTICS {
+                cb: size_of::<MF_SINK_WRITER_STATISTICS>() as u32,
+                ..Default::default()
+            };
+            if unsafe { self.writer.GetStatistics(stream, &mut statistics) }.is_ok() {
+                log::info!(
+                    "{name} stream before finalizing: {} samples received, {} encoded, {} written, {} bytes queued",
+                    statistics.qwNumSamplesReceived,
+                    statistics.qwNumSamplesEncoded,
+                    statistics.qwNumSamplesProcessed,
+                    statistics.dwByteCountQueued,
+                );
+            }
+        }
     }
 
     unsafe fn write(&self, stream: u32, buffer: &IMFMediaBuffer, time: i64, duration: i64) -> anyhow::Result<()> {
@@ -167,6 +190,76 @@ unsafe fn add_audio_stream(writer: &IMFSinkWriter) -> windows::core::Result<u32>
         writer.SetInputMediaType(stream, &input, None)?;
         Ok(stream)
     }
+}
+
+/// The transforms the sink writer placed in front of the file for one stream, in order, for the log: what each one
+/// is, whether it runs on the GPU, and what it takes in.
+unsafe fn describe_transforms(writer: &IMFSinkWriter, stream: u32) -> String {
+    unsafe {
+        let Ok(writer) = writer.cast::<IMFSinkWriterEx>() else {
+            return "(not reported)".to_owned();
+        };
+        let mut transforms = Vec::new();
+        for index in 0.. {
+            let mut category = GUID::zeroed();
+            let mut transform = None;
+            if writer
+                .GetTransformForStream(stream, index, Some(&mut category), &mut transform)
+                .is_err()
+            {
+                break;
+            }
+            let Some(transform) = transform else { break };
+            let role = if category == MFT_CATEGORY_VIDEO_ENCODER {
+                "encoder"
+            } else if category == MFT_CATEGORY_VIDEO_PROCESSOR {
+                "converter"
+            } else {
+                "transform"
+            };
+            let attributes = transform.GetAttributes().ok();
+            let name = attributes
+                .as_ref()
+                .and_then(|attributes| string_attribute(attributes, &MFT_FRIENDLY_NAME_Attribute))
+                .unwrap_or_else(|| "unnamed".to_owned());
+            // Only hardware transforms carry a hardware URL.
+            let place = match &attributes {
+                Some(attributes) if attributes.GetStringLength(&MFT_ENUM_HARDWARE_URL_Attribute).is_ok() => "hardware",
+                _ => "software",
+            };
+            let input = transform
+                .GetInputCurrentType(0)
+                .and_then(|media_type| media_type.GetGUID(&MF_MT_SUBTYPE))
+                .map_or_else(|_| "?".to_owned(), |subtype| subtype_name(&subtype));
+            transforms.push(format!("{role} \"{name}\" ({place}, takes {input})"));
+        }
+        if transforms.is_empty() {
+            return "(no transform reported)".to_owned();
+        }
+        transforms.join(" -> ")
+    }
+}
+
+unsafe fn string_attribute(attributes: &IMFAttributes, key: &GUID) -> Option<String> {
+    unsafe {
+        let length = attributes.GetStringLength(key).ok()? as usize;
+        let mut value = vec![0u16; length + 1];
+        attributes.GetString(key, &mut value, None).ok()?;
+        Some(String::from_utf16_lossy(&value[..length]))
+    }
+}
+
+fn subtype_name(subtype: &GUID) -> String {
+    let known = [
+        (MFVideoFormat_NV12, "NV12"),
+        (MFVideoFormat_ARGB32, "ARGB32"),
+        (MFVideoFormat_RGB32, "RGB32"),
+        (MFVideoFormat_H264, "H.264"),
+    ];
+    known
+        .iter()
+        .find(|(guid, _)| guid == subtype)
+        .map_or_else(|| format!("{subtype:?}"), |(_, name)| (*name).to_owned())
 }
 
 /// The format in which Media Foundation packs two 32-bit values into one attribute.

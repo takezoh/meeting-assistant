@@ -1,8 +1,9 @@
 //! The notification-area icon, its menu and the status panel that opens from it.
 //!
 //! Icon: a ring = idle, amber = a meeting is detected but not recorded, red = recording. A left click opens the
-//! panel; the menu (a right click) keeps the same actions for when the panel is not available. On macOS the menu
-//! bar also shows how long the recording has been running.
+//! panel; the menu (a right click) keeps the same actions for when the panel is not available. While recording, the
+//! running time is shown next to the icon where the platform allows text there (the macOS menu bar), otherwise in
+//! the tooltip. How the icon follows the menu bar or the taskbar is the platform's [`TrayLook`].
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -18,15 +19,13 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 use crate::composition::spawn_engine;
 use crate::install::{self, InstallSystem};
 use crate::panel::Panel;
-use crate::panel::view::{self, Activity, PanelMessage, RecordCommand, RecordingClock, Rect};
+use crate::panel::view::{self, Activity, PanelMessage, RecordCommand, RecordingClock, Rect, TrayLook};
 use crate::platform::{self, PlatformInstaller};
 use crate::worker::{Command, Update};
 
 const APP_NAME: &str = "Meeting Assistant";
 /// Maximum time to wait for the recording to be finalized on exit.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
-/// Whether the menu bar shows the recording's running time next to the icon (only macOS can show text there).
-const SHOWS_ELAPSED_TIME: bool = cfg!(target_os = "macos");
 
 enum AppEvent {
     Menu(MenuId),
@@ -55,7 +54,10 @@ struct Tray {
     install_item: Option<MenuItem>,
     quit: MenuItem,
     icons: Icons,
+    look: TrayLook,
     shown: Option<Activity>,
+    /// The tooltip for the latest status, without the running time.
+    tooltip: String,
     /// What the record item does now.
     record_command: Option<RecordCommand>,
 }
@@ -71,7 +73,7 @@ struct Icons {
 struct State {
     status: Option<CoordinatorStatus>,
     clock: RecordingClock,
-    /// When the running time next to the icon changes next.
+    /// When the shown running time changes next.
     next_tick: Option<Instant>,
 }
 
@@ -84,7 +86,7 @@ impl State {
         let now = Instant::now();
         self.clock
             .update(status.recording.as_ref().map(|recording| recording.path.as_path()), now);
-        self.next_tick = (SHOWS_ELAPSED_TIME && self.clock.is_running()).then_some(now);
+        self.next_tick = self.clock.is_running().then_some(now);
         self.status = Some(status);
     }
 }
@@ -114,15 +116,8 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
         move || shut_down(&commands)
     });
 
-    // On macOS, stay resident in the menu bar only, with no Dock icon, and do not take the focus at start.
-    #[cfg(target_os = "macos")]
     let mut event_loop = event_loop;
-    #[cfg(target_os = "macos")]
-    {
-        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
-        event_loop.set_activation_policy(ActivationPolicy::Accessory);
-        event_loop.set_activate_ignoring_other_apps(false);
-    }
+    platform::prepare_event_loop(&mut event_loop);
 
     let panel_proxy = event_loop.create_proxy();
     let mut tray: Option<Tray> = None;
@@ -270,6 +265,15 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
                     quit(Some(&*tray), &commands, &mut finalized, control_flow);
                 }
             }
+            // A change of the system's colors may change what reads on the taskbar.
+            Event::WindowEvent {
+                event: WindowEvent::ThemeChanged(_),
+                ..
+            } => {
+                if let Some(tray) = &mut tray {
+                    tray.follow_look();
+                }
+            }
             // The panel behaves like a menu: it goes away when something else is clicked.
             Event::WindowEvent {
                 window_id,
@@ -286,14 +290,14 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
             _ => {}
         }
 
-        // Keep the running time next to the icon current while recording.
+        // Keep the shown running time current while recording.
         if let Some(next) = state.next_tick
             && *control_flow == ControlFlow::Wait
         {
             let now = Instant::now();
             if now >= next {
                 if let Some(tray) = &tray {
-                    tray.icon.set_title(Some(view::elapsed_label(state.elapsed())));
+                    tray.show_running_time(state.elapsed());
                 }
                 state.next_tick = Some(now + view::until_next_second(state.elapsed()));
             }
@@ -373,8 +377,9 @@ impl Tray {
         }
         menu.append_items(&[&PredefinedMenuItem::separator(), &quit])?;
 
+        let look = platform::tray_look();
         let icons = Icons {
-            idle: ring_icon(IDLE_COLOR)?,
+            idle: idle_icon(look)?,
             meeting: dot_icon([232, 160, 0])?,
             recording: dot_icon([224, 45, 38])?,
         };
@@ -398,7 +403,9 @@ impl Tray {
             install_item,
             quit,
             icons,
+            look,
             shown: None,
+            tooltip: format!("{APP_NAME} - Starting"),
             record_command: None,
         };
         tray.show_icon(Activity::Idle);
@@ -412,10 +419,43 @@ impl Tray {
         self.record_item.set_enabled(summary.record_command.is_some());
         self.record_command = summary.record_command;
         self.auto_item.set_checked(status.auto_enabled);
+        self.follow_look();
         self.show_icon(summary.activity);
-        let _ = self.icon.set_tooltip(Some(summary.tooltip));
+        // While recording, the running time follows at once where it goes in the tooltip.
+        self.tooltip = summary.tooltip;
+        let _ = self.icon.set_tooltip(Some(&self.tooltip));
         if !status.is_recording() {
             self.icon.set_title(None::<&str>);
+        }
+    }
+
+    /// Shows how long the recording has been running, next to the icon or in its tooltip.
+    fn show_running_time(&self, elapsed: Duration) {
+        if self.look.text_beside_icon {
+            self.icon.set_title(Some(view::elapsed_label(elapsed)));
+        } else {
+            let _ = self
+                .icon
+                .set_tooltip(Some(view::tooltip_while_recording(&self.tooltip, elapsed)));
+        }
+    }
+
+    /// Redraws the idle icon if what reads on the menu bar or the taskbar has changed.
+    fn follow_look(&mut self) {
+        let look = platform::tray_look();
+        if look == self.look {
+            return;
+        }
+        match idle_icon(look) {
+            Ok(idle) => {
+                self.icons.idle = idle;
+                self.look = look;
+                if self.shown == Some(Activity::Idle) {
+                    self.shown = None;
+                    self.show_icon(Activity::Idle);
+                }
+            }
+            Err(error) => log::warn!("cannot redraw the notification-area icon: {error:#}"),
         }
     }
 
@@ -428,16 +468,9 @@ impl Tray {
             Activity::Meeting => &self.icons.meeting,
             Activity::Recording => &self.icons.recording,
         };
-        // On macOS the idle ring follows the menu bar's color, like the system's own icons.
-        #[cfg(target_os = "macos")]
-        let shown = if activity == Activity::Idle {
-            self.icon.set_icon_templated(Some(icon.clone()))
-        } else {
-            self.icon.set_icon(Some(icon.clone()))
-        };
-        #[cfg(not(target_os = "macos"))]
-        let shown = self.icon.set_icon(Some(icon.clone()));
-        match shown {
+        // An idle ring without a color of its own follows the menu bar's, like the system's own icons.
+        let template = activity == Activity::Idle && self.look.idle_color.is_none();
+        match platform::set_tray_icon(&self.icon, icon.clone(), template) {
             Ok(()) => self.shown = Some(activity),
             Err(error) => log::warn!("cannot change the notification-area icon: {error}"),
         }
@@ -467,14 +500,12 @@ fn open(path: &Path) {
     }
 }
 
-/// The idle ring. On macOS only its shape counts (it is drawn as a template); elsewhere it is grey, which reads on
-/// both light and dark taskbars.
-const IDLE_COLOR: [u8; 3] = if cfg!(target_os = "macos") {
-    [0, 0, 0]
-} else {
-    [140, 140, 140]
-};
 const ICON_SIZE: u32 = 32;
+
+/// The idle ring, in the color that reads on the taskbar, or as a template whose shape alone counts.
+fn idle_icon(look: TrayLook) -> anyhow::Result<Icon> {
+    ring_icon(look.idle_color.unwrap_or([0, 0, 0]))
+}
 
 /// A filled circle in the given color.
 fn dot_icon(color: [u8; 3]) -> anyhow::Result<Icon> {

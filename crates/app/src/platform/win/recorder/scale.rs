@@ -1,8 +1,8 @@
 //! Fits captured video to the size being encoded.
 //!
-//! The encode size is decided when recording starts and cannot change midway. If the window size changes,
-//! or the recording target moves to another window, the picture is scaled with its aspect ratio kept
-//! and the margins are filled with black.
+//! The encode size is decided when recording starts and cannot change midway. Where a picture goes is decided by
+//! [`placement`]: a picture of that size, or one pixel larger, is copied; any other is scaled with its aspect ratio
+//! kept and the margins filled with black.
 
 use std::mem::ManuallyDrop;
 
@@ -20,6 +20,7 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_RATIONAL;
 use windows::core::Interface;
 
 use super::video::{Frame, GraphicsDevice};
+use crate::recording::fit::{Placement, Rect, placement};
 
 pub struct Scaler {
     graphics: GraphicsDevice,
@@ -53,15 +54,21 @@ impl Scaler {
         }
     }
 
-    /// Turns `frame` into a texture at the encode size and returns it.
+    /// Copies `frame` into a new texture at the encode size and returns it. The encoder may still read the texture
+    /// after this returns, so it is never written again.
     pub fn fit(&mut self, frame: &Frame) -> anyhow::Result<ID3D11Texture2D> {
-        if (frame.width, frame.height) == (self.width, self.height) {
-            return Ok(frame.texture.clone());
-        }
+        let target = self.graphics.create_texture(self.width, self.height)?;
+        let rect = match placement((frame.width, frame.height), (self.width, self.height)) {
+            Placement::Whole | Placement::Crop => {
+                self.copy_top_left(frame, &target);
+                return Ok(target);
+            }
+            Placement::Scale(rect) => rect,
+        };
 
-        let target = self.black()?;
+        self.clear(&target)?;
         if !self.processor_unavailable {
-            match self.scale(frame, &target) {
+            match self.scale(frame, &target, rect) {
                 Ok(()) => return Ok(target),
                 Err(error) => {
                     log::warn!("cannot scale video on the GPU; falling back to cropping: {error:#}");
@@ -69,8 +76,12 @@ impl Scaler {
                 }
             }
         }
+        self.copy_top_left(frame, &target);
+        Ok(target)
+    }
 
-        // Align the top-left corner and cut off whatever sticks out.
+    /// Aligns the top-left corners and cuts off whatever sticks out.
+    fn copy_top_left(&self, frame: &Frame, target: &ID3D11Texture2D) {
         let region = D3D11_BOX {
             left: 0,
             top: 0,
@@ -82,34 +93,44 @@ impl Scaler {
         unsafe {
             self.graphics
                 .context
-                .CopySubresourceRegion(&target, 0, 0, 0, 0, &frame.texture, 0, Some(&region))
+                .CopySubresourceRegion(target, 0, 0, 0, 0, &frame.texture, 0, Some(&region))
         };
-        Ok(target)
     }
 
     /// A solid black texture at the encode size.
     pub fn black(&self) -> anyhow::Result<ID3D11Texture2D> {
         let texture = self.graphics.create_texture(self.width, self.height)?;
+        self.clear(&texture)?;
+        Ok(texture)
+    }
+
+    fn clear(&self, texture: &ID3D11Texture2D) -> anyhow::Result<()> {
         unsafe {
             let mut view = None;
             self.graphics
                 .device
-                .CreateRenderTargetView(&texture, None, Some(&mut view))?;
+                .CreateRenderTargetView(texture, None, Some(&mut view))?;
             let view = view.context("cannot create the render target")?;
             self.graphics
                 .context
                 .ClearRenderTargetView(&view, &[0.0, 0.0, 0.0, 1.0]);
         }
-        Ok(texture)
+        Ok(())
     }
 
-    fn scale(&mut self, frame: &Frame, target: &ID3D11Texture2D) -> anyhow::Result<()> {
+    fn scale(&mut self, frame: &Frame, target: &ID3D11Texture2D, rect: Rect) -> anyhow::Result<()> {
         let source = (frame.width, frame.height);
         if self.processor.as_ref().is_none_or(|p| p.source != source) {
             self.processor = Some(Processor::create(&self.graphics, source, (self.width, self.height))?);
         }
         let processor = self.processor.as_ref().expect("just created above");
-        processor.blt(frame, target, fit_rect(source, (self.width, self.height)))
+        let destination = RECT {
+            left: rect.left as i32,
+            top: rect.top as i32,
+            right: rect.right as i32,
+            bottom: rect.bottom as i32,
+        };
+        processor.blt(frame, target, destination)
     }
 }
 
@@ -215,46 +236,5 @@ impl Processor {
             result?;
             Ok(())
         }
-    }
-}
-
-/// The rectangle, centered, that results from fitting `source` into `target` while keeping the aspect ratio.
-fn fit_rect(source: (u32, u32), target: (u32, u32)) -> RECT {
-    let scale = f64::min(target.0 as f64 / source.0 as f64, target.1 as f64 / source.1 as f64);
-    let width = ((source.0 as f64 * scale).round() as i32).clamp(1, target.0 as i32);
-    let height = ((source.1 as f64 * scale).round() as i32).clamp(1, target.1 as i32);
-    let left = (target.0 as i32 - width) / 2;
-    let top = (target.1 as i32 - height) / 2;
-    RECT {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::fit_rect;
-
-    fn rect(source: (u32, u32), target: (u32, u32)) -> (i32, i32, i32, i32) {
-        let r = fit_rect(source, target);
-        (r.left, r.top, r.right, r.bottom)
-    }
-
-    #[test]
-    fn same_aspect_ratio_fills_the_whole_target() {
-        assert_eq!(rect((1280, 720), (1920, 1080)), (0, 0, 1920, 1080));
-        assert_eq!(rect((3840, 2160), (1920, 1080)), (0, 0, 1920, 1080));
-    }
-
-    #[test]
-    fn wide_video_gets_margins_above_and_below() {
-        assert_eq!(rect((2000, 500), (1000, 1000)), (0, 375, 1000, 625));
-    }
-
-    #[test]
-    fn tall_video_gets_margins_left_and_right() {
-        assert_eq!(rect((500, 1000), (1000, 1000)), (250, 0, 750, 1000));
     }
 }

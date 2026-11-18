@@ -1,0 +1,29 @@
+[package]
+name = "avsync"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Measures how far sound and picture are apart in a screen recording (Windows only)"
+
+[dependencies]
+anyhow = "1"
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+# Not part of the app's workspace: it is built and run by hand.
+[workspace]

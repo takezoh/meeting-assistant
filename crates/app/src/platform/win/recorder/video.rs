@@ -14,7 +14,7 @@ use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
     D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice,
     ID3D11Device, ID3D11DeviceContext, ID3D11Multithread, ID3D11Texture2D,
 };
@@ -56,6 +56,15 @@ impl GraphicsDevice {
             let (device, context): (ID3D11Device, ID3D11DeviceContext) = (device.unwrap(), context.unwrap());
             // Because capture, duplication and the encoder use the same device from different threads.
             let _ = context.cast::<ID3D11Multithread>()?.SetMultithreadProtected(true);
+            if let Ok(description) = device
+                .cast::<IDXGIDevice>()
+                .and_then(|device| device.GetAdapter())
+                .and_then(|adapter| adapter.GetDesc())
+            {
+                let name = &description.Description;
+                let length = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+                log::info!("graphics adapter: {}", String::from_utf16_lossy(&name[..length]));
+            }
             Ok(Self { device, context })
         }
     }
@@ -89,17 +98,17 @@ pub enum CaptureTarget<'a> {
     Display(Option<&'a str>),
 }
 
-/// One captured picture. The texture is not modified afterwards.
+/// One captured picture. Its texture belongs to the capture and is reused once the picture has been handled, so
+/// whoever handles it copies what it needs.
 pub struct Frame {
     pub texture: ID3D11Texture2D,
+    /// The part of the texture that holds the picture.
     pub width: u32,
     pub height: u32,
 }
 
 /// The capture. Keeps only the latest of the arriving pictures.
 pub struct ScreenCapture {
-    graphics_device: ID3D11Device,
-    context: ID3D11DeviceContext,
     winrt_device: IDirect3DDevice,
     item: GraphicsCaptureItem,
     pool: Direct3D11CaptureFramePool,
@@ -163,8 +172,6 @@ impl ScreenCapture {
             session.StartCapture().context("cannot start capture")?;
 
             Ok(Self {
-                graphics_device: graphics.device.clone(),
-                context: graphics.context.clone(),
                 winrt_device,
                 item,
                 pool,
@@ -185,12 +192,14 @@ impl ScreenCapture {
         self.initial_size
     }
 
-    /// If a new picture has arrived since the previous call, duplicates it into a dedicated texture and returns it.
+    /// If a new picture has arrived since the previous call, hands it to `handle` and returns what that returns.
+    /// The picture goes back to the capture right after, so `handle` copies what it needs; the copy is queued on the
+    /// same device before the capture can draw into that buffer again.
     ///
     /// After the window is closed, keeps returning `None` as if there were no new pictures
     /// (a window closing before the meeting ends is normal, so it is not treated as a failure).
     /// Errors if the display is gone.
-    pub fn take_frame(&mut self) -> anyhow::Result<Option<Frame>> {
+    pub fn take_frame<T>(&mut self, handle: impl FnOnce(&Frame) -> anyhow::Result<T>) -> anyhow::Result<Option<T>> {
         if self.closed.load(Ordering::Relaxed) {
             anyhow::ensure!(self.is_window, "the display being captured is gone");
             return Ok(None);
@@ -198,13 +207,17 @@ impl ScreenCapture {
         let Some(frame) = self.latest.lock().unwrap().take() else {
             return Ok(None);
         };
-        let copied = self.copy_frame(&frame);
+        let handled = self.handle_frame(&frame, handle);
         // Return the buffer to the pool right away.
         let _ = frame.Close();
-        copied.map(Some)
+        handled.map(Some)
     }
 
-    fn copy_frame(&mut self, frame: &Direct3D11CaptureFrame) -> anyhow::Result<Frame> {
+    fn handle_frame<T>(
+        &mut self,
+        frame: &Direct3D11CaptureFrame,
+        handle: impl FnOnce(&Frame) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
         unsafe {
             let content = frame.ContentSize()?;
             // The first picture right after a size change is in a buffer of the old size.
@@ -213,22 +226,8 @@ impl ScreenCapture {
             let height = content.Height.min(self.pool_size.Height).max(1) as u32;
 
             let access: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
-            let source: ID3D11Texture2D = access.GetInterface()?;
-            let texture = GraphicsDevice {
-                device: self.graphics_device.clone(),
-                context: self.context.clone(),
-            }
-            .create_texture(width, height)?;
-            let region = D3D11_BOX {
-                left: 0,
-                top: 0,
-                front: 0,
-                right: width,
-                bottom: height,
-                back: 1,
-            };
-            self.context
-                .CopySubresourceRegion(&texture, 0, 0, 0, 0, &source, 0, Some(&region));
+            let texture: ID3D11Texture2D = access.GetInterface()?;
+            let handled = handle(&Frame { texture, width, height })?;
 
             if content != self.pool_size && content.Width > 0 && content.Height > 0 {
                 // From the next picture on, pictures arrive at the new size.
@@ -236,7 +235,7 @@ impl ScreenCapture {
                     .Recreate(&self.winrt_device, PIXEL_FORMAT, POOL_BUFFERS, content)?;
                 self.pool_size = content;
             }
-            Ok(Frame { texture, width, height })
+            Ok(handled)
         }
     }
 }

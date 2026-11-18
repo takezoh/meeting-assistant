@@ -58,9 +58,9 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Records the main display and the default audio device for 5 seconds and checks that a file is produced.
+/// Records the main display and the default audio devices for `length` and checks that a file is produced.
 /// If `keep` is given the file is kept there; otherwise it is deleted.
-pub fn self_test(config: &Config, keep: Option<PathBuf>) -> anyhow::Result<()> {
+pub fn self_test(config: &Config, keep: Option<PathBuf>, length: Duration) -> anyhow::Result<()> {
     let output_path = keep
         .clone()
         .unwrap_or_else(|| std::env::temp_dir().join(format!("meeting-assistant-selftest-{}.mp4", std::process::id())));
@@ -74,8 +74,8 @@ pub fn self_test(config: &Config, keep: Option<PathBuf>) -> anyhow::Result<()> {
     };
 
     recorder.start(&request).context("cannot start recording")?;
-    println!("Recording started. Recording for 5 seconds.");
-    std::thread::sleep(Duration::from_secs(5));
+    println!("Recording started. Recording for {} seconds.", length.as_secs());
+    std::thread::sleep(length);
     let failure = recorder.take_failure();
     let stopped = recorder.stop();
 

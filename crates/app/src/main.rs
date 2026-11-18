@@ -35,6 +35,7 @@ mod worker;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use meeting_assistant_core::Config;
 
@@ -120,7 +121,9 @@ fn main() -> ExitCode {
         }
         Command::Quit => quit(&reporter),
         Command::Probe => load(&config_path).and_then(|config| diagnostics::probe(&config)),
-        Command::SelfTest(keep) => load(&config_path).and_then(|config| diagnostics::self_test(&config, keep)),
+        Command::SelfTest { keep, seconds } => {
+            load(&config_path).and_then(|config| diagnostics::self_test(&config, keep, Duration::from_secs(seconds)))
+        }
         Command::Run => load(&config_path).and_then(|config| run_tray(config, config_path, log_directory)),
     };
     match result {

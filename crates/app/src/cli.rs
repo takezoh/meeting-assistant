@@ -12,7 +12,9 @@ Usage: meeting-assistant [--config <path>] [<command>]
   --uninstall          Uninstall (the config file, logs, and recordings are kept)
   --quit               Ask the running resident app to finalize its recording and exit
   --probe              Show the current signals and the verdict of each rule
-  --self-test [<path>] Check that a 5-second recording works (keeps the recording if <path> is given)
+  --self-test [<path> [<seconds>]]
+                       Check that a recording works, for 5 seconds unless <seconds> is given
+                       (keeps the recording if <path> is given)
 
   --config <path>      Set the config file location (logs go to the logs folder next to it)
 ";
@@ -26,8 +28,14 @@ pub enum Command {
     Quit,
     Probe,
     /// Recording self-test. If a location is given, the recording is kept there.
-    SelfTest(Option<PathBuf>),
+    SelfTest {
+        keep: Option<PathBuf>,
+        seconds: u64,
+    },
 }
+
+/// Length of a self-test recording when none is given.
+pub const SELF_TEST_SECONDS: u64 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
@@ -63,7 +71,21 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Invocation, 
             "--uninstall" => Command::Uninstall,
             "--quit" => Command::Quit,
             "--probe" => Command::Probe,
-            "--self-test" => Command::SelfTest(rest.next_if(|next| !next.starts_with("--")).map(PathBuf::from)),
+            "--self-test" => {
+                let keep = rest.next_if(|next| !next.starts_with("--")).map(PathBuf::from);
+                // A length can follow only a location, so that a number alone stays a location.
+                let seconds = match keep {
+                    Some(_) => rest
+                        .next_if(|next| !next.starts_with("--"))
+                        .map(|seconds| seconds.parse().ok().filter(|&seconds| seconds > 0).ok_or(UsageError))
+                        .transpose()?,
+                    None => None,
+                };
+                Command::SelfTest {
+                    keep,
+                    seconds: seconds.unwrap_or(SELF_TEST_SECONDS),
+                }
+            }
             _ => return Err(UsageError),
         };
         // Only one command is allowed.
@@ -100,15 +122,37 @@ mod tests {
         assert_eq!(parse_words(&["--uninstall"]), command(Command::Uninstall));
         assert_eq!(parse_words(&["--quit"]), command(Command::Quit));
         assert_eq!(parse_words(&["--probe"]), command(Command::Probe));
-        assert_eq!(parse_words(&["--self-test"]), command(Command::SelfTest(None)));
+        assert_eq!(
+            parse_words(&["--self-test"]),
+            command(Command::SelfTest {
+                keep: None,
+                seconds: SELF_TEST_SECONDS
+            })
+        );
     }
 
     #[test]
     fn self_test_accepts_a_location_to_keep_the_recording() {
         assert_eq!(
             parse_words(&["--self-test", "out.mp4"]),
-            command(Command::SelfTest(Some("out.mp4".into())))
+            command(Command::SelfTest {
+                keep: Some("out.mp4".into()),
+                seconds: SELF_TEST_SECONDS
+            })
         );
+    }
+
+    #[test]
+    fn self_test_accepts_a_length_after_the_location() {
+        assert_eq!(
+            parse_words(&["--self-test", "out.mp4", "600"]),
+            command(Command::SelfTest {
+                keep: Some("out.mp4".into()),
+                seconds: 600
+            })
+        );
+        assert_eq!(parse_words(&["--self-test", "out.mp4", "0"]), Err(UsageError));
+        assert_eq!(parse_words(&["--self-test", "out.mp4", "ten"]), Err(UsageError));
     }
 
     #[test]
@@ -124,7 +168,10 @@ mod tests {
             parse_words(&["--self-test", "--config", "c.toml"]),
             Ok(Invocation::Command {
                 config: Some("c.toml".into()),
-                command: Command::SelfTest(None)
+                command: Command::SelfTest {
+                    keep: None,
+                    seconds: SELF_TEST_SECONDS
+                }
             })
         );
     }

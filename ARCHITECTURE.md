@@ -43,6 +43,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `crates/app` | The `meeting-assistant` executable: adapters, platform code, composition, UI |
 | `extension` | Chrome/Edge MV3 extension: call detection and tab recording. Embedded in the executable and written out at install time |
 | `tools/tabcapture-probe` | A throwaway extension used once to verify that the browser switch permits tab capture without a user gesture |
+| `tools/avsync` | A Windows tool, outside the workspace, that measures how far sound and picture are apart in a recording of the screen |
 
 ## Component ownership
 
@@ -66,6 +67,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `cli` | Argument parsing into an `Invocation`. Pure |
 | `install` | The install, update and uninstall procedures, written against the `InstallSystem` port |
 | `recording/plan` | From a request and configuration: which video and audio sources to open and the output format. Pure |
+| `recording/fit` | Where a captured picture of another size goes on the fixed canvas: copied whole, cropped by the pixel an odd size loses, or scaled. Pure |
 | `recording/timeline` | Frame and audio timestamps and pacing. Pure |
 | `recording/mixer` | Mixing 16-bit PCM inputs. Pure |
 | `recording/pipeline` | How one recording proceeds: open, first picture, write loop, retarget, finalize. Uses `CaptureBackend`, `Pacer` and `Control` |
@@ -75,8 +77,8 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `browser/server`, `endpoint`, `relay` | The loopback control listener and the per-recording WebSocket upload listener, the published endpoint file, and the relay the browser launches |
 | `linked` | `LinkedSignalSource` and `LinkedRecorder`: combine the OS path and the extension path behind the core ports, using `BrowserPort` |
 | `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
-| `panel/view` | What the status panel and the tray icon show, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
-| `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it |
+| `panel/view` | What the status panel and the tray icon show, the tooltip and running time, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
+| `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it. One page for both platforms; it follows the macOS or the Windows 11 design through a mark the platform gives it |
 | `adapters` | Real implementations of the core ports: system clock, recordings folder, sleeping, configuration file |
 | `platform/win`, `platform/mac` | The only modules that call operating system APIs |
 | `composition`, `tray`, `main`, `diagnostics`, `logging`, `bundle` | Wiring of real implementations, the tray UI, entry point, `--probe`/`--self-test`, the log file, embedded extension files |
@@ -88,7 +90,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `PlatformSignalSource` | Processes with an active capture session, the process tree, the list of top-level windows, default device state |
 | `PlatformRecorder` | A `CaptureBackend`: open a window or display capture, take a picture, scale it, open audio inputs, write and finalize the file |
 | `PlatformInstaller` | An `InstallSystem`: copy and remove files, registry or plist entries, native-host registration, shortcuts or launcher apps |
-| Other | Single-instance guard, quit requests, session-end notification, toasts and dialogs, the status panel's window style (transparency and material on macOS, rounded corners on Windows), whether the screen can be recorded |
+| Other | Single-instance guard, quit requests, session-end notification, toasts and dialogs, the status panel's window style (the system material behind a transparent page and rounded corners: the popover material on macOS, the acrylic of flyouts on Windows), the accent color, how the tray icon follows the menu bar or the taskbar and whether text can be shown next to it, what the event loop needs before it runs, whether the screen can be recorded |
 
 On Windows these use WASAPI session enumeration, Windows.Graphics.Capture, the Direct3D 11 video processor, WASAPI process loopback and the Media Foundation sink writer. On macOS they use Core Audio process objects, libproc and CGWindowList for signals; ScreenCaptureKit for window, display and app-audio capture (the system scales pictures to the recording's size); AVAudioEngine for the microphone; and AVAssetWriter for the file. Float audio is converted and resampled by the pure `recording::pcm`. [The macOS capture ADR](docs/adr/adr-20261118-capture-on-macos-with-screencapturekit-a.md) records why.
 
@@ -105,11 +107,11 @@ The [meeting detection design](docs/design/design-meeting-detection.md) holds th
 
 ## Status panel
 
-`worker` publishes the coordinator's status on every change. `tray` keeps the latest one and hands it to `panel::view`, which produces the tray's texts and the panel's content as JSON; the page renders it and posts the user's clicks back as small JSON messages, which `panel::view` turns into worker commands. The page is embedded in the executable, loads nothing from elsewhere and cannot navigate. See [ADR: web-view status panel](docs/adr/adr-20261118-show-status-and-controls-in-a-web-view-p.md).
+`worker` publishes the coordinator's status on every change. `tray` keeps the latest one and hands it to `panel::view`, which produces the tray's texts and the panel's content as JSON; `tray` has no platform branches and asks `platform` how the icon and the running time are shown; the page renders it and posts the user's clicks back as small JSON messages, which `panel::view` turns into worker commands. The page is embedded in the executable, loads nothing from elsewhere and cannot navigate. See [ADR: web-view status panel](docs/adr/adr-20261118-show-status-and-controls-in-a-web-view-p.md).
 
 ## Recording on the OS path
 
-`ThreadedRecorder::start` spawns a thread, creates the backend inside it (capture objects are bound to the thread that creates them) and waits up to 20 seconds for the first picture. The pipeline then writes one video frame and the matching block of mixed audio per frame interval, using the timeline so that both carry the same clock. The canvas size is fixed at start; later pictures are scaled into it. The file is fragmented MP4, so what has been written stays playable if the process dies. See the [capture pipeline design](docs/design/design-capture-pipeline.md).
+`ThreadedRecorder::start` spawns a thread, creates the backend inside it (capture objects are bound to the thread that creates them) and waits up to 20 seconds for the first picture. The pipeline then writes one video frame per frame interval and, one step later when it has been captured, the mixed audio of that interval, using the timeline so that both carry the same clock. Audio captured while the recording was being prepared is dropped, and each input keeps only as much queued as mixing needs, so sound does not lag the picture. The canvas size is fixed at start; later pictures are cropped by the pixel an odd size loses or scaled into it. The file is fragmented MP4, so what has been written stays playable if the process dies. See the [capture pipeline design](docs/design/design-capture-pipeline.md).
 
 ## Recording through the extension
 
@@ -120,7 +122,7 @@ The app listens on `127.0.0.1` at a random port and writes the port and a random
 ## Correctness boundaries
 
 - **Core has no effects.** `crates/core` does not use the file system, the clock, threads, environment or OS crates outside `fakes` and tests. `crates/core/tests/architecture.rs` reads the sources and fails on a forbidden dependency.
-- **OS APIs stay in `platform`.** `crates/app/src/architecture.rs` fails if an OS crate (`windows`, `libc`, `signal_hook`, `notify_rust`, `window_vibrancy`) or a `tao` platform extension is used outside `platform`, if a deciding module (`cli`, `install`, `linked`, `worker`, `panel/view`, `browser/protocol`, `browser/hub`, `recording/plan`, `timeline`, `mixer`, `pipeline`) touches files, sockets, processes, the environment or an adapter, or if the two platform implementations stop exposing the same names.
+- **OS APIs stay in `platform`.** `crates/app/src/architecture.rs` fails if an OS crate (`windows`, `libc`, `signal_hook`, `notify_rust`, `window_vibrancy`) or a `tao` platform extension is used outside `platform`, if a deciding module (`cli`, `install`, `linked`, `worker`, `panel/view`, `browser/protocol`, `browser/hub`, `recording/plan`, `fit`, `timeline`, `mixer`, `pipeline`) touches files, sockets, processes, the environment or an adapter, or if the two platform implementations stop exposing the same names.
 - **One recording at a time.** The coordinator holds at most one recording; the hub holds at most one tab recording.
 - **Scope is never widened silently.** In app scope a missing window gives a black picture and a failed app-audio capture gives no app audio. Neither falls back to the display or the output device.
 - **A started file is finalized.** Stop, drop of the recorder, quit, logoff and shutdown all reach `finalize`. On macOS a logout or a quit sent by another app ends the tray's event loop instead of sending a signal, so the tray also finalizes on the loop's last event. A recording that fails keeps its partial file.

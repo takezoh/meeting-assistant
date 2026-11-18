@@ -35,7 +35,9 @@ target\release\meeting-assistant.exe --self-test out.mp4
 target\release\meeting-assistant.exe --probe
 ```
 
-`--self-test` records five seconds of the primary display with the default audio devices; on macOS it reports that native capture is not implemented, and the extension path is checked with a browser instead. `--probe` prints the processes using the microphone, the windows found and the verdict of each rule; use it when changing rules or signal collection.
+`--self-test` records five seconds of the primary display with the default audio devices, or as many seconds as follow the path (`--self-test out.mp4 600`) for a long measurement. On Windows the log, in `logs` next to the configuration file, names the graphics adapter and the encoder chosen, and at the end reports how the write loop kept its schedule, what each audio input dropped or missed, and how many samples the encoder had not finished. `--probe` prints the processes using the microphone, the windows found and the verdict of each rule; use it when changing rules or signal collection.
+
+To measure how far sound and picture are apart in a recording, run `tools/avsync` next to a long self-test; its [README](../tools/avsync/README.md) describes the procedure and what the numbers include.
 
 An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder.
 

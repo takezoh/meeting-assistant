@@ -2,11 +2,12 @@
 id: note-20261118-windows-recording-performance-handoff
 kind: note
 title: Windows recording performance handoff
-status: draft
+status: archived
 created: '2026-11-18'
 topic: performance
-summary: Handoff for improving the Windows capture and encode path (A/V offset, encoder input format, per-frame
-  GPU allocations, odd sizes, canvas cap). Found by reading the source on a Mac; nothing was run on Windows.
+summary: Handoff for improving the Windows capture and encode path (A/V offset, encoder
+  input format, per-frame GPU allocations, odd sizes, canvas cap). Found by reading
+  the source on a Mac; nothing was run on Windows.
 tags: []
 owners: []
 relations:
@@ -20,6 +21,7 @@ source_paths:
 - crates/app/src/platform/win/recorder/video.rs
 - crates/app/src/platform/win/recorder/scale.rs
 - crates/app/src/platform/win/recorder/writer.rs
+updated: '2026-11-18'
 ---
 
 ## Summary
@@ -82,3 +84,8 @@ Read this note, then [the capture pipeline design](../design/design-capture-pipe
 - Whether hardware encoders on the target machines accept ARGB input directly, which would make the NV12 step smaller.
 - The exact drift between the audio clock and QPC on real devices.
 - Whether to cap the canvas size.
+
+
+{% transition from="draft" to="archived" date="2026-11-18" %}
+Followed up on 2026-11-18 on Windows: steps 1-4 and the drift following of step 6 are implemented; results are in note-20261118-windows-recording-measured, steps 5 and 7 are open issues.
+{% /transition %}

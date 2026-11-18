@@ -13,13 +13,32 @@ use crate::worker::Command;
 
 const PAGE: &str = include_str!("panel.html");
 
+/// Whose design the page follows, so that the panel looks like the platform's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code, reason = "each platform builds the variant of its own design")]
+pub enum Design {
+    MacOs,
+    Windows,
+}
+
+/// The user's accent color, as the platform uses it on a light and on a dark background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Accent {
+    pub light: [u8; 3],
+    pub dark: [u8; 3],
+}
+
 /// How the platform draws the panel's window, which the page adapts to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Surface {
-    /// The window shows the system's translucent material behind a see-through page.
+    pub design: Design,
+    /// The window shows the system's translucent material (the macOS popover material, the Windows acrylic of
+    /// flyouts) behind a see-through page.
     pub translucent: bool,
     /// The system rounds the window's corners; otherwise the page draws a rounded edge on a transparent window.
     pub rounded_by_system: bool,
+    /// The user's accent color, where the page should follow it; otherwise the page uses the platform's default.
+    pub accent: Option<Accent>,
 }
 
 impl Surface {
@@ -32,11 +51,23 @@ impl Surface {
 
 /// The panel's page, marked for the surface it is shown on.
 pub fn page(surface: Surface) -> String {
-    let material = if surface.translucent { "vibrancy" } else { "solid" };
+    let design = match surface.design {
+        Design::MacOs => "macos",
+        Design::Windows => "windows",
+    };
+    let material = if surface.translucent { "material" } else { "solid" };
     let corners = if surface.rounded_by_system { "window" } else { "css" };
+    let hex = |[r, g, b]: [u8; 3]| format!("#{r:02x}{g:02x}{b:02x}");
+    let accent = surface.accent.map_or_else(String::new, |accent| {
+        format!(
+            r#" style="--accent-light: {}; --accent-dark: {}""#,
+            hex(accent.light),
+            hex(accent.dark)
+        )
+    });
     PAGE.replacen(
         r#"data-surface="solid""#,
-        &format!(r#"data-surface="{material}" data-corners="{corners}""#),
+        &format!(r#"data-design="{design}" data-surface="{material}" data-corners="{corners}"{accent}"#),
         1,
     )
 }
@@ -346,6 +377,22 @@ pub fn tray_summary(status: &CoordinatorStatus, screen_capture: bool) -> TraySum
         record_label,
         record_command,
     }
+}
+
+/// How the tray icon shows the state on this platform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrayLook {
+    /// The color of the idle ring, chosen to read on the taskbar. `None` draws it as a template that the system tints
+    /// like the rest of the menu bar.
+    pub idle_color: Option<[u8; 3]>,
+    /// Text can be shown next to the icon (the macOS menu bar). Otherwise the recording's running time goes in the
+    /// tooltip.
+    pub text_beside_icon: bool,
+}
+
+/// The tooltip while recording, with the running time added where it is not shown next to the icon.
+pub fn tooltip_while_recording(tooltip: &str, elapsed: Duration) -> String {
+    format!("{tooltip} ({})", elapsed_label(elapsed))
 }
 
 /// How long the current recording has been running, followed from the statuses the UI receives. Time is passed in.
@@ -739,13 +786,40 @@ mod tests {
     #[test]
     fn the_page_is_marked_for_the_surface_it_is_shown_on() {
         let page = page(Surface {
+            design: Design::MacOs,
             translucent: true,
             rounded_by_system: false,
+            accent: None,
         });
-        assert!(page.contains(r#"<html lang="en" data-surface="vibrancy" data-corners="css">"#));
+        assert!(page.contains(r#"<html lang="en" data-design="macos" data-surface="material" data-corners="css">"#));
         // Everything the page needs is inside it; it loads nothing from elsewhere.
         assert!(page.contains("default-src 'none'"));
         assert!(!page.contains("src=\"http") && !page.contains("href=\"http"));
+    }
+
+    #[test]
+    fn the_page_follows_the_windows_design_and_the_users_accent_color() {
+        let page = page(Surface {
+            design: Design::Windows,
+            translucent: false,
+            rounded_by_system: true,
+            accent: Some(Accent {
+                light: [0, 95, 184],
+                dark: [96, 205, 255],
+            }),
+        });
+        assert!(page.contains(
+            r#"data-design="windows" data-surface="solid" data-corners="window" style="--accent-light: #005fb8; --accent-dark: #60cdff">"#
+        ));
+    }
+
+    #[test]
+    fn the_tooltip_carries_the_running_time_where_it_is_not_beside_the_icon() {
+        let summary = tray_summary(&two_meetings(), true);
+        assert_eq!(
+            tooltip_while_recording(&summary.tooltip, Duration::from_secs(754)),
+            "Meeting Assistant - Recording: Zoom (12:34)"
+        );
     }
 
     #[test]

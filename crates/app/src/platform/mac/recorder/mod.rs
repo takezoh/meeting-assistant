@@ -147,6 +147,13 @@ impl CaptureBackend for MacBackend {
         Ok(black)
     }
 
+    fn start_writing(&mut self, audio: &mut Audio) {
+        match audio {
+            Audio::Stream(capture) => capture.start_writing(),
+            Audio::Microphone(microphone) => microphone.start_writing(),
+        }
+    }
+
     fn mix_audio(&mut self, audio: &mut Audio, out: &mut [i16]) {
         match audio {
             Audio::Stream(capture) => capture.mix_into(out),

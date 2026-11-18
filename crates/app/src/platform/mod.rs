@@ -17,7 +17,9 @@
 //! - `show_error` / `show_info`: reports the result in a dialog when there is no output
 //! - `notify`: shows a notification
 //! - `panel_window` / `style_panel`: give the status panel's window the platform's look (transparency, material,
-//!   rounded corners)
+//!   rounded corners, accent color)
+//! - `tray_look` / `set_tray_icon`: how the tray icon follows the menu bar or taskbar, and where the running time goes
+//! - `prepare_event_loop`: what the platform needs before the tray's event loop runs
 //! - `SCREEN_CAPTURE`: whether the whole screen can be recorded, so that the UI offers it only where it works
 
 #[cfg(windows)]
@@ -35,5 +37,6 @@ compile_error!("This OS is not supported yet. Add an implementation under crates
 
 pub use self::imp::{
     PlatformInstaller, PlatformRecorder, PlatformSignalSource, SCREEN_CAPTURE, SingleInstance, has_output, notify,
-    panel_window, recorder, request_quit, show_error, show_info, style_panel, watch_exit_requests,
+    panel_window, prepare_event_loop, recorder, request_quit, set_tray_icon, show_error, show_info, style_panel,
+    tray_look, watch_exit_requests,
 };

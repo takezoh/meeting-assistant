@@ -1,0 +1,33 @@
+# avsync
+
+Measures how far sound and picture are apart in a recording of the screen, on Windows. It was written to check the Windows recording path against [the performance handoff](../../docs/note/note-20261118-windows-recording-performance-handoff.md); the results are in the [measurement note](../../docs/note/note-20261118-windows-recording-measured.md).
+
+It is not part of the app's workspace and is built and run by hand:
+
+```
+cargo build --release --manifest-path tools/avsync/Cargo.toml
+```
+
+## Measure
+
+1. Start the stimulus. Once per period it turns a 160-pixel square in the top-left corner of the primary display from black to white and plays a 60 ms tone of 1 kHz on the default output device at the same moment:
+
+   ```
+   tools\avsync\target\release\avsync.exe stimulus 620 2.0
+   ```
+
+2. While it runs, record the display with the app, for example `meeting-assistant --config <dev config> --self-test out.mp4 600`. The self-test records the primary display and all output audio, so it captures both.
+
+3. Decode the file and pair each flash with its tone:
+
+   ```
+   tools\avsync\target\release\avsync.exe analyze out.mp4
+   ```
+
+   It prints each pair as `time_s,offset_ms`, where a positive offset means the sound comes later than the picture, then a summary and the median for each minute.
+
+## What the numbers include
+
+- The stimulus itself: drawing the square reaches the screen a display refresh or so after the tone is queued, and the tone waits about 15 ms in the output buffer. On the PC it was written on, a recording whose log showed 179 ms of sound queued at the start measured 146 ms, so the stimulus makes sound look about 30 ms earlier than it is. Compare runs with each other rather than reading one offset as absolute.
+- Frames: the picture side is quantized to the frame interval (33 ms at 30 fps), so single offsets jump by about one frame. Use the medians.
+- The square and the tone are seen and heard on the PC while it runs.

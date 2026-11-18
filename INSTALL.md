@@ -101,7 +101,8 @@ meeting-assistant --install            Install or update
 meeting-assistant --uninstall          Uninstall
 meeting-assistant --quit               Ask the running app to finalize its recording and exit
 meeting-assistant --probe              Print the current signals and how each rule evaluates
-meeting-assistant --self-test [<path>] Check that a five-second recording can be made
+meeting-assistant --self-test [<path> [<seconds>]]
+                                       Check that a recording can be made, five seconds unless <seconds> is given
 meeting-assistant --config <path> ...  Use another configuration file
 ```
 

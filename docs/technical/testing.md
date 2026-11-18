@@ -10,6 +10,7 @@ This reference describes each test suite, what it establishes and what it leaves
 | Core architecture test | `crates/core/tests/architecture.rs` | Core sources use no file system, network, process, environment, thread, clock or OS crate, and `Cargo.toml` does not depend on one |
 | App unit tests | Inline `mod tests` in `crates/app/src/` | Argument parsing, the install procedure against a fake `InstallSystem`, the recording plan, timeline and mixer, the pipeline and threaded recorder against a fake `CaptureBackend`, the extension protocol and hub, the recording upload listener driven by a real WebSocket client over loopback, the linked signal source and recorder, the worker loop, the configuration file adapter, the bundled extension files |
 | App architecture test | `crates/app/src/architecture.rs` | OS crates are used only under `platform`; deciding modules touch no file, socket, process, environment, platform or adapter; time and audio calculations use no clock or thread; both platform implementations expose the same names |
+| Windows adapter test | `crates/app/src/platform/win/recorder/mod.rs` | Ignored by default because it captures a real window and needs a desktop session: a window of odd size is cropped by one pixel, a resized window is scaled with black margins by the GPU, and both pictures are written to an MP4 |
 | macOS adapter tests | `crates/app/src/platform/mac/recorder/{mod,microphone}.rs` | On macOS only. AVAssetWriter finishes an MP4 from generated pictures and sound, without any permission. The microphone test is ignored by default because it opens the real microphone and needs its permission for the process running the tests: `cargo test -p meeting-assistant microphone -- --ignored --nocapture` |
 | Cross-platform type check | `cargo clippy --workspace --target aarch64-apple-darwin` from Windows, `--target x86_64-pc-windows-msvc` from macOS | The other platform's code compiles and passes lints. Nothing is executed. On macOS the whole suite also runs natively |
 
@@ -26,7 +27,8 @@ Production code is scanned by the architecture tests with everything after `#[cf
 
 | Not covered by tests | How it was or can be checked |
 | --- | --- |
-| Windows capture, scaling, audio loopback and the MP4 writer | `meeting-assistant --self-test <path>`, then inspect the file |
+| Windows capture, scaling, audio loopback and the MP4 writer | `meeting-assistant --self-test <path>`, then inspect the file. A real window of odd size, resized while captured, is checked by an ignored test: `cargo test -p meeting-assistant window_pictures -- --ignored` |
+| How far sound and picture are apart, and whether that drifts | `tools/avsync` with a long `--self-test <path> <seconds>`; see its [README](../../tools/avsync/README.md) |
 | Microphone-session and window enumeration | `meeting-assistant --probe` |
 | macOS window, display and app-audio capture with ScreenCaptureKit | `open -n -a "Meeting Assistant" --stdout <log> --args --self-test <path>`, then inspect the file. Started through `open`, macOS asks the permissions for the app; run directly from a terminal, it asks them for the terminal app instead |
 | The tray icon, menu, status panel window and page, toasts and dialogs | By hand; the panel's content and messages are tested in `panel/view.rs` |

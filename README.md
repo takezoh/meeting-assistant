@@ -12,7 +12,7 @@ Windows is supported. On macOS desktop apps and manual recording are implemented
 
 Join a call in Zoom, Microsoft Teams, Webex or Slack, or open Google Meet in Chrome or Edge. A few seconds after the call is live the tray icon turns red. When you leave, the recording is finalized as an MP4 (H.264 video, AAC audio) in `Videos\MeetingAssistant`, named after the start time and the rule that matched, for example `2026-11-17_14-00-05_Zoom.mp4`.
 
-The tray icon shows the state: a ring while idle, amber when a meeting is detected but not being recorded, red while recording. Click it to see every detected meeting and the recording's running time, and to record or stop each meeting.
+The tray icon shows the state: a ring while idle, amber when a meeting is detected but not being recorded, red while recording. Click it to see every detected meeting and the recording's running time, and to record or stop each meeting, in a panel that looks like the system's own: a popover on macOS, a Windows 11 flyout on Windows.
 
 ## Only the meeting is recorded
 
@@ -62,7 +62,7 @@ On macOS the same two commands install `~/Applications/Meeting Assistant.app`; s
 
 ## What to expect
 
-- A desktop-app meeting you join without ever using the microphone is not detected, and neither is a browser meeting without the extension. On Windows, record the entire screen from the status panel.
+- A desktop-app meeting you join without ever using the microphone is not detected, and neither is a browser meeting without the extension. Record the entire screen from the status panel instead.
 - Detection has been exercised with synthetic meetings on one PC, not with every meeting service. [Product](PRODUCT.md#what-is-not-established) lists what is and is not established.
 - [Troubleshooting](docs/usage/troubleshooting.md) covers a meeting that was not recorded, missing audio and a black picture.
 
