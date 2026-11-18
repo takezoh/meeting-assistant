@@ -122,7 +122,7 @@ target/release/meeting-assistant --install
 | Writes out the extension | `~/Library/Application Support/MeetingAssistant/extension` |
 | Starts the app at login | `~/Library/LaunchAgents/com.meeting-assistant.agent.plist`. macOS may notify you that a background item was added |
 | Registers the native-messaging host | The `NativeMessagingHosts` folder of Chrome and Edge, for each browser that has been used on this Mac |
-| Creates browser launchers | `~/Applications/Google Chrome (Meeting Assistant).app` and the Edge equivalent |
+| Creates browser launchers | `~/Applications/Google Chrome (Meeting Assistant).app` and the Edge equivalent, with the browser's own icon |
 | Starts the app | A circle appears in the menu bar |
 
 To start the app again after quitting it, open **Meeting Assistant** from Spotlight or `~/Applications`.

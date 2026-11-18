@@ -63,6 +63,59 @@ impl Browser {
     fn launcher(&self) -> PathBuf {
         applications_directory().join(format!("{} ({APP_NAME}).app", self.name))
     }
+
+    /// The browser's app bundle, if it is in the system or the user's Applications folder.
+    fn installed_app(&self) -> Option<PathBuf> {
+        [PathBuf::from("/Applications"), applications_directory()]
+            .into_iter()
+            .map(|folder| folder.join(format!("{}.app", self.name)))
+            .find(|app| app.is_dir())
+    }
+}
+
+/// A string value from an app bundle's Info.plist, read with `plutil`.
+fn info_plist_string(app: &Path, key: &str) -> Option<String> {
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-extract", key, "raw", "-o", "-"])
+        .arg(app.join("Contents/Info.plist"))
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    (output.status.success() && !value.is_empty()).then_some(value)
+}
+
+/// The file named by `CFBundleIconFile`, which may omit its extension, kept to a plain file name.
+fn icon_file_name(value: &str) -> Option<String> {
+    let name = Path::new(value).file_name()?.to_str()?;
+    Some(if Path::new(name).extension().is_some() {
+        name.to_owned()
+    } else {
+        format!("{name}.icns")
+    })
+}
+
+/// Copies the icon of the app bundle `from` into the bundle `to` and returns the Info.plist entries that name it:
+/// the icon file, and the icon in the asset catalog that recent macOS versions prefer.
+fn copy_app_icon(from: &Path, to: &Path) -> anyhow::Result<Vec<(&'static str, String)>> {
+    let source = from.join("Contents/Resources");
+    let target = to.join("Contents/Resources");
+    std::fs::create_dir_all(&target).with_context(|| format!("Cannot create: {}", target.display()))?;
+    let copy = |name: &str| {
+        std::fs::copy(source.join(name), target.join(name))
+            .with_context(|| format!("Cannot copy the icon {}", source.join(name).display()))
+    };
+
+    let mut entries = Vec::new();
+    if let Some(file) = info_plist_string(from, "CFBundleIconFile").and_then(|value| icon_file_name(&value)) {
+        copy(&file)?;
+        entries.push(("CFBundleIconFile", file));
+    }
+    if let Some(name) = info_plist_string(from, "CFBundleIconName") {
+        copy("Assets.car")?;
+        entries.push(("CFBundleIconName", name));
+    }
+    Ok(entries)
 }
 
 /// The user's own Applications folder, which Finder, Launchpad and Spotlight list like `/Applications`.
@@ -181,11 +234,16 @@ fn launch_agent_plist(executable: &Path) -> String {
 }
 
 /// Info.plist of the launcher app.
-fn launcher_info_plist(browser: &str) -> String {
+/// `icon` holds the Info.plist entries that name the icon copied into the launcher; it may be empty.
+fn launcher_info_plist(browser: &str, icon: &[(&str, String)]) -> String {
     let identifier = format!(
         "com.meeting-assistant.launcher.{}",
         browser.to_lowercase().replace(' ', "-")
     );
+    let icon: String = icon
+        .iter()
+        .map(|(key, value)| format!("    <key>{key}</key>\n    <string>{}</string>\n", xml_escape(value)))
+        .collect();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -193,7 +251,7 @@ fn launcher_info_plist(browser: &str) -> String {
 <dict>
     <key>CFBundleExecutable</key>
     <string>launcher</string>
-    <key>CFBundleIdentifier</key>
+{icon}    <key>CFBundleIdentifier</key>
     <string>{identifier}</string>
     <key>CFBundleName</key>
     <string>{} ({APP_NAME})</string>
@@ -318,7 +376,27 @@ impl InstallSystem for PlatformInstaller {
     fn create_browser_launcher(&mut self, browser: &str, option: &str) -> anyhow::Result<String> {
         let browser = Browser::named(browser)?;
         let app = browser.launcher();
-        self.write_file(&app.join("Contents/Info.plist"), &launcher_info_plist(browser.name))?;
+        // A new bundle, so that Finder and the Dock read its icon again instead of one they remember.
+        remove_if_exists(&app)?;
+
+        // The browser's own icon. Without it the launcher still works, so a missing icon is only logged.
+        let icon = match browser.installed_app() {
+            Some(installed) => copy_app_icon(&installed, &app).unwrap_or_else(|error| {
+                log::warn!("The launcher for {} has no icon: {error:#}", browser.name);
+                Vec::new()
+            }),
+            None => {
+                log::warn!(
+                    "The launcher for {} has no icon: the browser is not in an Applications folder",
+                    browser.name
+                );
+                Vec::new()
+            }
+        };
+        self.write_file(
+            &app.join("Contents/Info.plist"),
+            &launcher_info_plist(browser.name, &icon),
+        )?;
 
         // The option has no effect on a browser that is already running, so it must be quit before using this.
         let executable = app.join("Contents/MacOS/launcher");
@@ -372,6 +450,31 @@ mod tests {
         assert!(plist.contains(&format!("<string>{APP_BUNDLE_IDENTIFIER}</string>")));
         assert!(plist.contains("<key>LSUIElement</key>\n    <true/>"));
         assert!(plist.contains(&format!("<string>{}</string>", env!("CARGO_PKG_VERSION"))));
+    }
+
+    #[test]
+    fn icon_file_name_adds_the_extension_and_keeps_only_the_file_name() {
+        assert_eq!(icon_file_name("app.icns").as_deref(), Some("app.icns"));
+        assert_eq!(icon_file_name("app").as_deref(), Some("app.icns"));
+        assert_eq!(icon_file_name("../../evil.icns").as_deref(), Some("evil.icns"));
+        assert_eq!(icon_file_name(""), None);
+    }
+
+    #[test]
+    fn launcher_names_the_copied_icon_only_when_there_is_one() {
+        let with_icon = launcher_info_plist(
+            "Google Chrome",
+            &[
+                ("CFBundleIconFile", "app.icns".to_owned()),
+                ("CFBundleIconName", "AppIcon".to_owned()),
+            ],
+        );
+        assert!(with_icon.contains("<key>CFBundleIconFile</key>\n    <string>app.icns</string>"));
+        assert!(with_icon.contains("<key>CFBundleIconName</key>\n    <string>AppIcon</string>"));
+
+        let without_icon = launcher_info_plist("Google Chrome", &[]);
+        assert!(!without_icon.contains("CFBundleIcon"));
+        assert!(without_icon.contains("<string>Google Chrome (Meeting Assistant)</string>"));
     }
 
     #[test]
