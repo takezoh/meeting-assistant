@@ -11,9 +11,10 @@
 //! | `browser` | Browser extension link | None for protocol and hub; network and files for server and relay |
 //! | `linked` | Choosing whether to detect and record via the OS or the extension | None (goes through ports) |
 //! | `worker` | Loop that advances detection periodically and handles instructions | Only the passage of time |
+//! | `panel::view` | What the status panel and tray icon show, and what the panel's buttons ask for | None |
 //! | `adapters` | Implementations of core's ports (clock, storage, config file) | Files, clock |
 //! | `platform` | Per-OS implementations | OS APIs |
-//! | `composition`, `tray`, `diagnostics`, `logging` | Wiring and interaction with the user | Yes |
+//! | `composition`, `tray`, `panel::window`, `diagnostics`, `logging` | Wiring and interaction with the user | Yes |
 
 mod adapters;
 #[cfg(test)]
@@ -26,6 +27,7 @@ mod diagnostics;
 mod install;
 mod linked;
 mod logging;
+mod panel;
 mod platform;
 mod recording;
 mod tray;

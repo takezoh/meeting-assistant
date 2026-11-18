@@ -7,7 +7,7 @@ const RECONNECT_ALARM = "reconnect";
 let port = null;
 /** Tab ID -> set of frame IDs that are in a call */
 const callFrames = new Map();
-/** Tab ID -> service name (tabs already reported to the app as in a meeting) */
+/** Tab ID -> { service, title } (tabs already reported to the app as in a meeting) */
 const meetings = new Map();
 /** ID of the tab being recorded */
 let recordingTab = null;
@@ -42,7 +42,7 @@ function connect() {
     port = null;
     stopRecording();
   });
-  for (const [tab, service] of meetings) post({ type: "meeting", tab, active: true, service });
+  for (const [tab, meeting] of meetings) post({ type: "meeting", tab, active: true, ...meeting });
 }
 
 function post(message) {
@@ -73,7 +73,25 @@ connect();
 
 // ---- Meeting detection
 
-function setCallState(tab, frame, inCall, host) {
+/**
+ * What tells this meeting apart from others of the same service: the meeting code for Google Meet, otherwise the
+ * page's title.
+ */
+function meetingTitle(host, url, title) {
+  if (host === "meet.google.com") {
+    let path = "";
+    try {
+      path = new URL(url).pathname;
+    } catch {
+      // No usable URL; fall back to the title.
+    }
+    const code = /^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/.exec(path);
+    if (code) return code[1];
+  }
+  return String(title ?? "").trim().slice(0, 120);
+}
+
+function setCallState(tab, frame, inCall, host, url, title) {
   const frames = callFrames.get(tab) ?? new Set();
   if (inCall) frames.add(frame);
   else frames.delete(frame);
@@ -83,10 +101,10 @@ function setCallState(tab, frame, inCall, host) {
   const active = frames.size > 0;
   if (active === meetings.has(tab)) return;
   if (active) {
-    const service = serviceName(host);
-    meetings.set(tab, service);
+    const meeting = { service: serviceName(host), title: meetingTitle(host, url, title) };
+    meetings.set(tab, meeting);
     connect();
-    post({ type: "meeting", tab, active: true, service });
+    post({ type: "meeting", tab, active: true, ...meeting });
   } else {
     meetings.delete(tab);
     post({ type: "meeting", tab, active: false });
@@ -96,7 +114,7 @@ function setCallState(tab, frame, inCall, host) {
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "call-state" && sender.tab) {
     if (sender.frameId === 0 && message.pixelRatio > 0) pixelRatios.set(sender.tab.id, message.pixelRatio);
-    setCallState(sender.tab.id, sender.frameId ?? 0, message.inCall, message.host);
+    setCallState(sender.tab.id, sender.frameId ?? 0, message.inCall, message.host, sender.url, message.title);
   }
 });
 

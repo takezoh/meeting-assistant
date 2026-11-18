@@ -40,6 +40,8 @@ Once per `poll_interval_milliseconds` the app reads which processes hold an acti
 - **Continue.** The meeting lasts while that process keeps using the microphone. A browser title that changes because another tab was selected does not end it.
 - **End.** Microphone use has been absent for `end_grace_seconds` (15 by default).
 
+Each meeting is followed on its own, so several can be detected at once, for example a Zoom call and a Google Meet tab, or two Meet tabs; two meetings of one service are told apart by the Google Meet meeting code or the tab's title. Only one recording exists at a time: a meeting that starts while nothing is recorded is recorded automatically, and when that meeting ends, a meeting that started meanwhile is recorded next.
+
 With the browser extension connected, a browser meeting is detected differently: the extension reports when a page on a supported meeting site holds a connected WebRTC call. This also detects a call you only listen to. A browser whose extension is connected is excluded from window-based detection so that one meeting is not recorded twice.
 
 The default rules cover Zoom, Microsoft Teams, Webex and Slack as desktop apps, and Chrome, Edge, Firefox, Brave, Vivaldi, Opera and Arc with title patterns for Google Meet, Microsoft Teams, Zoom, Webex, Slack, Whereby and Jitsi Meet. The extension supports Chrome and Edge and the sites listed in `extension/manifest.json`.
@@ -58,7 +60,7 @@ With the default `capture_scope = "app"`:
 - If the recorded window closes, recording moves to another window of the same app. If there is none, the last picture stays and audio continues.
 - If no window of the app is found at the start, the recording starts black and moves to the window when it appears. The app does not substitute the whole display.
 - If the app's audio cannot be captured, the recording continues without it. The app does not substitute all output audio.
-- A manual recording started while no meeting is detected has no target app, so it records the primary display and all output audio.
+- A manual recording of a detected meeting is recorded the same way as its automatic recording. Recording the entire screen is a separate, explicit choice; it records the primary display and all output audio.
 
 With `capture_scope = "screen"` the display that holds the meeting window and all audio of the output device are recorded.
 
@@ -66,8 +68,10 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 
 ## Control and lifecycle
 
-- The tray menu starts and stops a recording, pauses and resumes automatic recording, toggles start at logon, and opens the recordings folder, the configuration file and the log folder.
+- The tray icon shows the state: a ring while idle, amber when a meeting is detected but not recorded, red while recording. On macOS the menu bar also shows how long the recording has been running.
+- Clicking the icon opens a status panel: the recording with its running time and file name, every detected meeting with whether it is recorded, waiting or not recorded, and a Record or Stop button for each, a switch for automatic recording, and, on Windows, recording the entire screen. The menu (right click) keeps the same actions and also toggles start at logon.
 - A manual recording is not ended by meeting detection; it ends when you stop it or the app exits.
+- Stopping a recording by hand starts no other recording, and that meeting is not recorded automatically again. Switching automatic recording off and on again clears this.
 - Quitting from the menu, `--quit`, logoff and shutdown finalize a recording before the process ends.
 - If a recording fails mid-way, the app keeps the partial file, reports the failure and tries again while the meeting continues.
 - Changes to `config.toml` take effect the next time the app starts. An invalid configuration is reported at startup instead of being partly applied.
@@ -89,7 +93,8 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 - Detection has been checked with synthetic meetings (a test process holding the microphone, and a test page holding a WebRTC connection), not in real calls on each service. Whether a given service releases the microphone while you are muted, and so ends the recording after the grace period, is unknown.
 - The browser switch that permits automatic tab recording, `--allowlisted-extension-id`, is undocumented and intended for testing. It worked in Chrome and Edge on 2026-11-17. A later browser version may remove it; recording then does not start and the log says why.
 - On macOS the installer, start at login, the extension path and finalization on quit, update and uninstall were run on one Mac with synthetic meetings on 2026-11-18. A real logout during a recording, the browser launchers and the menu bar appearance were not checked.
-- The tray menu and notifications were not inspected by an automated test; their logic is tested, their appearance is not.
+- The tray menu, the status panel and notifications were not inspected by an automated test; their logic is tested, their appearance is not. On one Mac on 2026-11-18 the panel, the menu bar icon and its running time were looked at by the user, with a stand-in for the extension reporting synthetic meetings; on Windows they have not been observed.
+- The status panel needs the system web view. On Windows this is the WebView2 runtime; without it only the menu is available.
 - Long recordings, several displays with different scaling, and protected content have not been measured.
 
 [The verification note](docs/note/note-20261117-local-verification.md) records what was observed and on which date. Open gaps are tracked under [docs/issue](docs/issue/).

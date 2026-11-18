@@ -22,10 +22,15 @@ pub fn recording_stem(time: LocalDateTime, label: &str) -> String {
 /// The `attempt`-th candidate (starting at 1) when the same name already exists.
 /// The first has no sequence number; the second and later get `_2`, `_3`, ...
 pub fn candidate_file_name(stem: &str, attempt: u32) -> String {
+    candidate_file_name_with_extension(stem, attempt, RECORDING_EXTENSION)
+}
+
+/// Like [`candidate_file_name`], for a file whose container has another extension.
+pub fn candidate_file_name_with_extension(stem: &str, attempt: u32, extension: &str) -> String {
     if attempt <= 1 {
-        format!("{stem}.{RECORDING_EXTENSION}")
+        format!("{stem}.{extension}")
     } else {
-        format!("{stem}_{attempt}.{RECORDING_EXTENSION}")
+        format!("{stem}_{attempt}.{extension}")
     }
 }
 
@@ -91,6 +96,8 @@ mod tests {
         assert_eq!(candidate_file_name("a", 1), "a.mp4");
         assert_eq!(candidate_file_name("a", 2), "a_2.mp4");
         assert_eq!(candidate_file_name("a", 3), "a_3.mp4");
+        assert_eq!(candidate_file_name_with_extension("a", 1, "webm"), "a.webm");
+        assert_eq!(candidate_file_name_with_extension("a", 2, "webm"), "a_2.webm");
     }
 
     #[test]

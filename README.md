@@ -12,7 +12,7 @@ Windows is supported. On macOS only browser meetings recorded through the extens
 
 Join a call in Zoom, Microsoft Teams, Webex or Slack, or open Google Meet in Chrome or Edge. A few seconds after the call is live the tray icon turns red. When you leave, the recording is finalized as an MP4 (H.264 video, AAC audio) in `Videos\MeetingAssistant`, named after the start time and the rule that matched, for example `2026-11-17_14-00-05_Zoom.mp4`.
 
-The tray icon shows the state: grey while idle, yellow when a meeting is detected but not being recorded, red while recording.
+The tray icon shows the state: a ring while idle, amber when a meeting is detected but not being recorded, red while recording. Click it to see every detected meeting and the recording's running time, and to record or stop each meeting.
 
 ## Only the meeting is recorded
 
@@ -34,7 +34,7 @@ Automatic tab recording needs the browser to be started with an undocumented swi
 
 ## Stay in control
 
-The tray menu starts and stops a recording by hand, pauses automatic recording, and opens the recordings folder, the configuration file and the log folder. Rules decide which apps and which browser window titles count as a meeting; edit them in `config.toml` and check them with `meeting-assistant --probe`. See [Configuration](docs/usage/configuration.md).
+The status panel that opens from the tray icon lists the meetings in progress and starts or stops the recording of each by hand, pauses automatic recording, and opens the recordings folder, the configuration file and the log folder. The tray menu offers the same actions. Rules decide which apps and which browser window titles count as a meeting; edit them in `config.toml` and check them with `meeting-assistant --probe`. See [Configuration](docs/usage/configuration.md).
 
 Logging off, shutting down, quitting from the menu or running `meeting-assistant --quit` finalizes the file first. If the app is killed while recording, the file remains playable up to a moment before the kill.
 
@@ -63,7 +63,7 @@ On macOS the same two commands install `~/Applications/Meeting Assistant.app`; s
 
 ## What to expect
 
-- A meeting you join without ever using the microphone, and without the extension, is not detected. Start the recording from the tray menu.
+- A meeting you join without ever using the microphone, and without the extension, is not detected. On Windows, record the entire screen from the status panel.
 - Detection has been exercised with synthetic meetings on one PC, not with every meeting service. [Product](PRODUCT.md#what-is-not-established) lists what is and is not established.
 - [Troubleshooting](docs/usage/troubleshooting.md) covers a meeting that was not recorded, missing audio and a black picture.
 

@@ -24,8 +24,11 @@ mod rules;
 mod signals;
 
 pub use config::{AudioConfig, CaptureScope, Config, ConfigError, VideoConfig};
-pub use coordinator::{CoordinatorStatus, Notice, NoticeLevel, RecordingCoordinator, RecordingTrigger};
-pub use detector::{DetectorEvent, MeetingDetector, MeetingInfo};
+pub use coordinator::{
+    CoordinatorStatus, ManualTarget, MeetingStatus, Notice, NoticeLevel, RecordingCoordinator, RecordingStatus,
+    RecordingTrigger,
+};
+pub use detector::{DetectorEvent, MeetingDetector, MeetingInfo, MeetingKey};
 pub use engine::Engine;
 pub use ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
 pub use recording::{Recorder, RecordingRequest, VideoTarget};

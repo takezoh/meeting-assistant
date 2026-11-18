@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use base64::Engine as _;
-use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab};
+use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab, naming};
 
 use super::endpoint::Endpoint;
 use super::hub::{ChunkSink, Finished, Hub, Phase};
@@ -66,8 +66,6 @@ struct State {
     hub: Hub,
     /// Per-connection destination for commands.
     streams: HashMap<u64, TcpStream>,
-    /// Path of the file being recorded to.
-    capture_path: Option<PathBuf>,
 }
 
 impl State {
@@ -160,8 +158,8 @@ impl BrowserPort for BrowserLinkServer {
         self.0.lock().hub.snapshot()
     }
 
-    /// Writes incoming data to `path`.
-    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<()> {
+    /// Writes incoming data to `path`, renamed to the extension of the container the browser records in.
+    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf> {
         let mut state = self.0.lock();
         let file = File::create(path).with_context(|| format!("Cannot create the output file: {}", path.display()))?;
         let started = state
@@ -174,19 +172,25 @@ impl BrowserPort for BrowserLinkServer {
             let _ = std::fs::remove_file(path);
             return Err(error);
         }
-        state.capture_path = Some(path.to_owned());
 
         state = self.0.wait_while(state, START_TIMEOUT, |s| {
             s.hub.capture_phase() == Some(&Phase::Starting)
         });
         if state.hub.capture_phase() == Some(&Phase::Recording) {
-            return Ok(());
+            // The container is known now. Name the file after it before anyone is told where the recording is.
+            let extension = state.hub.capture_extension().unwrap_or(naming::RECORDING_EXTENSION);
+            return Ok(match name_for_container(path, extension) {
+                Ok(written) => written,
+                Err(error) => {
+                    log::warn!("Cannot give the recording the .{extension} extension; it keeps its name: {error}");
+                    path.to_owned()
+                }
+            });
         }
 
         // Could not start. Tell the extension to stop in case it is partway into starting, and leave no empty file.
         let _ = state.send(tab.link, &Outgoing::Stop { tab: tab.tab });
         let finished = state.hub.end_capture();
-        state.capture_path = None;
         drop(state);
         let reason = finished.as_ref().and_then(|finished| finished.outcome().err());
         drop(finished);
@@ -209,39 +213,45 @@ impl BrowserPort for BrowserLinkServer {
         let Some(finished) = state.hub.end_capture() else {
             return Ok(());
         };
-        let path = state.capture_path.take();
         drop(state);
-        close(finished, path)
+        close(finished)
     }
 
     fn take_failure(&self) -> Option<String> {
-        let mut state = self.0.lock();
-        let finished = state.hub.take_failed()?;
-        let path = state.capture_path.take();
-        drop(state);
+        let finished = self.0.lock().hub.take_failed()?;
         // Keep the partial data. The result of finalizing is the failure cause itself.
-        close(finished, path).err().map(|error| format!("{error:#}"))
+        close(finished).err().map(|error| format!("{error:#}"))
     }
 }
 
-/// Finishes writing. If the extension could not record as MP4, fixes the file extension to match the contents.
-fn close(finished: Finished, path: Option<PathBuf>) -> anyhow::Result<()> {
+/// Gives the file being written the extension of `extension`'s container, without replacing a file that already
+/// has that name. The file stays open while it is renamed: Rust opens files so that this is allowed on Windows too.
+fn name_for_container(path: &Path, extension: &str) -> io::Result<PathBuf> {
+    if path.extension().is_some_and(|current| current == extension) {
+        return Ok(path.to_owned());
+    }
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let renamed = (1..)
+        .map(|attempt| path.with_file_name(naming::candidate_file_name_with_extension(&stem, attempt, extension)))
+        .find(|candidate| !candidate.exists())
+        .expect("candidates never run out");
+    std::fs::rename(path, &renamed)?;
+    log::info!(
+        "Recording as .{extension}, the format the browser records: {}",
+        renamed.display()
+    );
+    Ok(renamed)
+}
+
+/// Finishes writing.
+fn close(finished: Finished) -> anyhow::Result<()> {
     let outcome = finished.outcome();
-    let extension = finished.container_extension();
     log::info!("Wrote {} bytes of tab recording ({})", finished.bytes, finished.mime);
     // Drop the sink to close the file.
     drop(finished);
-
-    if let Some(path) = path
-        && path.extension().is_some_and(|current| current != extension)
-    {
-        let renamed = path.with_extension(extension);
-        std::fs::rename(&path, &renamed)?;
-        log::warn!(
-            "Saved with a different extension to match the format the browser recorded: {}",
-            renamed.display()
-        );
-    }
     outcome.map_err(|reason| anyhow::anyhow!("The tab recording failed partway: {reason}"))
 }
 
@@ -305,6 +315,35 @@ fn serve(shared: &Shared, stream: TcpStream) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_recording_is_renamed_to_its_container_while_it_is_written_and_replaces_no_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("2026-11-18_10-00-00_GoogleMeet.mp4");
+        std::fs::write(folder.path().join("2026-11-18_10-00-00_GoogleMeet.webm"), b"earlier").unwrap();
+        let mut file = File::create(&path).unwrap();
+        file.write_all(b"first").unwrap();
+
+        let renamed = name_for_container(&path, "webm").unwrap();
+        file.write_all(b" second").unwrap();
+        drop(file);
+
+        assert_eq!(renamed, folder.path().join("2026-11-18_10-00-00_GoogleMeet_2.webm"));
+        assert_eq!(std::fs::read(&renamed).unwrap(), b"first second");
+        assert!(!path.exists());
+        let earlier = folder.path().join("2026-11-18_10-00-00_GoogleMeet.webm");
+        assert_eq!(std::fs::read(earlier).unwrap(), b"earlier");
+    }
+
+    #[test]
+    fn a_recording_already_named_after_its_container_keeps_its_name() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("a.mp4");
+        File::create(&path).unwrap();
+
+        assert_eq!(name_for_container(&path, "mp4").unwrap(), path);
+        assert!(path.exists());
+    }
 
     #[test]
     fn unauthenticated_connections_are_limited_and_dropping_one_frees_its_place() {

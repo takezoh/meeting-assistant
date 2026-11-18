@@ -7,6 +7,8 @@ const send = () => {
       type: "call-state",
       inCall,
       host: location.hostname,
+      // Tells two meetings of one service apart in the app (Google Meet uses its meeting code instead).
+      title: document.title,
       // Sent so the recording resolution can match the tab's actual size.
       pixelRatio: window.devicePixelRatio,
     });

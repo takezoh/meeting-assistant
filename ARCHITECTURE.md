@@ -29,7 +29,7 @@ flowchart LR
   Coord --> Rec[Recorder]
   Rec --> Pipeline[recording/pipeline] --> Cap
   Rec --> Server
-  Tray[tray + main] <--> Worker[worker loop] --> Engine
+  Tray[tray + status panel] <--> Worker[worker loop] --> Engine
 ```
 
 One process hosts the tray UI on the main thread, an engine thread that polls signals and drives the coordinator, one recorder thread per recording, and a listener plus one thread per extension connection. When the browser starts the same executable as a native-messaging host, it runs only as a relay between the browser's standard input/output and the resident app's loopback socket.
@@ -74,6 +74,8 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `browser/server`, `endpoint`, `relay` | Loopback listener, the published endpoint file, and the relay the browser launches |
 | `linked` | `LinkedSignalSource` and `LinkedRecorder`: combine the OS path and the extension path behind the core ports, using `BrowserPort` |
 | `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
+| `panel/view` | What the status panel and the tray icon show, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
+| `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it |
 | `adapters` | Real implementations of the core ports: system clock, recordings folder, sleeping, configuration file |
 | `platform/win`, `platform/mac` | The only modules that call operating system APIs |
 | `composition`, `tray`, `main`, `diagnostics`, `logging`, `bundle` | Wiring of real implementations, the tray UI, entry point, `--probe`/`--self-test`, the log file, embedded extension files |
@@ -85,7 +87,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `PlatformSignalSource` | Processes with an active capture session, the process tree, the list of top-level windows, default device state |
 | `PlatformRecorder` | A `CaptureBackend`: open a window or display capture, take a picture, scale it, open audio inputs, write and finalize the file |
 | `PlatformInstaller` | An `InstallSystem`: copy and remove files, registry or plist entries, native-host registration, shortcuts or launcher apps |
-| Other | Single-instance guard, quit requests, session-end notification, toasts and dialogs |
+| Other | Single-instance guard, quit requests, session-end notification, toasts and dialogs, the status panel's window style (transparency and material on macOS, rounded corners on Windows), whether the screen can be recorded |
 
 On Windows these use WASAPI session enumeration, Windows.Graphics.Capture, the Direct3D 11 video processor, WASAPI process loopback and the Media Foundation sink writer. On macOS only the installer, single-instance and signal handling exist; `PlatformRecorder` reports that capture is not implemented.
 
@@ -94,11 +96,15 @@ On Windows these use WASAPI session enumeration, Windows.Graphics.Capture, the D
 1. `worker` calls `Engine::tick` once per poll interval.
 2. `LinkedSignalSource` captures a `SignalSnapshot` from the OS and adds the extension's connections and reported meetings.
 3. `RuleEvaluator` evaluates each rule. A browser process that has a connected extension is left to the extension.
-4. `MeetingDetector` applies the debounce and grace period and reports a start or an end.
-5. `RecordingCoordinator` builds a `RecordingRequest` (output path, `VideoTarget`, audio process) and calls `Recorder::start` or `stop`. While recording it retargets the window when the recorded one disappears, and collects failures with `take_failure`.
+4. `MeetingDetector` applies the debounce and grace period to each meeting separately and reports its starts and ends.
+5. `RecordingCoordinator` keeps the detected meetings, picks the one to record automatically, and builds a `RecordingRequest` (output path, `VideoTarget`, audio process) and calls `Recorder::start` or `stop`. While recording it retargets the window when the recorded one disappears, and collects failures with `take_failure`.
 6. `LinkedRecorder` sends a `VideoTarget::BrowserTab` request to the extension and every other target to the platform recorder.
 
 The [meeting detection design](docs/design/design-meeting-detection.md) holds the contract.
+
+## Status panel
+
+`worker` publishes the coordinator's status on every change. `tray` keeps the latest one and hands it to `panel::view`, which produces the tray's texts and the panel's content as JSON; the page renders it and posts the user's clicks back as small JSON messages, which `panel::view` turns into worker commands. The page is embedded in the executable, loads nothing from elsewhere and cannot navigate. See [ADR: web-view status panel](docs/adr/adr-20261118-show-status-and-controls-in-a-web-view-p.md).
 
 ## Recording on the OS path
 
@@ -113,7 +119,7 @@ The app listens on `127.0.0.1` at a random port and writes the port and a random
 ## Correctness boundaries
 
 - **Core has no effects.** `crates/core` does not use the file system, the clock, threads, environment or OS crates outside `fakes` and tests. `crates/core/tests/architecture.rs` reads the sources and fails on a forbidden dependency.
-- **OS APIs stay in `platform`.** `crates/app/src/architecture.rs` fails if an OS crate (`windows`, `libc`, `signal_hook`, `notify_rust`) is used outside `platform`, if a deciding module (`cli`, `install`, `linked`, `worker`, `browser/protocol`, `browser/hub`, `recording/plan`, `timeline`, `mixer`, `pipeline`) touches files, sockets, processes, the environment or an adapter, or if the two platform implementations stop exposing the same names.
+- **OS APIs stay in `platform`.** `crates/app/src/architecture.rs` fails if an OS crate (`windows`, `libc`, `signal_hook`, `notify_rust`, `window_vibrancy`) or a `tao` platform extension is used outside `platform`, if a deciding module (`cli`, `install`, `linked`, `worker`, `panel/view`, `browser/protocol`, `browser/hub`, `recording/plan`, `timeline`, `mixer`, `pipeline`) touches files, sockets, processes, the environment or an adapter, or if the two platform implementations stop exposing the same names.
 - **One recording at a time.** The coordinator holds at most one recording; the hub holds at most one tab recording.
 - **Scope is never widened silently.** In app scope a missing window gives a black picture and a failed app-audio capture gives no app audio. Neither falls back to the display or the output device.
 - **A started file is finalized.** Stop, drop of the recorder, quit, logoff and shutdown all reach `finalize`. On macOS a logout or a quit sent by another app ends the tray's event loop instead of sending a signal, so the tray also finalizes on the loop's last event. A recording that fails keeps its partial file.
@@ -125,6 +131,6 @@ The app listens on `127.0.0.1` at a random port and writes the port and a random
 
 Unit tests cover the pure modules and, through fakes, the coordinator, engine, pipeline, threaded recorder, hub, linked recorder, worker and install procedure. The architecture tests enforce the dependency rules above.
 
-Tests do not exercise the real Windows adapters, the tray UI, a real browser or a real meeting service. Those were checked by hand on one Windows 11 PC and, for the macOS installer and the extension path, on one Mac; [the Windows note](docs/note/note-20261117-local-verification.md) and [the macOS note](docs/note/note-20261118-macos-verification-2026-11-18.md) record what was observed. A passing test suite therefore does not establish that recording works on a given machine; `meeting-assistant --self-test` does that for the OS path.
+Tests do not exercise the real Windows adapters, the tray UI, the status panel's window and page, a real browser or a real meeting service. Those were checked by hand on one Windows 11 PC and, for the macOS installer and the extension path, on one Mac; [the Windows note](docs/note/note-20261117-local-verification.md) and [the macOS note](docs/note/note-20261118-macos-verification-2026-11-18.md) record what was observed. A passing test suite therefore does not establish that recording works on a given machine; `meeting-assistant --self-test` does that for the OS path.
 
 The [development guide](docs/development.md) lists the commands, and [testing](docs/technical/testing.md) describes each suite.

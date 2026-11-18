@@ -9,9 +9,11 @@ responsibilities:
 - id: RESP-001
   statement: "Decide from a signal snapshot which rule is satisfied and by which process and window."
 - id: RESP-002
-  statement: "Decide when a meeting starts and ends by applying a start debounce and an end grace period."
+  statement: "Decide when each meeting starts and ends by applying a start debounce and an end grace period to that meeting alone; several meetings can be in progress at once."
 - id: RESP-003
-  statement: "Turn meeting starts, ends and manual commands into at most one recording, choosing its video target, audio source and file name."
+  statement: "Turn meeting starts, ends and manual commands into at most one recording, choosing which detected meeting it records, its video target, audio source and file name."
+- id: RESP-005
+  statement: "Report the detected meetings, in the order they started, and the recording, so that the user can see and act on each meeting."
 - id: RESP-004
   statement: "Keep a recording alive across recorder failures and window changes while the meeting continues."
 invariants:
@@ -33,12 +35,18 @@ invariants:
 - id: INV-006
   statement: "A recording is reported as started only after the recorder has reported that capture is running."
   enforcement: test
+- id: INV-007
+  statement: "A meeting is identified by its rule and, for an extension-reported meeting, its tab; one meeting's evidence neither starts nor keeps alive another."
+  enforcement: test
+- id: INV-008
+  statement: "A meeting whose recording the user stopped, or whose automatic recording gave up, is not recorded automatically again until automatic recording is switched on again."
+  enforcement: test
 boundaries:
   provides:
   - id: PROV-001
     statement: "Engine::tick, which advances detection and recording by one step and returns the state and notices to show."
   - id: PROV-002
-    statement: "Commands for manual start and stop and for pausing automatic recording."
+    statement: "Commands to start a recording of a chosen detected meeting or of the screen, to stop the recording, and to pause automatic recording; a status listing the detected meetings and the recording."
   consumes:
   - id: CONS-001
     statement: "SignalSource: microphone-using processes, the process tree, windows, device state, extension links and extension-reported meetings."
@@ -88,7 +96,7 @@ Decide, from what can be observed about the machine, when the user is in a meeti
 
 ## Responsibilities
 
-`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and, where a rule asks for it, the window whose title matched. `MeetingDetector` turns a sequence of evaluations into a start, after the condition has held for the debounce, and an end, after microphone use has been absent for the grace period. `RecordingCoordinator` owns the single recording: it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. `Engine` runs these in order once per tick.
+`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and, where a rule asks for it, the window whose title matched. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after its microphone use has been absent for the grace period. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick.
 
 ## Boundaries
 
@@ -96,13 +104,15 @@ All of this is in `crates/core` and reaches the world only through the ports lis
 
 ## Invariants
 
-The scope rule (INV-002) is the one most easily broken by a well-meant fallback. When no window of the app is found the request carries `VideoTarget::Blank`; when the meeting has no known audio process and the scope is app, no device-wide audio is requested on its behalf. Only `capture_scope = "screen"` and a manual recording without a detected meeting request the display and the output device.
+The scope rule (INV-002) is the one most easily broken by a well-meant fallback. When no window of the app is found the request carries `VideoTarget::Blank`; when the meeting has no known audio process and the scope is app, no device-wide audio is requested on its behalf. Only `capture_scope = "screen"` and a manual recording of the screen request the display and the output device. A start for a meeting that is no longer detected fails instead of turning into a recording of the screen.
+
+Stopping a recording by hand marks its meeting (INV-008) and starts nothing else. Only two events start an automatic recording while automatic recording is on: a meeting that starts while nothing is recorded, and the end of the meeting being recorded automatically, which passes the recording to the earliest meeting that waited for it. Switching automatic recording on again clears the marks and records the earliest detected meeting.
 
 Extension-reported meetings take precedence for the browser they come from (INV-004), so one call is not recorded both as a tab and as a window.
 
 ## Collaboration
 
-`worker` calls `Engine::tick` at the poll interval and forwards commands from the tray. `LinkedSignalSource` and `LinkedRecorder` in the app present the operating system and the extension as one signal source and one recorder.
+`worker` calls `Engine::tick` at the poll interval, forwards commands from the tray and the status panel, and publishes the status they show. `LinkedSignalSource` and `LinkedRecorder` in the app present the operating system and the extension as one signal source and one recorder.
 
 ## Failure Responsibility
 

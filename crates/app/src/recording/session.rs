@@ -3,6 +3,7 @@
 //! The actual capture and writing ([`CaptureBackend`]) is created inside the recording thread
 //! (because some OS capture objects are bound to the thread that created them).
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -72,7 +73,7 @@ impl<B> ThreadedRecorder<B> {
 }
 
 impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<()> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
         anyhow::ensure!(self.session.is_none(), "already recording");
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -95,7 +96,7 @@ impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
                     retarget: retarget_sender,
                     thread,
                 });
-                Ok(())
+                Ok(request.output_path.clone())
             }
             Ok(Err(error)) => Err(error),
             Err(_) => {

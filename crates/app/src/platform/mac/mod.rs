@@ -17,6 +17,7 @@ use meeting_assistant_core::{AudioConfig, Recorder, RecordingRequest, SignalSnap
 
 pub use self::install::PlatformInstaller;
 use crate::install::APP_NAME;
+use crate::panel::view::Surface;
 
 /// Upper bound on waiting for the other process to exit after asking it to quit (includes finalizing the recording).
 const QUIT_TIMEOUT: Duration = Duration::from_secs(90);
@@ -51,7 +52,7 @@ pub fn recorder(_video: VideoConfig, _audio: AudioConfig) -> PlatformRecorder {
 }
 
 impl Recorder for PlatformRecorder {
-    fn start(&mut self, _request: &RecordingRequest) -> anyhow::Result<()> {
+    fn start(&mut self, _request: &RecordingRequest) -> anyhow::Result<PathBuf> {
         anyhow::bail!("On macOS only tab recording through the browser extension is supported")
     }
 
@@ -203,6 +204,35 @@ pub fn show_error(message: &str) {
 /// Reports the result in a dialog when there is no output.
 pub fn show_info(message: &str) {
     dialog(message, "note");
+}
+
+/// Whether the whole screen can be recorded. Not yet: only browser tabs are recorded, through the extension.
+pub const SCREEN_CAPTURE: bool = false;
+
+/// The status panel's window is transparent, so that the system material and the page's rounded edge show.
+pub fn panel_window(builder: tao::window::WindowBuilder) -> tao::window::WindowBuilder {
+    use tao::platform::macos::WindowBuilderExtMacOS;
+    builder.with_transparent(true).with_has_shadow(true)
+}
+
+/// Puts the system's translucent popover material behind the status panel, with rounded corners. If the material
+/// cannot be applied the page draws an opaque background inside its rounded edge instead.
+pub fn style_panel(window: &tao::window::Window) -> Surface {
+    use window_vibrancy::{NSVisualEffectMaterial, NSVisualEffectState, apply_vibrancy};
+
+    let applied = apply_vibrancy(
+        window,
+        NSVisualEffectMaterial::Popover,
+        Some(NSVisualEffectState::Active),
+        Some(12.0),
+    );
+    if let Err(error) = &applied {
+        log::warn!("Cannot give the panel a translucent background: {error}");
+    }
+    Surface {
+        translucent: applied.is_ok(),
+        rounded_by_system: false,
+    }
 }
 
 /// Shows a notification.

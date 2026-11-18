@@ -42,6 +42,10 @@ pub enum Incoming {
         active: bool,
         #[serde(default)]
         service: String,
+        /// What tells this meeting apart from others of the same service (a Google Meet code, or the tab's title).
+        /// Older extensions do not send it.
+        #[serde(default)]
+        title: String,
     },
     Started {
         tab: u64,
@@ -192,11 +196,22 @@ mod tests {
         let parse = |json: &str| Incoming::parse(json.as_bytes()).unwrap();
 
         assert_eq!(
+            parse(r#"{"type":"meeting","tab":7,"active":true,"service":"GoogleMeet","title":"abc-defg-hij"}"#),
+            Incoming::Meeting {
+                tab: 7,
+                active: true,
+                service: "GoogleMeet".into(),
+                title: "abc-defg-hij".into()
+            }
+        );
+        // An extension from before titles were reported.
+        assert_eq!(
             parse(r#"{"type":"meeting","tab":7,"active":true,"service":"GoogleMeet"}"#),
             Incoming::Meeting {
                 tab: 7,
                 active: true,
-                service: "GoogleMeet".into()
+                service: "GoogleMeet".into(),
+                title: String::new()
             }
         );
         assert_eq!(
@@ -204,7 +219,8 @@ mod tests {
             Incoming::Meeting {
                 tab: 7,
                 active: false,
-                service: String::new()
+                service: String::new(),
+                title: String::new()
             }
         );
         assert_eq!(

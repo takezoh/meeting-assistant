@@ -318,6 +318,7 @@ fn linked(mut snapshot: SignalSnapshot, meeting: bool) -> SignalSnapshot {
         snapshot.browser_meetings = vec![BrowserMeeting {
             tab: BrowserTab { link: 1, tab: 42 },
             service: "GoogleMeet".into(),
+            title: None,
         }];
     }
     snapshot
@@ -331,6 +332,17 @@ fn a_meeting_reported_by_the_extension_meets_the_start_condition_by_itself() {
     assert_eq!(e.browser_tab, Some(BrowserTab { link: 1, tab: 42 }));
     // It sorts before the rules (because whichever is found first is adopted).
     assert_eq!(evaluate(&s)[0].rule_name, "GoogleMeet");
+    assert_eq!(e.title, None);
+}
+
+#[test]
+fn the_title_the_extension_reports_stays_with_its_meeting() {
+    let mut s = linked(snapshot(&[], &[], &[], &[]), true);
+    s.browser_meetings[0].title = Some("abc-defg-hij".into());
+
+    assert_eq!(evidence(&s, "GoogleMeet").title.as_deref(), Some("abc-defg-hij"));
+    // Rules detected from the microphone have no title.
+    assert_eq!(evidence(&s, "Zoom").title, None);
 }
 
 #[test]

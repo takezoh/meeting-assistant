@@ -113,7 +113,7 @@ Without the switch, `tabCapture` refuses and the extension sends an error that n
 
 ## Variability
 
-Detection inside the page is a heuristic and may be replaced per site. The container is whatever the browser can produce, MP4 preferred and WebM otherwise; the app names the file accordingly.
+Detection inside the page is a heuristic and may be replaced per site. The container is whatever the browser can produce, MP4 preferred and WebM otherwise; the app names the file after the container as soon as the extension reports it, before it reports the recording as started, so that the notices and the status panel name the file that is written.
 
 ## Conformance
 

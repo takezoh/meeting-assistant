@@ -47,6 +47,9 @@ pub struct BrowserMeeting {
     pub tab: BrowserTab,
     /// Name of the meeting service. Used in recording file names and logs.
     pub service: String,
+    /// What tells this meeting apart from others of the same service, such as a Google Meet meeting code or the
+    /// tab's title. Shown to the user only.
+    pub title: Option<String>,
 }
 
 /// The full set of signals observed from the OS at a point in time, used for meeting detection.

@@ -3,11 +3,11 @@
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{CoordinatorStatus, Engine, Notice, Recorder, SignalSource};
+use meeting_assistant_core::{CoordinatorStatus, Engine, ManualTarget, Notice, Recorder, SignalSource};
 
 /// Instructions from the UI side.
 pub enum Command {
-    StartManual,
+    StartManual(ManualTarget),
     StopManual,
     SetAutoEnabled(bool),
     /// Finalizes the recording and exits. Sends an acknowledgement back when done.
@@ -38,7 +38,7 @@ pub fn run<S: SignalSource, R: Recorder>(
         // Where to send the completion acknowledgement when quitting (`None` if there is no one to notify).
         let mut finished: Option<Option<mpsc::Sender<()>>> = None;
         match commands.recv_timeout(next_tick.saturating_duration_since(Instant::now())) {
-            Ok(Command::StartManual) => engine.start_manual(),
+            Ok(Command::StartManual(target)) => engine.start_manual(target),
             Ok(Command::StopManual) => engine.stop_manual(),
             Ok(Command::SetAutoEnabled(enabled)) => engine.set_auto_enabled(enabled),
             Ok(Command::Shutdown(done)) => {
@@ -180,7 +180,10 @@ mod tests {
         h.wait_until("recording", |h| h.recorder.state().recording);
         h.wait_until("recording status arrives", |h| h.latest_status().is_recording());
 
-        assert_eq!(h.latest_status().recording_trigger, Some(RecordingTrigger::Auto));
+        assert_eq!(
+            h.latest_status().recording.map(|r| r.trigger),
+            Some(RecordingTrigger::Auto)
+        );
         let updates = h.shut_down();
         assert!(
             updates
@@ -192,10 +195,12 @@ mod tests {
     #[test]
     fn starts_and_stops_recording_on_manual_instruction() {
         let h = harness();
-        h.commands.send(Command::StartManual).unwrap();
+        h.commands.send(Command::StartManual(ManualTarget::Screen)).unwrap();
         h.wait_until("recording", |h| h.recorder.state().recording);
         h.wait_until("manual recording status arrives", |h| {
-            h.latest_status().recording_trigger == Some(RecordingTrigger::Manual)
+            h.latest_status()
+                .recording
+                .is_some_and(|r| r.trigger == RecordingTrigger::Manual)
         });
 
         h.commands.send(Command::StopManual).unwrap();
@@ -210,16 +215,36 @@ mod tests {
         h.wait_until("disabled status arrives", |h| !h.latest_status().auto_enabled);
 
         h.signals.set(zoom_in_meeting());
-        h.wait_until("meeting detection arrives", |h| h.latest_status().meeting.is_some());
+        h.wait_until("meeting detection arrives", |h| !h.latest_status().meetings.is_empty());
 
         assert!(h.recorder.state().started.is_empty());
         h.shut_down();
     }
 
     #[test]
+    fn records_a_detected_meeting_on_manual_instruction() {
+        let h = harness();
+        h.commands.send(Command::SetAutoEnabled(false)).unwrap();
+        h.wait_until("disabled status arrives", |h| !h.latest_status().auto_enabled);
+        h.signals.set(zoom_in_meeting());
+        h.wait_until("meeting detection arrives", |h| !h.latest_status().meetings.is_empty());
+
+        let key = h.latest_status().meetings[0].key.clone();
+        h.commands
+            .send(Command::StartManual(ManualTarget::Meeting(key.clone())))
+            .unwrap();
+        h.wait_until("recording status arrives", |h| {
+            h.latest_status().is_recording_meeting(&key)
+        });
+
+        assert_eq!(h.recorder.state().started[0].audio_process_id, Some(100));
+        h.shut_down();
+    }
+
+    #[test]
     fn finalizes_recording_then_acknowledges_on_quit_instruction() {
         let h = harness();
-        h.commands.send(Command::StartManual).unwrap();
+        h.commands.send(Command::StartManual(ManualTarget::Screen)).unwrap();
         h.wait_until("recording", |h| h.recorder.state().recording);
         let recorder = h.recorder.clone();
 
@@ -233,7 +258,7 @@ mod tests {
     #[test]
     fn finalizes_recording_and_exits_when_the_instruction_sender_is_gone() {
         let h = harness();
-        h.commands.send(Command::StartManual).unwrap();
+        h.commands.send(Command::StartManual(ManualTarget::Screen)).unwrap();
         h.wait_until("recording", |h| h.recorder.state().recording);
         let Harness {
             commands,

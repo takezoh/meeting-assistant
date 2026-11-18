@@ -53,6 +53,7 @@ fn os_apis_are_used_only_inside_platform() {
         "libc::",
         "signal_hook::",
         "notify_rust::",
+        "window_vibrancy::",
     ];
     let files = sources();
 
@@ -82,6 +83,7 @@ fn decision_modules_have_no_side_effects() {
         "bundle.rs",
         "install/mod.rs",
         "linked.rs",
+        "panel/view.rs",
         "worker.rs",
         "browser/protocol.rs",
         "browser/hub.rs",
@@ -113,7 +115,10 @@ fn time_and_audio_calculations_touch_neither_clock_nor_threads() {
         &files,
         |path| {
             (path.starts_with("recording/") && path != "recording/session.rs")
-                || matches!(path, "cli.rs" | "install/mod.rs" | "browser/hub.rs" | "linked.rs")
+                || matches!(
+                    path,
+                    "cli.rs" | "install/mod.rs" | "browser/hub.rs" | "linked.rs" | "panel/view.rs"
+                )
         },
         &clocks_and_threads,
     );

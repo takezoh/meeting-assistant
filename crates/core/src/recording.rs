@@ -31,8 +31,10 @@ pub struct RecordingRequest {
 
 /// A port that records the display and audio into one file.
 pub trait Recorder {
-    /// Returns once recording has actually started. Errors if it cannot start.
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<()>;
+    /// Returns once recording has actually started, with the file it writes to. That is `request.output_path`,
+    /// unless the recorder gave the file the extension of a different container than the one asked for, as a tab
+    /// recorded as WebM does. Errors if it cannot start.
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf>;
 
     /// Returns once the file is finalized. Does nothing if not recording.
     fn stop(&mut self) -> anyhow::Result<()>;

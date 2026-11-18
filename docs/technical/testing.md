@@ -27,7 +27,7 @@ Production code is scanned by the architecture tests with everything after `#[cf
 | --- | --- |
 | Windows capture, scaling, audio loopback and the MP4 writer | `meeting-assistant --self-test <path>`, then inspect the file |
 | Microphone-session and window enumeration | `meeting-assistant --probe` |
-| The tray icon, menu, toasts and dialogs | By hand |
+| The tray icon, menu, status panel window and page, toasts and dialogs | By hand; the panel's content and messages are tested in `panel/view.rs` |
 | The extension in a real browser, the relay and the browser switch | By hand with Chrome and Edge started from the launcher shortcut |
 | Install, update, uninstall and start at logon on a real profile | By hand |
 | Finalizing on logoff and shutdown | The message handling was checked by sending the close request; a real logoff was not performed |

@@ -1,7 +1,7 @@
 //! Combines detection and recording through OS features with detection and recording through the browser extension
 //! into a single signal source and a single recorder.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use meeting_assistant_core::{
     BrowserLink, BrowserMeeting, BrowserTab, Recorder, RecordingRequest, SignalSnapshot, SignalSource, VideoTarget,
@@ -11,8 +11,9 @@ use meeting_assistant_core::{
 pub trait BrowserPort {
     /// The connected extension and the meetings it reports.
     fn snapshot(&self) -> (Vec<BrowserLink>, Vec<BrowserMeeting>);
-    /// Makes the extension start recording a tab and write it to `path`. Returns once recording has started.
-    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<()>;
+    /// Makes the extension start recording a tab and write it to `path`. Returns once recording has started, with the
+    /// file written: `path` with the extension of the container the browser records in.
+    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf>;
     /// Stops recording and finalizes the file. Does nothing if not recording.
     fn stop_capture(&self) -> anyhow::Result<()>;
     /// If recording failed without a stop request, returns the cause exactly once.
@@ -65,7 +66,7 @@ impl<R, B> LinkedRecorder<R, B> {
 }
 
 impl<R: Recorder, B: BrowserPort> Recorder for LinkedRecorder<R, B> {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<()> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
         anyhow::ensure!(self.active.is_none(), "already recording");
         match &request.video {
             VideoTarget::BrowserTab(tab) => {
@@ -73,15 +74,16 @@ impl<R: Recorder, B: BrowserPort> Recorder for LinkedRecorder<R, B> {
                     .browser
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("not connected to the browser extension"))?;
-                browser.start_capture(*tab, &request.output_path)?;
+                let written = browser.start_capture(*tab, &request.output_path)?;
                 self.active = Some(Active::Browser);
+                Ok(written)
             }
             _ => {
-                self.platform.start(request)?;
+                let written = self.platform.start(request)?;
                 self.active = Some(Active::Platform);
+                Ok(written)
             }
         }
-        Ok(())
     }
 
     fn stop(&mut self) -> anyhow::Result<()> {
@@ -144,11 +146,12 @@ mod tests {
                 self.0.lock().unwrap().meetings.clone(),
             )
         }
-        fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<()> {
+        fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf> {
             let mut state = self.0.lock().unwrap();
             anyhow::ensure!(!state.start_fails, "not allowed");
             state.started.push((tab, path.to_owned()));
-            Ok(())
+            // The browser recorded WebM.
+            Ok(path.with_extension("webm"))
         }
         fn stop_capture(&self) -> anyhow::Result<()> {
             self.0.lock().unwrap().stopped += 1;
@@ -181,9 +184,14 @@ mod tests {
     #[test]
     fn tab_recording_is_delegated_to_the_extension() {
         let (mut linked, platform, browser) = recorder();
-        linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        let written = linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
 
         assert_eq!(browser.0.lock().unwrap().started, [(TAB, PathBuf::from("out.mp4"))]);
+        assert_eq!(
+            written,
+            PathBuf::from("out.webm"),
+            "the file the extension wrote is reported"
+        );
         assert!(platform.state().started.is_empty());
 
         linked.stop().unwrap();
@@ -275,6 +283,7 @@ mod tests {
         browser.0.lock().unwrap().meetings = vec![BrowserMeeting {
             tab: TAB,
             service: "GoogleMeet".into(),
+            title: None,
         }];
 
         let snapshot = LinkedSignalSource::new(signals, Some(browser)).capture().unwrap();

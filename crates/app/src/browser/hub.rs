@@ -64,19 +64,28 @@ impl Finished {
             Phase::Starting | Phase::Recording => Err("The extension did not respond".to_owned()),
         }
     }
+}
 
-    /// File extension matching the contents.
-    pub fn container_extension(&self) -> &'static str {
-        if self.mime.contains("webm") { "webm" } else { "mp4" }
-    }
+/// File extension of the container the extension reported (MP4 unless it says WebM).
+fn container_extension(mime: &str) -> &'static str {
+    if mime.contains("webm") { "webm" } else { "mp4" }
 }
 
 #[derive(Default)]
 struct Link {
     host_process_id: u32,
-    /// Tabs in a meeting, with their service names.
-    meetings: BTreeMap<u64, String>,
+    /// Tabs in a meeting.
+    meetings: BTreeMap<u64, ReportedMeeting>,
 }
+
+struct ReportedMeeting {
+    service: String,
+    /// What tells this meeting apart from others of the same service.
+    title: Option<String>,
+}
+
+/// Longest title kept for a meeting, in characters. It is only shown; a longer one is cut.
+const MAX_TITLE_CHARS: usize = 120;
 
 #[derive(Default)]
 pub struct Hub {
@@ -124,9 +133,10 @@ impl Hub {
             .links
             .iter()
             .flat_map(|(&link, entry)| {
-                entry.meetings.iter().map(move |(&tab, service)| BrowserMeeting {
+                entry.meetings.iter().map(move |(&tab, meeting)| BrowserMeeting {
                     tab: BrowserTab { link, tab },
-                    service: service.clone(),
+                    service: meeting.service.clone(),
+                    title: meeting.title.clone(),
                 })
             })
             .collect();
@@ -152,6 +162,15 @@ impl Hub {
 
     pub fn capture_phase(&self) -> Option<&Phase> {
         self.capture.as_ref().map(|capture| &capture.phase)
+    }
+
+    /// File extension of the container being recorded, once the extension has said which it is.
+    pub fn capture_extension(&self) -> Option<&'static str> {
+        let capture = self
+            .capture
+            .as_ref()
+            .filter(|capture| capture.phase != Phase::Starting)?;
+        Some(container_extension(&capture.mime))
     }
 
     /// If the extension is still recording, the stop command and the connection to send it to.
@@ -184,7 +203,12 @@ impl Hub {
     pub fn receive(&mut self, link: u64, message: Incoming) {
         match message {
             Incoming::Hello { .. } | Incoming::Unknown => {}
-            Incoming::Meeting { tab, active, service } => {
+            Incoming::Meeting {
+                tab,
+                active,
+                service,
+                title,
+            } => {
                 let Some(entry) = self.links.get_mut(&link) else { return };
                 if active {
                     let service = if service.is_empty() {
@@ -192,7 +216,9 @@ impl Hub {
                     } else {
                         service
                     };
-                    entry.meetings.insert(tab, service);
+                    let title = title.trim();
+                    let title = (!title.is_empty()).then(|| title.chars().take(MAX_TITLE_CHARS).collect());
+                    entry.meetings.insert(tab, ReportedMeeting { service, title });
                 } else {
                     entry.meetings.remove(&tab);
                 }
@@ -291,7 +317,28 @@ mod tests {
             tab,
             active,
             service: service.into(),
+            title: String::new(),
         }
+    }
+
+    #[test]
+    fn keeps_the_title_that_tells_two_meetings_of_a_service_apart() {
+        let mut hub = Hub::default();
+        let link = hub.connect(301);
+        let titled = |tab, title: &str| Incoming::Meeting {
+            tab,
+            active: true,
+            service: "GoogleMeet".into(),
+            title: title.into(),
+        };
+        hub.receive(link, titled(1, "abc-defg-hij"));
+        hub.receive(link, titled(2, "  "));
+        hub.receive(link, titled(3, &"x".repeat(500)));
+
+        let titles: Vec<_> = hub.snapshot().1.into_iter().map(|m| m.title).collect();
+        assert_eq!(titles[0].as_deref(), Some("abc-defg-hij"));
+        assert_eq!(titles[1], None, "a blank title is no title");
+        assert_eq!(titles[2].as_ref().map(|t| t.chars().count()), Some(MAX_TITLE_CHARS));
     }
 
     /// State right after one connection exists and recording of tab 7 was requested.
@@ -551,9 +598,10 @@ mod tests {
     }
 
     #[test]
-    fn file_extension_is_chosen_from_recording_format() {
+    fn file_extension_is_chosen_from_recording_format_once_recording_has_started() {
         let extension = |mime: &str| {
             let (mut hub, link, _) = capturing();
+            assert_eq!(hub.capture_extension(), None, "unknown before the extension says");
             hub.receive(
                 link,
                 Incoming::Started {
@@ -561,11 +609,11 @@ mod tests {
                     mime: mime.into(),
                 },
             );
-            hub.end_capture().unwrap().container_extension()
+            hub.capture_extension()
         };
 
-        assert_eq!(extension("video/mp4;codecs=avc1.640028,mp4a.40.2"), "mp4");
-        assert_eq!(extension("video/webm;codecs=vp9,opus"), "webm");
-        assert_eq!(extension(""), "mp4");
+        assert_eq!(extension("video/mp4;codecs=avc1.640028,mp4a.40.2"), Some("mp4"));
+        assert_eq!(extension("video/webm;codecs=vp9,opus"), Some("webm"));
+        assert_eq!(extension(""), Some("mp4"));
     }
 }

@@ -3,6 +3,14 @@ use std::time::{Duration, Instant};
 use crate::rules::RuleEvidence;
 use crate::signals::BrowserTab;
 
+/// Identifies one meeting from tick to tick: the rule that detected it and, for a meeting reported by the browser
+/// extension, its tab. Two tabs of the same service are two meetings.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MeetingKey {
+    pub rule_name: String,
+    pub browser_tab: Option<BrowserTab>,
+}
+
 /// A detected meeting. The devices and display are values observed at start time, used to decide what to record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeetingInfo {
@@ -13,6 +21,17 @@ pub struct MeetingInfo {
     pub window: Option<u64>,
     pub display: Option<String>,
     pub browser_tab: Option<BrowserTab>,
+    /// What tells the meeting apart from others of the same rule, as observed at start. Shown to the user only.
+    pub title: Option<String>,
+}
+
+impl MeetingInfo {
+    pub fn key(&self) -> MeetingKey {
+        MeetingKey {
+            rule_name: self.rule_name.clone(),
+            browser_tab: self.browser_tab,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,10 +40,11 @@ pub enum DetectorEvent {
     Ended(MeetingInfo),
 }
 
-/// A state machine that decides meeting start and end from each rule's time series of evidence.
+/// A state machine that decides, for each meeting separately, when it starts and ends from the time series of
+/// evidence. Several meetings can be in progress at once.
 ///
-/// - Start: when some rule's start condition holds for `start_debounce`.
-/// - Continue: while the started rule's process keeps using the microphone (the window title does not matter).
+/// - Start: when a meeting's start condition holds for `start_debounce`.
+/// - Continue: while that meeting's process keeps using the microphone (the window title does not matter).
 /// - End: when the continue condition lapses for `end_grace`.
 ///
 /// The caller supplies the time. It has no side effects.
@@ -32,8 +52,15 @@ pub enum DetectorEvent {
 pub struct MeetingDetector {
     start_debounce: Duration,
     end_grace: Duration,
-    current: Option<MeetingInfo>,
-    candidate: Option<(String, Instant)>,
+    /// Meetings in progress, in the order they started.
+    meetings: Vec<Tracked>,
+    /// Meetings whose start condition holds but not yet for `start_debounce`, with the time it began to hold.
+    candidates: Vec<(MeetingKey, Instant)>,
+}
+
+#[derive(Debug)]
+struct Tracked {
+    info: MeetingInfo,
     absent_since: Option<Instant>,
 }
 
@@ -42,83 +69,77 @@ impl MeetingDetector {
         Self {
             start_debounce,
             end_grace,
-            current: None,
-            candidate: None,
-            absent_since: None,
+            meetings: Vec::new(),
+            candidates: Vec::new(),
         }
     }
 
-    pub fn current(&self) -> Option<&MeetingInfo> {
-        self.current.as_ref()
+    /// Meetings in progress, in the order they started.
+    pub fn meetings(&self) -> impl Iterator<Item = &MeetingInfo> {
+        self.meetings.iter().map(|tracked| &tracked.info)
     }
 
-    pub fn update(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Option<DetectorEvent> {
-        match self.current.take() {
-            None => self.update_idle(now, evidence),
-            Some(meeting) => self.update_in_meeting(now, evidence, meeting),
-        }
+    /// Advances every meeting by one observation. Ends are reported before starts.
+    pub fn update(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
+        let mut events = self.update_meetings(now, evidence);
+        events.extend(self.update_candidates(now, evidence));
+        events
     }
 
-    fn update_idle(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Option<DetectorEvent> {
-        // Keep the candidate rule while it still meets its condition, so the candidate never switches mid-decision.
-        let candidate_rule = self.candidate.as_ref().map(|(rule, _)| rule.as_str());
-        let Some(found) = evidence
-            .iter()
-            .find(|e| e.can_start && Some(e.rule_name.as_str()) == candidate_rule)
-            .or_else(|| evidence.iter().find(|e| e.can_start))
-        else {
-            self.candidate = None;
-            return None;
-        };
-
-        let since = match &self.candidate {
-            Some((rule, since)) if *rule == found.rule_name => *since,
-            _ => {
-                self.candidate = Some((found.rule_name.clone(), now));
-                now
+    fn update_meetings(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
+        let mut ended = Vec::new();
+        let end_grace = self.end_grace;
+        self.meetings.retain_mut(|tracked| {
+            let key = tracked.info.key();
+            if evidence.iter().any(|e| e.mic_active && e.key() == key) {
+                tracked.absent_since = None;
+                return true;
             }
-        };
-        if now.duration_since(since) < self.start_debounce {
-            return None;
-        }
-
-        self.candidate = None;
-        self.absent_since = None;
-        let meeting = MeetingInfo {
-            rule_name: found.rule_name.clone(),
-            capture_device_id: found.capture_device_id.clone(),
-            render_device_id: found.render_device_id.clone(),
-            process_id: found.process_id,
-            window: found.window,
-            display: found.display.clone(),
-            browser_tab: found.browser_tab,
-        };
-        self.current = Some(meeting.clone());
-        Some(DetectorEvent::Started(meeting))
+            let absent_since = *tracked.absent_since.get_or_insert(now);
+            if now.duration_since(absent_since) < end_grace {
+                return true;
+            }
+            ended.push(DetectorEvent::Ended(tracked.info.clone()));
+            false
+        });
+        ended
     }
 
-    fn update_in_meeting(
-        &mut self,
-        now: Instant,
-        evidence: &[RuleEvidence],
-        meeting: MeetingInfo,
-    ) -> Option<DetectorEvent> {
-        if evidence
-            .iter()
-            .any(|e| e.rule_name == meeting.rule_name && e.mic_active)
-        {
-            self.absent_since = None;
-            self.current = Some(meeting);
-            return None;
+    fn update_candidates(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
+        let previous = std::mem::take(&mut self.candidates);
+        let mut started = Vec::new();
+        for found in evidence.iter().filter(|e| e.can_start) {
+            let key = found.key();
+            let in_progress = self.meetings.iter().any(|tracked| tracked.info.key() == key);
+            let already_seen = self.candidates.iter().any(|(candidate, _)| *candidate == key);
+            if in_progress || already_seen {
+                continue;
+            }
+            // Keep the time the condition began to hold while it keeps holding.
+            let since = previous
+                .iter()
+                .find(|(candidate, _)| *candidate == key)
+                .map_or(now, |(_, since)| *since);
+            if now.duration_since(since) < self.start_debounce {
+                self.candidates.push((key, since));
+                continue;
+            }
+            let meeting = MeetingInfo {
+                rule_name: found.rule_name.clone(),
+                capture_device_id: found.capture_device_id.clone(),
+                render_device_id: found.render_device_id.clone(),
+                process_id: found.process_id,
+                window: found.window,
+                display: found.display.clone(),
+                browser_tab: found.browser_tab,
+                title: found.title.clone(),
+            };
+            self.meetings.push(Tracked {
+                info: meeting.clone(),
+                absent_since: None,
+            });
+            started.push(DetectorEvent::Started(meeting));
         }
-
-        let absent_since = *self.absent_since.get_or_insert(now);
-        if now.duration_since(absent_since) < self.end_grace {
-            self.current = Some(meeting);
-            return None;
-        }
-
-        self.absent_since = None;
-        Some(DetectorEvent::Ended(meeting))
+        started
     }
 }

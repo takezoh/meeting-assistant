@@ -237,6 +237,42 @@ fn a_recording_started_without_a_window_moves_to_a_window_that_appears() {
 }
 
 #[test]
+fn lists_every_meeting_in_progress_and_records_one_at_a_time() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+    f.run(10);
+
+    let tab = BrowserTab { link: 1, tab: 42 };
+    let mut both = zoom_in_meeting();
+    both.browser_links = vec![BrowserLink {
+        id: 1,
+        host_process_id: 301,
+    }];
+    both.browser_meetings = vec![BrowserMeeting {
+        tab,
+        service: "GoogleMeet".into(),
+        title: None,
+    }];
+    f.signals.set(both.clone());
+    f.run(10);
+
+    let status = f.engine.status();
+    let names: Vec<_> = status.meetings.iter().map(|m| m.key.rule_name.as_str()).collect();
+    assert_eq!(names, ["Zoom", "GoogleMeet"]);
+    assert!(status.is_recording_meeting(&status.meetings[0].key));
+    assert_eq!(f.recorder.state().started.len(), 1);
+
+    // Zoom hangs up; the call in the tab is recorded next.
+    both.capture_sessions.clear();
+    f.signals.set(both);
+    f.run(20);
+    let state = f.recorder.state();
+    assert_eq!(state.stop_count, 1);
+    assert_eq!(state.started.len(), 2);
+    assert_eq!(state.started[1].video, VideoTarget::BrowserTab(tab));
+}
+
+#[test]
 fn records_a_meeting_reported_by_the_extension_in_its_tab_from_start_to_end() {
     let mut f = fixture();
     let tab = BrowserTab { link: 1, tab: 42 };
@@ -248,6 +284,7 @@ fn records_a_meeting_reported_by_the_extension_in_its_tab_from_start_to_end() {
     in_meeting.browser_meetings = vec![BrowserMeeting {
         tab,
         service: "GoogleMeet".into(),
+        title: None,
     }];
     f.signals.set(in_meeting.clone());
     f.run(10);

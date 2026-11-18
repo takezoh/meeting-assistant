@@ -37,6 +37,8 @@ pub struct RecorderState {
     pub failure: Option<String>,
     pub retargets: Vec<u64>,
     pub retarget_fails: bool,
+    /// While `Some`, started recordings report a file with this extension, as a tab recorded as WebM does.
+    pub written_extension: Option<String>,
 }
 
 /// A recorder that only logs the instructions it receives. Clones share state,
@@ -58,14 +60,17 @@ impl FakeRecorder {
 }
 
 impl Recorder for FakeRecorder {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<()> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
         let mut state = self.state();
         if let Some(error) = state.start_failures.pop_front() {
             anyhow::bail!(error);
         }
         state.started.push(request.clone());
         state.recording = true;
-        Ok(())
+        Ok(match &state.written_extension {
+            Some(extension) => request.output_path.with_extension(extension),
+            None => request.output_path.clone(),
+        })
     }
 
     fn stop(&mut self) -> anyhow::Result<()> {

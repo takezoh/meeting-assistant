@@ -1,7 +1,7 @@
 use meeting_assistant_core::fakes::{FakeOutputFolder, FakeRecorder, RecordedPauses, fake_ports_with, output_path};
 use meeting_assistant_core::{
-    BrowserTab, CaptureScope, DetectorEvent, MeetingInfo, NoticeLevel, RecordingCoordinator, RecordingTrigger,
-    VideoTarget,
+    BrowserTab, CaptureScope, CoordinatorStatus, DetectorEvent, ManualTarget, MeetingInfo, NoticeLevel,
+    RecordingCoordinator, RecordingTrigger, VideoTarget,
 };
 
 type Coordinator = RecordingCoordinator<FakeRecorder>;
@@ -42,6 +42,7 @@ fn zoom() -> MeetingInfo {
         window: Some(77),
         display: Some("DISPLAY2".into()),
         browser_tab: None,
+        title: None,
     }
 }
 
@@ -55,6 +56,14 @@ fn ended(c: &mut Coordinator) {
 
 fn has_notice(c: &mut Coordinator, level: NoticeLevel) -> bool {
     c.take_notices().iter().any(|n| n.level == level)
+}
+
+fn trigger(status: &CoordinatorStatus) -> Option<RecordingTrigger> {
+    status.recording.as_ref().map(|r| r.trigger)
+}
+
+fn record_zoom() -> ManualTarget {
+    ManualTarget::Meeting(zoom().key())
 }
 
 #[test]
@@ -72,7 +81,8 @@ fn meeting_start_begins_recording_the_apps_window_and_sound() {
     assert_eq!(request.render_device_id.as_deref(), Some("speaker"));
     let status = f.coordinator.status();
     assert!(status.is_recording());
-    assert_eq!(status.recording_trigger, Some(RecordingTrigger::Auto));
+    assert_eq!(trigger(&status), Some(RecordingTrigger::Auto));
+    assert!(status.is_recording_meeting(&zoom().key()));
 }
 
 #[test]
@@ -127,7 +137,10 @@ fn does_not_record_when_a_meeting_starts_with_auto_recording_disabled() {
     started(&mut f.coordinator);
 
     assert!(f.recorder.state().started.is_empty());
-    assert_eq!(f.coordinator.status().meeting.as_deref(), Some("Zoom"));
+    let status = f.coordinator.status();
+    assert_eq!(status.meetings.len(), 1);
+    assert_eq!(status.meetings[0].key, zoom().key());
+    assert!(!status.meetings[0].auto_stopped);
 }
 
 #[test]
@@ -166,22 +179,36 @@ fn after_auto_recording_is_stopped_manually_it_does_not_resume_for_that_meeting(
 #[test]
 fn a_manually_started_recording_continues_after_the_meeting_ends() {
     let mut f = fixture();
-    f.coordinator.start_manual();
+    f.coordinator.start_manual(ManualTarget::Screen);
     started(&mut f.coordinator);
     ended(&mut f.coordinator);
 
     assert_eq!(f.recorder.state().started.len(), 1);
     assert_eq!(f.recorder.state().stop_count, 0);
-    assert_eq!(f.coordinator.status().recording_trigger, Some(RecordingTrigger::Manual));
+    assert_eq!(trigger(&f.coordinator.status()), Some(RecordingTrigger::Manual));
 
     f.coordinator.stop_manual();
     assert_eq!(f.recorder.state().stop_count, 1);
 }
 
 #[test]
-fn manual_recording_without_a_meeting_targets_the_whole_display_and_default_devices() {
+fn a_manual_recording_of_a_meeting_continues_after_that_meeting_ends() {
     let mut f = fixture();
-    f.coordinator.start_manual();
+    f.coordinator.set_auto_enabled(false);
+    started(&mut f.coordinator);
+    f.coordinator.start_manual(record_zoom());
+    ended(&mut f.coordinator);
+
+    assert_eq!(f.recorder.state().stop_count, 0);
+    let status = f.coordinator.status();
+    assert!(status.meetings.is_empty());
+    assert_eq!(trigger(&status), Some(RecordingTrigger::Manual));
+}
+
+#[test]
+fn manual_recording_of_the_screen_targets_the_whole_display_and_default_devices() {
+    let mut f = fixture();
+    f.coordinator.start_manual(ManualTarget::Screen);
 
     let state = f.recorder.state();
     let request = &state.started[0];
@@ -258,7 +285,7 @@ fn stops_resuming_and_notifies_an_error_when_recording_failures_repeat() {
 #[test]
 fn a_failed_manual_recording_is_not_resumed_and_notifies_an_error() {
     let mut f = fixture();
-    f.coordinator.start_manual();
+    f.coordinator.start_manual(ManualTarget::Screen);
     f.recorder.fail("disk full");
     f.coordinator.poll_recorder();
 
@@ -334,7 +361,7 @@ fn manual_recording_during_a_meeting_targets_that_app() {
     let mut f = fixture();
     f.coordinator.set_auto_enabled(false);
     started(&mut f.coordinator);
-    f.coordinator.start_manual();
+    f.coordinator.start_manual(record_zoom());
 
     let state = f.recorder.state();
     assert_eq!(state.started[0].video, VideoTarget::Window(77));
@@ -426,6 +453,7 @@ fn meet_tab() -> MeetingInfo {
         window: None,
         display: None,
         browser_tab: Some(BrowserTab { link: 1, tab: 42 }),
+        title: None,
     }
 }
 
@@ -441,6 +469,197 @@ fn a_meeting_reported_by_the_extension_is_recorded_in_its_tab() {
     assert!(request.output_path.ends_with("2026-11-17_10-00-00_GoogleMeet.mp4"));
     // Tab recordings do not look for a window to move to.
     assert!(!f.coordinator.needs_window(&[].into()));
+}
+
+fn teams() -> MeetingInfo {
+    MeetingInfo {
+        rule_name: "Teams".into(),
+        process_id: Some(200),
+        window: Some(88),
+        ..zoom()
+    }
+}
+
+#[test]
+fn a_meeting_detected_while_another_is_recorded_waits_and_is_recorded_when_that_one_ends() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+
+    let status = f.coordinator.status();
+    let keys: Vec<_> = status.meetings.iter().map(|m| m.key.clone()).collect();
+    assert_eq!(
+        keys,
+        [zoom().key(), teams().key()],
+        "both are listed, in the order they started"
+    );
+    assert!(status.is_recording_meeting(&zoom().key()));
+    assert_eq!(f.recorder.state().started.len(), 1, "one recording at a time");
+
+    ended(&mut f.coordinator);
+
+    let state = f.recorder.state();
+    assert_eq!(state.stop_count, 1);
+    assert_eq!(state.started.len(), 2);
+    assert_eq!(state.started[1].video, VideoTarget::Window(88));
+    assert_eq!(state.started[1].audio_process_id, Some(200));
+}
+
+#[test]
+fn the_end_of_a_meeting_that_is_not_recorded_does_not_stop_the_recording() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+    f.coordinator.handle(DetectorEvent::Ended(teams()));
+
+    assert_eq!(f.recorder.state().stop_count, 0);
+    assert!(f.coordinator.status().is_recording_meeting(&zoom().key()));
+}
+
+#[test]
+fn stopping_an_automatic_recording_by_hand_marks_that_meeting_and_starts_no_other() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+    f.coordinator.stop_manual();
+
+    let status = f.coordinator.status();
+    assert!(status.meetings[0].auto_stopped);
+    assert!(!status.meetings[1].auto_stopped);
+    assert!(!status.is_recording(), "the other detected meeting is not started");
+    assert_eq!(f.recorder.state().started.len(), 1);
+
+    // Nor does the end of the stopped meeting start it.
+    ended(&mut f.coordinator);
+    assert!(!f.coordinator.status().is_recording());
+}
+
+#[test]
+fn after_a_stop_by_hand_the_next_meeting_that_starts_is_recorded() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+    f.coordinator.stop_manual();
+
+    let webex = MeetingInfo {
+        rule_name: "Webex".into(),
+        process_id: Some(300),
+        window: Some(99),
+        ..zoom()
+    };
+    f.coordinator.handle(DetectorEvent::Started(webex.clone()));
+
+    let status = f.coordinator.status();
+    assert!(
+        status.is_recording_meeting(&webex.key()),
+        "the meeting that started, not the one that was detected earlier"
+    );
+    assert_eq!(f.recorder.state().started[1].video, VideoTarget::Window(99));
+}
+
+#[test]
+fn the_file_the_recorder_actually_writes_is_the_one_reported() {
+    let mut f = fixture();
+    f.recorder.state().written_extension = Some("webm".into());
+    f.coordinator.handle(DetectorEvent::Started(meet_tab()));
+
+    let expected = output_path("2026-11-17_10-00-00_GoogleMeet.webm");
+    assert_eq!(f.coordinator.status().recording.unwrap().path, expected);
+    let notices = f.coordinator.take_notices();
+    assert!(notices[0].message.ends_with("GoogleMeet.webm"), "{notices:?}");
+
+    f.coordinator.stop_manual();
+    let saved = f.coordinator.take_notices();
+    assert!(saved[0].message.ends_with("GoogleMeet.webm"), "{saved:?}");
+}
+
+#[test]
+fn the_title_that_tells_a_meeting_apart_is_reported_with_it() {
+    let mut f = fixture();
+    let meet = MeetingInfo {
+        title: Some("abc-defg-hij".into()),
+        ..meet_tab()
+    };
+    f.coordinator.handle(DetectorEvent::Started(meet));
+
+    assert_eq!(
+        f.coordinator.status().meetings[0].title.as_deref(),
+        Some("abc-defg-hij")
+    );
+}
+
+#[test]
+fn a_detected_meeting_can_be_recorded_by_hand_after_its_automatic_recording_was_stopped() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.stop_manual();
+    f.coordinator.start_manual(record_zoom());
+
+    let status = f.coordinator.status();
+    assert_eq!(trigger(&status), Some(RecordingTrigger::Manual));
+    assert!(status.is_recording_meeting(&zoom().key()));
+    assert_eq!(f.recorder.state().started[1].video, VideoTarget::Window(77));
+}
+
+#[test]
+fn a_manual_start_while_recording_is_ignored() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+    f.coordinator.start_manual(ManualTarget::Meeting(teams().key()));
+    f.coordinator.start_manual(ManualTarget::Screen);
+
+    assert_eq!(f.recorder.state().started.len(), 1);
+    assert!(f.coordinator.status().is_recording_meeting(&zoom().key()));
+}
+
+#[test]
+fn a_manual_start_for_a_meeting_that_is_no_longer_detected_records_nothing() {
+    let mut f = fixture();
+    f.coordinator.start_manual(record_zoom());
+
+    assert!(f.recorder.state().started.is_empty());
+    assert!(has_notice(&mut f.coordinator, NoticeLevel::Warning));
+}
+
+#[test]
+fn when_a_meeting_cannot_be_started_automatically_the_next_detected_meeting_is_tried() {
+    let mut f = fixture();
+    f.coordinator.set_auto_enabled(false);
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+    let failures = (0..Coordinator::MAX_START_ATTEMPTS).map(|_| "window gone".to_owned());
+    f.recorder.state().start_failures.extend(failures);
+
+    f.coordinator.set_auto_enabled(true);
+
+    let status = f.coordinator.status();
+    assert!(status.meetings[0].auto_stopped);
+    assert!(status.is_recording_meeting(&teams().key()));
+}
+
+#[test]
+fn re_enabling_auto_recording_clears_meetings_whose_automatic_recording_was_stopped() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.stop_manual();
+    f.coordinator.set_auto_enabled(false);
+    f.coordinator.set_auto_enabled(true);
+
+    let status = f.coordinator.status();
+    assert!(!status.meetings[0].auto_stopped);
+    assert_eq!(trigger(&status), Some(RecordingTrigger::Auto));
+}
+
+#[test]
+fn shutdown_does_not_start_a_waiting_meeting() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.coordinator.handle(DetectorEvent::Started(teams()));
+    f.coordinator.shutdown();
+
+    assert_eq!(f.recorder.state().started.len(), 1);
+    assert!(!f.coordinator.status().is_recording());
 }
 
 #[test]

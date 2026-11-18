@@ -33,7 +33,7 @@ Each message is a 32-bit length in native byte order followed by that many bytes
 | `type` | Fields | Meaning |
 | --- | --- | --- |
 | `hello` | `token`, `host_pid` | Sent by the relay first |
-| `meeting` | `tab`, `active`, `service` (optional) | A call became connected or ended in a tab. `service` names the site and is used in the file name |
+| `meeting` | `tab`, `active`, `service` (optional), `title` (optional) | A call became connected or ended in a tab. `service` names the site and is used in the file name. `title` tells two meetings of one service apart: the Google Meet meeting code, otherwise the page's title. The app keeps at most 120 characters of it and only shows it; an app that does not know the field ignores it |
 | `started` | `tab`, `mime` | Recording of the tab has started with this container and codecs |
 | `chunk` | `tab`, `data` | The next piece of the recording, base64 encoded |
 | `stopped` | `tab` | The recorder has stopped and every chunk has been sent |
@@ -66,7 +66,7 @@ app                         extension
 - `start_capture` fails if `started` or `error` does not arrive within the start timeout, and the coordinator treats that like any failed start.
 - A `chunk` for a tab that is not being recorded is dropped.
 - If the connection closes while recording, the recording ends as failed and the bytes received so far remain in the file.
-- The extension prefers MP4 (H.264 and AAC) and falls back to WebM when the browser cannot produce MP4. The app names the file by the reported container.
+- The extension prefers MP4 (H.264 and AAC) and falls back to WebM when the browser cannot produce MP4. When `started` arrives the app renames the file to the reported container's extension, choosing a free name instead of replacing an existing file, and reports that name as the recording's file.
 
 ## Capture without a user gesture
 

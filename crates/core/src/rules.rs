@@ -4,6 +4,7 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigError;
+use crate::detector::MeetingKey;
 use crate::signals::{BrowserTab, ProcessEntry, SignalSnapshot};
 
 /// A detection rule: "if this process is using the microphone, a meeting is in progress".
@@ -82,6 +83,18 @@ pub struct RuleEvidence {
     pub display: Option<String>,
     /// For a meeting reported by the browser extension, that tab.
     pub browser_tab: Option<BrowserTab>,
+    /// What tells the meeting apart from others of the same rule, when known. Shown to the user only.
+    pub title: Option<String>,
+}
+
+impl RuleEvidence {
+    /// The meeting this evidence is about.
+    pub fn key(&self) -> MeetingKey {
+        MeetingKey {
+            rule_name: self.rule_name.clone(),
+            browser_tab: self.browser_tab,
+        }
+    }
 }
 
 /// Converts a signal snapshot into per-rule evidence. Holds no state.
@@ -153,6 +166,7 @@ impl RuleEvaluator {
                     window: window.map(|w| w.id),
                     display: window.and_then(|w| w.display.clone()),
                     browser_tab: None,
+                    title: None,
                 }
             })
             .collect();
@@ -186,6 +200,7 @@ impl RuleEvaluator {
                 window: None,
                 display: None,
                 browser_tab: Some(meeting.tab),
+                title: meeting.title.clone(),
             })
             .collect();
         result.append(&mut by_rule);

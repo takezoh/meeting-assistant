@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, ConfigError};
-use crate::coordinator::{CoordinatorStatus, Notice, NoticeLevel, RecordingCoordinator};
+use crate::coordinator::{CoordinatorStatus, ManualTarget, Notice, NoticeLevel, RecordingCoordinator};
 use crate::detector::MeetingDetector;
 use crate::recording::Recorder;
 use crate::rules::{RuleEvaluator, RuleEvidence};
@@ -76,13 +76,11 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             }
         };
 
-        match self.detector.update(now, &evidence) {
-            Some(event) => self.coordinator.handle(event),
-            None => {
-                if let Some(windows) = windows {
-                    self.follow_window(&windows, &evidence);
-                }
-            }
+        for event in self.detector.update(now, &evidence) {
+            self.coordinator.handle(event);
+        }
+        if let Some(windows) = windows {
+            self.follow_window(&windows, &evidence);
         }
     }
 
@@ -90,21 +88,22 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
     /// moves the recording target to a window of the same app.
     /// While the target window remains, does not move even if a larger window appears.
     fn follow_window(&mut self, windows: &HashSet<u64>, evidence: &[RuleEvidence]) {
-        let Some(meeting) = self.detector.current() else { return };
-        if !self.coordinator.needs_window(windows) {
+        let Some(meeting) = self.coordinator.recorded_meeting().cloned() else {
+            return;
+        };
+        if !self.detector.meetings().any(|detected| detected.key() == meeting)
+            || !self.coordinator.needs_window(windows)
+        {
             return;
         }
-        let replacement = evidence
-            .iter()
-            .find(|e| e.rule_name == meeting.rule_name)
-            .and_then(|e| e.window);
+        let replacement = evidence.iter().find(|e| e.key() == meeting).and_then(|e| e.window);
         if let Some(replacement) = replacement {
             self.coordinator.retarget(replacement);
         }
     }
 
-    pub fn start_manual(&mut self) {
-        self.coordinator.start_manual();
+    pub fn start_manual(&mut self, target: ManualTarget) {
+        self.coordinator.start_manual(target);
     }
 
     pub fn stop_manual(&mut self) {

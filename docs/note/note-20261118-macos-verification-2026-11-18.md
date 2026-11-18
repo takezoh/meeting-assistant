@@ -63,10 +63,25 @@ These are observations from one machine on one day. They do not establish behavi
 - A failed first capture attempt blocked the retries for that tab; see [the issue](../issue/issue-20261118-a-failed-tab-capture-start-blocks-retrie.md).
 - In every file the video track was shorter than the audio track: 31.9 against 32.8 seconds, and 441.9 against 456.3 seconds in the long recording. The test page changed its picture ten times a second and its window was not kept in front. The cause was not investigated.
 
+### Status panel, later the same day
+
+A development build was run with its own configuration while the installed copy was stopped. A small script stood in for the extension: it connected to the app's loopback link with the published token, reported meetings in tabs and answered `start` and `stop`. The user looked at the screen; this session could not capture it.
+
+| What was done | Observed |
+| --- | --- |
+| Opened the panel from the menu bar icon | The panel hung below the icon; the menu bar showed the running time next to the red icon |
+| Two meetings reported, one after the other | Both were listed; the first was recorded, the second shown as waiting; one recording at a time |
+| Stop on the recorded meeting (first build) | The recording stopped and the other meeting was recorded automatically, while the stopped one was mislabelled as waiting. Both were changed: a stop by hand now starts nothing, and the label was fixed |
+| The quit button | The first build quit at once; it now asks first. The panel was too translucent to read over a terminal; its background was made nearly opaque |
+| Meeting ended while recorded automatically, another waiting | The recording was finalized and the waiting meeting was recorded next |
+| Two Google Meet tabs with meeting codes; Stop on the recorded one | The rows were told apart by their codes, the menu's first line named both, and stopping started no other recording |
+
+The stand-in reported WebM, which exposed that notices and the panel name such a file `.mp4`; see [the issue](../issue/issue-20261118-a-tab-recording-saved-as-webm-is-reporte.md). The installed copy was started again through its LaunchAgent afterwards and reconnected to the browser extension. The installed copy and its extension were not updated.
+
 ### Not checked
 
 - A real logout, restart or shutdown during a recording. Only the quit Apple event and SIGTERM were exercised.
 - Starting the browser from the launcher apps, and loading the extension through the browser's extensions page in a normal profile.
-- The appearance of the menu bar icon, its menu, notifications and dialogs.
+- The appearance of notifications and dialogs. The menu bar icon and the status panel only as described above, with synthetic meetings.
 - Recording through Edge. Edge was started only for the capture experiments that used the fake-UI switch.
 - Real calls on any meeting service, long recordings, Intel Macs.

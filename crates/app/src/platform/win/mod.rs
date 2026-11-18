@@ -17,6 +17,7 @@ pub use self::install::PlatformInstaller;
 pub use self::recorder::{PlatformRecorder, recorder};
 pub use self::session::{request_quit, watch_exit_requests};
 pub use self::signals::WindowsSignalSource as PlatformSignalSource;
+use crate::panel::view::Surface;
 
 /// Whether a command-line output exists.
 ///
@@ -45,6 +46,42 @@ pub fn show_error(message: &str) {
 /// Reports the result in a dialog when there is no output.
 pub fn show_info(message: &str) {
     message_box(message, MB_ICONINFORMATION);
+}
+
+/// Whether the whole screen can be recorded.
+pub const SCREEN_CAPTURE: bool = true;
+
+/// The status panel's window is opaque, has no taskbar button and keeps the system's shadow without a frame.
+pub fn panel_window(builder: tao::window::WindowBuilder) -> tao::window::WindowBuilder {
+    use tao::platform::windows::WindowBuilderExtWindows;
+    builder.with_skip_taskbar(true).with_undecorated_shadow(true)
+}
+
+/// Asks the window manager to round the status panel's corners (Windows 11; earlier versions ignore it).
+/// The panel is opaque.
+pub fn style_panel(window: &tao::window::Window) -> Surface {
+    use tao::platform::windows::WindowExtWindows;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute};
+
+    let preference = DWMWCP_ROUND;
+    // SAFETY: the window handle is valid while `window` lives, and the attribute is read from `preference`, whose
+    // size is passed with it.
+    let rounded = unsafe {
+        DwmSetWindowAttribute(
+            HWND(window.hwnd() as *mut std::ffi::c_void),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::from_ref(&preference).cast(),
+            std::mem::size_of_val(&preference) as u32,
+        )
+    };
+    if let Err(error) = &rounded {
+        log::info!("The panel keeps square corners: {error}");
+    }
+    Surface {
+        translucent: false,
+        rounded_by_system: true,
+    }
 }
 
 /// Shows a notification.
