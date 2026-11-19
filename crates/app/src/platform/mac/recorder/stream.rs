@@ -14,7 +14,10 @@ use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
-use objc2_core_audio_types::{AudioBuffer, AudioBufferList, kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved};
+use objc2_core_audio_types::{
+    AudioBuffer, AudioBufferList, AudioStreamBasicDescription, kAudioFormatFlagIsFloat,
+    kAudioFormatFlagIsNonInterleaved,
+};
 use objc2_core_foundation::CFRetained;
 use objc2_core_media::{
     CMAudioFormatDescriptionGetStreamBasicDescription, CMBlockBuffer, CMSampleBuffer, CMTime,
@@ -27,7 +30,7 @@ use objc2_screen_capture_kit::{
 };
 
 use crate::recording::mixer::{BufferPolicy, SourceBuffer};
-use crate::recording::pcm;
+use crate::recording::pcm::{self, SoundReport};
 use crate::recording::plan::{CHANNELS, SAMPLE_RATE};
 
 const START_TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,6 +52,7 @@ unsafe impl Sync for Picture {}
 pub struct Received {
     latest: Mutex<Option<Picture>>,
     sound: Mutex<SourceBuffer>,
+    report: Mutex<SoundReport>,
     stopped: Mutex<Option<String>>,
 }
 
@@ -57,6 +61,7 @@ impl Received {
         Arc::new(Self {
             latest: Mutex::new(None),
             sound: Mutex::new(SourceBuffer::new(BufferPolicy::for_format(SAMPLE_RATE, CHANNELS))),
+            report: Mutex::new(SoundReport::default()),
             stopped: Mutex::new(None),
         })
     }
@@ -69,8 +74,20 @@ impl Received {
     }
 
     fn sound(&self, sample: &CMSampleBuffer) {
-        if let Some(pcm) = with_float_channels(sample, |channels| pcm::interleave_f32_to_i16(channels, CHANNELS)) {
-            self.sound.lock().unwrap().push(&pcm);
+        let mut report = self.report.lock().unwrap();
+        if let Some(format) = stream_format(sample) {
+            report.format(|| describe(&format));
+        }
+        let converted = with_float_channels(sample, |channels| {
+            report.usable(channels);
+            pcm::interleave_f32_to_i16(channels, CHANNELS)
+        });
+        match converted {
+            Ok(pcm) => {
+                drop(report);
+                self.sound.lock().unwrap().push(&pcm);
+            }
+            Err(problem) => report.unusable(problem),
         }
     }
 }
@@ -125,6 +142,8 @@ pub struct Capture {
     _output: Retained<StreamOutput>,
     _queue: DispatchRetained<DispatchQueue>,
     received: Arc<Received>,
+    /// Whether this capture delivers sound, whose report is logged when it ends.
+    is_sound: bool,
 }
 
 impl Capture {
@@ -185,6 +204,7 @@ impl Capture {
             _output: output,
             _queue: queue,
             received,
+            is_sound: matches!(kind, Kind::Sound),
         })
     }
 
@@ -207,6 +227,13 @@ impl Drop for Capture {
     fn drop(&mut self) {
         // SAFETY: stopping a stream this capture started.
         let _ = wait_for(|handler| unsafe { self.stream.stopCaptureWithCompletionHandler(Some(handler)) });
+        if self.is_sound {
+            let report = self.received.report.lock().unwrap();
+            match self.stopped() {
+                Some(reason) => log::info!("Sound capture ended: {report}; it had stopped by itself: {reason}"),
+                None => log::info!("Sound capture ended: {report}"),
+            }
+        }
     }
 }
 
@@ -226,35 +253,65 @@ fn wait_for(call: impl FnOnce(&block2::DynBlock<dyn Fn(*mut NSError)>)) -> anyho
     }
 }
 
-/// Hands the float samples of an audio sample buffer, one slice per channel, to `convert`, without copying them when
-/// they are already one buffer per channel. `None` when the buffer is not 32-bit float audio.
-fn with_float_channels<R>(sample: &CMSampleBuffer, convert: impl FnOnce(&[&[f32]]) -> R) -> Option<R> {
-    // SAFETY: reading the sample's format; an audio sample's description is an audio format description.
-    let format = unsafe {
+/// The stream description of an audio sample, if it has one.
+fn stream_format(sample: &CMSampleBuffer) -> Option<AudioStreamBasicDescription> {
+    // SAFETY: reading the sample's format; an audio sample's description is an audio format description. The
+    // description is copied out while the format description is alive.
+    unsafe {
         let description = sample.format_description()?;
-        CMAudioFormatDescriptionGetStreamBasicDescription(&description).as_ref()?
-    };
+        CMAudioFormatDescriptionGetStreamBasicDescription(&description)
+            .as_ref()
+            .copied()
+    }
+}
+
+fn describe(format: &AudioStreamBasicDescription) -> String {
+    format!(
+        "{} Hz, {} channels, {} bit, flags {:#x}",
+        format.mSampleRate, format.mChannelsPerFrame, format.mBitsPerChannel, format.mFormatFlags
+    )
+}
+
+/// Hands the float samples of an audio sample buffer, one slice per channel, to `convert`, without copying them when
+/// they are already one buffer per channel. Fails, saying why, when the buffer is not 32-bit float audio or its
+/// samples cannot be read.
+fn with_float_channels<R>(sample: &CMSampleBuffer, convert: impl FnOnce(&[&[f32]]) -> R) -> Result<R, String> {
+    let format = stream_format(sample).ok_or("the sample has no audio format")?;
     if format.mFormatFlags & kAudioFormatFlagIsFloat == 0 || format.mBitsPerChannel != 32 {
-        return None;
+        return Err(format!("not 32-bit float ({})", describe(&format)));
     }
     let channels = format.mChannelsPerFrame.max(1) as usize;
     let planar = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0;
 
-    /// Room for as many buffers as there can be channels here.
-    #[repr(C)]
-    struct List {
-        count: u32,
-        buffers: [AudioBuffer; 8],
+    // Core Media fills the buffer list only when it is given exactly the size it needs; a larger list fails with
+    // kCMSampleBufferError_ArrayTooSmall. Ask for the size first.
+    let mut needed: usize = 0;
+    // SAFETY: only the needed size is written.
+    let status = unsafe {
+        sample.audio_buffer_list_with_retained_block_buffer(
+            &mut needed,
+            std::ptr::null_mut(),
+            0,
+            None,
+            None,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    let header = std::mem::offset_of!(AudioBufferList, mBuffers);
+    if status != 0 || needed < header {
+        return Err(format!("cannot size its buffer list ({status}, {needed} bytes)"));
     }
-    // SAFETY: plain data; zeroed is valid.
-    let mut list: List = unsafe { std::mem::zeroed() };
+    // Zeroed storage of `needed` bytes, aligned for the list's pointers.
+    let mut storage = vec![0u64; needed.div_ceil(size_of::<u64>())];
+    let list = storage.as_mut_ptr().cast::<AudioBufferList>();
     let mut block: *mut CMBlockBuffer = std::ptr::null_mut();
-    // SAFETY: `list` has room for 8 buffers, more than the two channels configured.
+    // SAFETY: `list` points to `needed` writable, aligned bytes.
     let status = unsafe {
         sample.audio_buffer_list_with_retained_block_buffer(
             std::ptr::null_mut(),
-            (&raw mut list).cast::<AudioBufferList>(),
-            size_of::<List>(),
+            list,
+            needed,
             None,
             None,
             kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
@@ -262,11 +319,20 @@ fn with_float_channels<R>(sample: &CMSampleBuffer, convert: impl FnOnce(&[&[f32]
         )
     };
     if status != 0 || block.is_null() {
-        return None;
+        return Err(format!("cannot read its samples ({status})"));
     }
     // SAFETY: a +1 reference that keeps the buffers' memory alive while they are read.
     let _block = unsafe { CFRetained::from_raw(NonNull::new_unchecked(block)) };
-    let buffers = &list.buffers[..(list.count as usize).min(list.buffers.len())];
+    // SAFETY: Core Media wrote the list into `storage`; the count is checked against the bytes it occupies.
+    let buffers = unsafe {
+        let count = (*list).mNumberBuffers as usize;
+        if header + count * size_of::<AudioBuffer>() > needed {
+            return Err(format!(
+                "its buffer list does not fit ({count} buffers in {needed} bytes)"
+            ));
+        }
+        std::slice::from_raw_parts((&raw const (*list).mBuffers).cast::<AudioBuffer>(), count)
+    };
     let slice = |buffer: &AudioBuffer| -> &[f32] {
         if buffer.mData.is_null() {
             return &[];
@@ -276,10 +342,126 @@ fn with_float_channels<R>(sample: &CMSampleBuffer, convert: impl FnOnce(&[&[f32]
     };
     if planar {
         let channels: Vec<&[f32]> = buffers.iter().map(slice).collect();
-        Some(convert(&channels))
+        Ok(convert(&channels))
     } else {
-        let split = pcm::deinterleave(slice(buffers.first()?), channels);
+        let split = pcm::deinterleave(slice(buffers.first().ok_or("the sample has no buffer")?), channels);
         let channels: Vec<&[f32]> = split.iter().map(Vec::as_slice).collect();
-        Some(convert(&channels))
+        Ok(convert(&channels))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_audio_types::{kAudioFormatFlagIsPacked, kAudioFormatLinearPCM};
+    use objc2_core_media::{
+        CMAudioFormatDescription, CMAudioFormatDescriptionCreate, CMAudioSampleBufferCreateReadyWithPacketDescriptions,
+        CMFormatDescription, kCMBlockBufferAssureMemoryNowFlag,
+    };
+
+    use super::*;
+
+    /// A sample of 32-bit float audio. `planar` is the format ScreenCaptureKit delivers sound in: one buffer per
+    /// channel; otherwise the channels are interleaved in one buffer.
+    fn float_sample(channels: &[&[f32]], planar: bool) -> CFRetained<CMSampleBuffer> {
+        let (layout, bytes_per_frame) = if planar {
+            (kAudioFormatFlagIsNonInterleaved, 4)
+        } else {
+            (0, 4 * channels.len() as u32)
+        };
+        let description = AudioStreamBasicDescription {
+            mSampleRate: f64::from(SAMPLE_RATE),
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | layout,
+            mBytesPerPacket: bytes_per_frame,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: bytes_per_frame,
+            mChannelsPerFrame: channels.len() as u32,
+            mBitsPerChannel: 32,
+            mReserved: 0,
+        };
+        let mut format: *const CMAudioFormatDescription = std::ptr::null();
+        // SAFETY: the description and the output are valid for the call.
+        let status = unsafe {
+            CMAudioFormatDescriptionCreate(
+                None,
+                NonNull::from(&description),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                None,
+                NonNull::from(&mut format),
+            )
+        };
+        assert_eq!(status, 0);
+        // SAFETY: a +1 reference from the call above.
+        let format = unsafe { CFRetained::from_raw(NonNull::new(format.cast_mut()).unwrap()) };
+
+        // A planar block holds one channel's samples after the other.
+        let samples: Vec<f32> = if planar {
+            channels.concat()
+        } else {
+            (0..channels[0].len())
+                .flat_map(|frame| channels.iter().map(move |channel| channel[frame]))
+                .collect()
+        };
+        let bytes = size_of_val(samples.as_slice());
+        let mut block: *mut CMBlockBuffer = std::ptr::null_mut();
+        // SAFETY: Core Media allocates `bytes` of memory for the block, then the samples are copied into it.
+        let block = unsafe {
+            let status = CMBlockBuffer::create_with_memory_block(
+                None,
+                std::ptr::null_mut(),
+                bytes,
+                None,
+                std::ptr::null(),
+                0,
+                bytes,
+                kCMBlockBufferAssureMemoryNowFlag,
+                NonNull::from(&mut block),
+            );
+            assert_eq!(status, 0);
+            let block = CFRetained::from_raw(NonNull::new(block).unwrap());
+            assert_eq!(
+                CMBlockBuffer::replace_data_bytes(NonNull::from(samples.as_slice()).cast(), &block, 0, bytes),
+                0
+            );
+            block
+        };
+
+        let mut sample: *mut CMSampleBuffer = std::ptr::null_mut();
+        // SAFETY: the block and the format describe the same data.
+        let status = unsafe {
+            CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+                None,
+                &block,
+                AsRef::<CMFormatDescription>::as_ref(&*format),
+                channels[0].len() as isize,
+                CMTime::new(0, SAMPLE_RATE as i32),
+                std::ptr::null(),
+                NonNull::from(&mut sample),
+            )
+        };
+        assert_eq!(status, 0);
+        // SAFETY: a +1 reference from the call above.
+        unsafe { CFRetained::from_raw(NonNull::new(sample).unwrap()) }
+    }
+
+    #[test]
+    fn a_planar_float_sample_is_read_one_slice_per_channel() {
+        let sample = float_sample(&[&[0.5, -0.5, 0.25], &[0.125, 0.0, -1.0]], true);
+        assert_eq!(read(&sample), Ok(vec![vec![0.5, -0.5, 0.25], vec![0.125, 0.0, -1.0]]));
+    }
+
+    #[test]
+    fn an_interleaved_float_sample_is_split_into_channels() {
+        let sample = float_sample(&[&[0.5, -0.5], &[0.125, 1.0]], false);
+        assert_eq!(read(&sample), Ok(vec![vec![0.5, -0.5], vec![0.125, 1.0]]));
+    }
+
+    fn read(sample: &CMSampleBuffer) -> Result<Vec<Vec<f32>>, String> {
+        with_float_channels(sample, |channels| {
+            channels.iter().map(|channel| channel.to_vec()).collect()
+        })
     }
 }

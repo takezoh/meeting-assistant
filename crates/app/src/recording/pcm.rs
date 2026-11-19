@@ -102,6 +102,68 @@ impl Resampler {
     }
 }
 
+/// What a sound capture delivered over a recording, for the log: how many buffers came, how many could not be used and
+/// why, their format and the loudest sample. Without it a capture that delivers nothing, or only silence, cannot be
+/// told apart from a quiet room.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SoundReport {
+    buffers: u64,
+    frames: u64,
+    peak: f32,
+    unusable: u64,
+    first_problem: Option<String>,
+    format: Option<String>,
+}
+
+impl SoundReport {
+    /// Counts a buffer that was used, given one slice per channel.
+    pub fn usable(&mut self, channels: &[&[f32]]) {
+        self.buffers += 1;
+        self.frames += channels.iter().map(|channel| channel.len()).min().unwrap_or(0) as u64;
+        let peak = channels
+            .iter()
+            .flat_map(|channel| channel.iter())
+            .filter(|sample| !sample.is_nan())
+            .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        self.peak = self.peak.max(peak);
+    }
+
+    /// Counts a buffer that could not be used. The first reason is kept.
+    pub fn unusable(&mut self, problem: impl Into<String>) {
+        self.buffers += 1;
+        self.unusable += 1;
+        self.first_problem.get_or_insert_with(|| problem.into());
+    }
+
+    /// Notes the format the buffers arrive in. The first one is kept; `describe` is called only for it.
+    pub fn format(&mut self, describe: impl FnOnce() -> String) {
+        self.format.get_or_insert_with(describe);
+    }
+}
+
+impl std::fmt::Display for SoundReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} buffers", self.buffers)?;
+        if self.buffers == 0 {
+            return Ok(());
+        }
+        write!(f, ", {} frames", self.frames)?;
+        if self.peak > 0.0 {
+            write!(f, ", loudest {:.1} dBFS", 20.0 * self.peak.log10())?;
+        } else {
+            write!(f, ", all silent")?;
+        }
+        if self.unusable > 0 {
+            let problem = self.first_problem.as_deref().unwrap_or("no reason given");
+            write!(f, ", {} not usable ({problem})", self.unusable)?;
+        }
+        if let Some(format) = &self.format {
+            write!(f, ", format {format}")?;
+        }
+        Ok(())
+    }
+}
+
 fn to_i16(sample: f32) -> i16 {
     // NaN becomes silence; everything else is clipped to the 16-bit range.
     if sample.is_nan() {
@@ -191,6 +253,40 @@ mod tests {
         assert_eq!(
             Resampler::new(24_000, 48_000).resample_to_i16(&channels, 2),
             interleave_f32_to_i16(&resampled, 2)
+        );
+    }
+
+    #[test]
+    fn a_sound_report_says_when_nothing_arrived() {
+        assert_eq!(SoundReport::default().to_string(), "0 buffers");
+    }
+
+    #[test]
+    fn a_sound_report_tells_silence_from_sound() {
+        let mut silent = SoundReport::default();
+        silent.usable(&[&[0.0, 0.0], &[0.0, 0.0]]);
+        assert_eq!(silent.to_string(), "1 buffers, 2 frames, all silent");
+
+        let mut sound = SoundReport::default();
+        sound.format(|| "48000 Hz".into());
+        sound.format(|| unreachable!("only the first format is described"));
+        sound.usable(&[&[0.0, -0.5, f32::NAN], &[0.1, 0.25]]);
+        sound.usable(&[&[0.1]]);
+        assert_eq!(
+            sound.to_string(),
+            "2 buffers, 3 frames, loudest -6.0 dBFS, format 48000 Hz"
+        );
+    }
+
+    #[test]
+    fn a_sound_report_keeps_the_first_reason_a_buffer_was_not_usable() {
+        let mut report = SoundReport::default();
+        report.unusable("not float");
+        report.unusable("other");
+        report.usable(&[&[1.0]]);
+        assert_eq!(
+            report.to_string(),
+            "3 buffers, 1 frames, loudest 0.0 dBFS, 2 not usable (not float)"
         );
     }
 
