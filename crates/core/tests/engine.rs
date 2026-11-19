@@ -136,26 +136,49 @@ fn zoom_with(windows: &[(&str, u64)]) -> meeting_assistant_core::SignalSnapshot 
 }
 
 #[test]
-fn moves_to_another_window_of_the_same_app_when_the_recorded_window_closes() {
+fn records_no_window_of_the_app_that_was_open_before_its_microphone_was_taken() {
     let mut f = fixture();
-    f.signals.set(zoom_with(&[("Waiting room", 5000)]));
+    // The windows are read first when the microphone is taken; those open then are the app's own.
+    f.signals.set(zoom_with(&[("Zoom", 9000), ("Waiting room", 5000)]));
     f.run(10);
     assert_eq!(
         f.recorder.state().started[0].video,
-        VideoTarget::Window(window_id("Waiting room"))
+        VideoTarget::Blank,
+        "no picture rather than the app's main window"
     );
-
-    f.signals.set(zoom_with(&[("Zoom Meeting", 9000)]));
-    f.run(3);
-
-    assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting")]);
-    assert_eq!(f.recorder.state().started.len(), 1);
-    assert!(f.recording());
+    assert!(f.recorder.state().retargets.is_empty());
 }
 
 #[test]
-fn does_not_move_when_a_larger_window_appears_while_the_recorded_window_remains() {
+fn moves_to_a_window_that_appears_after_the_recorded_one_closes() {
     let mut f = fixture();
+    f.signals.set(zoom_with(&[("Zoom", 9000)]));
+    f.run(1);
+    f.signals.set(zoom_with(&[("Zoom", 9000), ("Zoom Meeting", 5000)]));
+    f.run(5);
+    assert_eq!(
+        f.recorder.state().started[0].video,
+        VideoTarget::Window(window_id("Zoom Meeting"))
+    );
+
+    // The meeting window closes; the app's main window is not taken in its place.
+    f.signals.set(zoom_with(&[("Zoom", 9000)]));
+    f.run(5);
+    assert!(f.recording());
+    assert!(f.recorder.state().retargets.is_empty());
+
+    // Another window appears during the meeting: it is recorded.
+    f.signals.set(zoom_with(&[("Zoom", 9000), ("Zoom Meeting 2", 5000)]));
+    f.run(2);
+    assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting 2")]);
+    assert_eq!(f.recorder.state().started.len(), 1);
+}
+
+#[test]
+fn does_not_move_when_another_window_appears_while_the_recorded_window_remains() {
+    let mut f = fixture();
+    f.signals.set(zoom_with(&[]));
+    f.run(1);
     f.signals.set(zoom_with(&[("Zoom Meeting", 5000)]));
     f.run(10);
 
@@ -167,22 +190,6 @@ fn does_not_move_when_a_larger_window_appears_while_the_recorded_window_remains(
 }
 
 #[test]
-fn keeps_recording_and_waits_when_there_is_no_replacement_window() {
-    let mut f = fixture();
-    f.signals.set(zoom_with(&[("Zoom Meeting", 5000)]));
-    f.run(10);
-
-    f.signals.set(zoom_with(&[]));
-    f.run(5);
-    assert!(f.recording());
-    assert!(f.recorder.state().retargets.is_empty());
-
-    f.signals.set(zoom_with(&[("Zoom Meeting 2", 5000)]));
-    f.run(2);
-    assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting 2")]);
-}
-
-#[test]
 fn records_the_call_window_until_it_closes_and_stops_soon_after_without_moving_to_the_main_window() {
     let mut f = fixture();
     let main = window(100, "Zoom", "DISPLAY1", 9000);
@@ -191,9 +198,9 @@ fn records_the_call_window_until_it_closes_and_stops_soon_after_without_moving_t
         let users: &[u32] = if microphone { &[100] } else { &[] };
         snapshot(&[process(100, 1, "Zoom.exe")], users, &[], windows)
     };
-    f.signals.set(zoom(false, std::slice::from_ref(&main)));
+    // Joining takes the microphone, and the call window opens.
+    f.signals.set(zoom(true, std::slice::from_ref(&main)));
     f.run(1);
-    // Joining opens the call window and the microphone.
     f.signals.set(zoom(true, &[main.clone(), call.clone()]));
     f.run(5);
     assert_eq!(
@@ -293,4 +300,59 @@ fn records_a_meeting_reported_by_the_extension_in_its_tab_from_start_to_end() {
     f.run(20);
     assert!(!f.recording());
     assert_eq!(f.recorder.state().stop_count, 1);
+}
+
+#[test]
+fn reads_only_the_microphone_sessions_while_no_app_uses_the_microphone() {
+    let mut f = fixture();
+    f.signals.set(snapshot(
+        &[process(100, 1, "Zoom.exe")],
+        &[],
+        &[100],
+        &[window(100, "Zoom", "DISPLAY1", 1000)],
+    ));
+
+    f.run(3);
+
+    assert_eq!(f.signals.take_reads(), ["capture_sessions"; 3]);
+}
+
+#[test]
+fn reads_the_processes_windows_and_playback_once_an_app_uses_the_microphone() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+
+    f.run(1);
+
+    assert_eq!(
+        f.signals.take_reads(),
+        ["capture_sessions", "render_sessions", "processes", "windows"]
+    );
+}
+
+#[test]
+fn keeps_reading_the_windows_while_an_apps_meeting_is_recorded_without_the_microphone() {
+    let mut f = fixture();
+    f.signals.set(snapshot(
+        &[process(100, 1, "Zoom.exe")],
+        &[100],
+        &[],
+        &[window(100, "Zoom Meeting", "DISPLAY1", 1000)],
+    ));
+    f.run(10);
+    assert!(f.recording());
+
+    // The app lets the microphone go for a moment, within the end grace, and its window closes meanwhile.
+    let other_window = window(100, "Zoom Workplace", "DISPLAY1", 800);
+    f.signals
+        .set(snapshot(&[process(100, 1, "Zoom.exe")], &[], &[], &[other_window]));
+    f.signals.take_reads();
+    f.run(1);
+
+    assert_eq!(f.signals.take_reads(), ["capture_sessions", "processes", "windows"]);
+    assert_eq!(
+        f.recorder.state().retargets,
+        [window_id("Zoom Workplace")],
+        "the recording follows the app's other window"
+    );
 }

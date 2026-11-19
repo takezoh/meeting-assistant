@@ -76,19 +76,26 @@ fn a_desktop_app_launched_from_a_browser_belongs_to_the_app() {
 }
 
 #[test]
-fn the_largest_window_of_the_app_and_its_display_are_the_recording_target() {
+fn every_window_of_the_app_and_its_display_are_evidence_and_no_other_apps() {
     let s = snapshot(
-        &[process(100, 1, "Zoom.exe")],
+        &[process(100, 1, "Zoom.exe"), process(200, 1, "Notes.exe")],
         &[100],
         &[],
         &[
             window(100, "Zoom", "DISPLAY1", 100),
             window(100, "Zoom Meeting", "DISPLAY2", 9000),
+            window(200, "Notes", "DISPLAY1", 5000),
         ],
     );
     let e = evidence(&s, "Zoom");
-    assert_eq!(e.window, Some(window_id("Zoom Meeting")));
-    assert_eq!(e.display.as_deref(), Some("DISPLAY2"));
+    let windows: Vec<(u64, Option<&str>)> = e.windows.iter().map(|w| (w.id, w.display.as_deref())).collect();
+    assert_eq!(
+        windows,
+        [
+            (window_id("Zoom"), Some("DISPLAY1")),
+            (window_id("Zoom Meeting"), Some("DISPLAY2"))
+        ]
+    );
 }
 
 #[test]

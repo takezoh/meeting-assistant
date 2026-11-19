@@ -35,10 +35,6 @@ use crate::recording::pipeline::CaptureBackend;
 use crate::recording::plan::{AudioSource, MediaFormat, VideoSource};
 use crate::recording::session::ThreadedRecorder;
 
-/// The most pictures per second asked of ScreenCaptureKit. It sends a picture only when something changed, and the
-/// pipeline takes them at the configured frame rate.
-const MAX_FRAMERATE: u32 = 60;
-
 pub type PlatformRecorder = ThreadedRecorder<MacBackend>;
 
 /// Creates the recorder.
@@ -51,13 +47,17 @@ pub struct MacBackend {
     /// The size pictures are written at, once the output is open; later captures are fitted into it.
     canvas: Option<(u32, u32)>,
     black: Option<Picture>,
+    /// The pictures per second written. ScreenCaptureKit is asked for no more: it sends a picture only when
+    /// something changed, and one more than is written is a copy for nothing.
+    framerate: u32,
 }
 
 impl MacBackend {
-    pub fn create() -> anyhow::Result<Self> {
+    pub fn create(video: &VideoConfig) -> anyhow::Result<Self> {
         Ok(Self {
             canvas: None,
             black: None,
+            framerate: video.framerate,
         })
     }
 }
@@ -90,7 +90,7 @@ impl CaptureBackend for MacBackend {
             &filter,
             &Kind::Pictures {
                 size: canvas,
-                framerate: MAX_FRAMERATE,
+                framerate: self.framerate,
             },
         )?;
         Ok(Video {
@@ -123,7 +123,7 @@ impl CaptureBackend for MacBackend {
 
     fn take_picture(&mut self, video: &mut Video) -> anyhow::Result<Option<Picture>> {
         if let Some(reason) = video.capture.stopped() {
-            // A closed window has no new picture; the engine moves the recording to another window of the app.
+            // A closed window has no new picture; the engine moves the recording to a window that appears for the meeting.
             anyhow::ensure!(video.is_window, "the display being captured is gone: {reason}");
             return Ok(None);
         }
@@ -140,6 +140,13 @@ impl CaptureBackend for MacBackend {
         let black = black_picture(width, height)?;
         self.black = Some(black.clone());
         Ok(black)
+    }
+
+    fn start_writing(&mut self, audio: &mut Audio) {
+        match audio {
+            Audio::Stream(capture) => capture.start_writing(),
+            Audio::Microphone(microphone) => microphone.start_writing(),
+        }
     }
 
     fn mix_audio(&mut self, audio: &mut Audio, out: &mut [i16]) {
@@ -262,7 +269,7 @@ pub(crate) mod tests {
     fn the_writer_finishes_an_mp4_with_video_and_two_audio_tracks() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("written.mp4");
-        let mut backend = MacBackend::create().unwrap();
+        let mut backend = MacBackend::create(&VideoConfig::default()).unwrap();
         let format = MediaFormat {
             width: 640,
             height: 360,
@@ -308,7 +315,7 @@ pub(crate) mod tests {
     fn the_writer_finishes_a_file_of_sound_alone() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("microphone.m4a");
-        let mut backend = MacBackend::create().unwrap();
+        let mut backend = MacBackend::create(&VideoConfig::default()).unwrap();
         let format = MediaFormat {
             width: 0,
             height: 0,

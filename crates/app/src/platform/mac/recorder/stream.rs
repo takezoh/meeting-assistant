@@ -218,6 +218,11 @@ impl Capture {
         self.received.stopped.lock().unwrap().clone()
     }
 
+    /// Writing starts now; drops the sound captured before.
+    pub fn start_writing(&self) {
+        self.received.sound.lock().unwrap().start_writing();
+    }
+
     pub fn mix_into(&self, out: &mut [i16]) {
         self.received.sound.lock().unwrap().mix_into(out);
     }

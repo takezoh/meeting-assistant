@@ -2,8 +2,8 @@
 
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW,
-    RegDeleteKeyValueW, RegDeleteTreeW, RegGetValueW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegCloseKey,
+    RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteTreeW, RegGetValueW, RegSetValueExW,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -91,6 +91,24 @@ pub fn get_string(subkey: &str, name: Option<&str>) -> Option<String> {
         let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
         Some(String::from_utf16_lossy(&buffer[..end]))
     }
+}
+
+/// Reads a number value. `None` if absent.
+pub fn get_dword(subkey: &str, name: &str) -> Option<u32> {
+    let mut value = 0u32;
+    let mut size = size_of::<u32>() as u32;
+    let result = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &HSTRING::from(subkey),
+            &HSTRING::from(name),
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&raw mut value).cast()),
+            Some(&mut size),
+        )
+    };
+    check(result).ok().map(|()| value)
 }
 
 /// Deletes one value. Not an error if it does not exist.

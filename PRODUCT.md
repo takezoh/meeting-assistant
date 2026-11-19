@@ -34,9 +34,9 @@ It is a personal tool for one logged-in user on one computer. It has no accounts
 
 ## How a meeting is detected
 
-Desktop meeting apps are detected from their use of the microphone; browser meetings are detected by the browser extension, and only by it. Once per `poll_interval_milliseconds` the app reads which processes hold an active microphone session and which windows exist, and evaluates the rules.
+Desktop meeting apps are detected from their use of the microphone; browser meetings are detected by the browser extension, and only by it. Once per `poll_interval_milliseconds` the app reads which processes hold an active microphone session and evaluates the rules; it looks at the windows only while an app uses the microphone or a desktop meeting is detected or recorded.
 
-- **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default). A window of the app that appeared from 10 seconds before that, such as a Slack huddle window or a Zoom meeting window, is taken to be the meeting's window.
+- **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default). A window of the app that appears after the app took the microphone, or up to 10 seconds before while the windows were already being looked at, such as a Slack huddle window or a Zoom meeting window, is taken to be the meeting's window, also when it appears later during the meeting. Windows already open when the microphone was taken, the app's main window among them, are never the meeting's.
 - **Continue.** The meeting lasts while the app keeps using the microphone or keeps that window open, so that muting in an app that lets go of the microphone does not end it.
 - **End.** Both have been absent for `end_grace_seconds` (2 by default). When no window appeared with the meeting, its end depends on the microphone alone; the app's main window, which stays open, does not keep it going.
 
@@ -52,7 +52,7 @@ With the default `capture_scope = "app"`:
 
 | | Desktop app | Browser meeting (extension) |
 | --- | --- | --- |
-| Video | One window: the window that appeared with the meeting, or else the largest window of the app | The meeting tab |
+| Video | One window: the window that appeared with the meeting; black until it appears | The meeting tab |
 | Other side's audio | Audio played by the app's top-level process and its descendants | Audio of the tab |
 | Your audio | The microphone | The microphone, recorded by the app beside the tab |
 
@@ -60,9 +60,10 @@ Every recording has two audio tracks in this order: the other side's audio first
 
 For a browser meeting the extension records the tab, and the app records the microphone beside it in a file named `<recording>.microphone.m4a`. When the meeting ends, the app adds the microphone to the tab's file as its second audio track without re-encoding either, and removes the separate file. If that fails, or the browser recorded WebM, the tab's file stays as the browser wrote it and the microphone file stays beside it; the log says so.
 
-- The picture is `video.width` by `video.height`, 1920x1080 by default and at most. The window or display is scaled to fit with its aspect ratio kept and the rest filled with black, also when the window changes size or shape during the recording.
-- If the recorded window closes, recording moves to another window of the same app. If there is none, the last picture stays and audio continues.
-- If no window of the app is found at the start, the recording starts black and moves to the window when it appears. The app does not substitute the whole display.
+- The picture is `video.width` by `video.height`, 1920x1080 by default and at most. A larger window or display is scaled down to fit with its aspect ratio kept and the rest filled with black, also when the window changes size or shape during the recording. On Windows a smaller one is recorded at its own size in the middle; on macOS ScreenCaptureKit fits it to the picture.
+- Video is encoded by the GPU's H.264 encoder, whichever vendor made the GPU, and by Windows' software encoder where there is none.
+- If the recorded window closes while the meeting goes on, the last picture stays and audio continues; a window that appears later during the meeting is recorded from then on.
+- If no window has appeared with the meeting when it starts, the recording starts black and moves to the meeting's window when it appears. The app does not substitute its main window or the whole display.
 - If the app's audio cannot be captured, the recording continues without it. The app does not substitute all output audio.
 - A manual recording of a detected meeting is recorded the same way as its automatic recording. Recording the entire screen is a separate, explicit choice; it records the primary display and all output audio.
 
@@ -72,13 +73,13 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 
 ## Control and lifecycle
 
-- The tray icon shows the state: a ring while idle, amber when a meeting is detected but not recorded, red while recording. On macOS the menu bar also shows how long the recording has been running.
-- Clicking the icon opens a status panel: the recording with its running time and file name, every detected meeting with whether it is recorded, waiting or not recorded, and a Record or Stop button for each, a switch for automatic recording, and, on Windows, recording the entire screen. The menu (right click) keeps the same actions and also toggles start at logon.
+- The tray icon shows the state: a ring while idle, amber when a meeting is detected but not recorded, red while recording. The idle ring follows the menu bar or the taskbar, dark on a light one and light on a dark one. While recording, the macOS menu bar shows how long the recording has been running next to the icon; on Windows the icon's tooltip shows it.
+- Clicking the icon opens a status panel in the platform's own style: the translucent popover material on macOS, the acrylic material, controls and accent color of Windows 11 flyouts on Windows. It shows the recording with its running time and file name, every detected meeting with whether it is recorded, waiting or not recorded, and a Record or Stop button for each, a switch for automatic recording, and recording the entire screen. The menu (right click) keeps the same actions and also toggles start at logon.
 - A manual recording is not ended by meeting detection; it ends when you stop it or the app exits.
 - Stopping a recording by hand starts no other recording, and that meeting is not recorded automatically again. Switching automatic recording off and on again clears this.
 - Quitting from the menu, `--quit`, logoff and shutdown finalize a recording before the process ends.
 - If a recording fails mid-way, the app keeps the partial file, reports the failure and tries again while the meeting continues.
-- Changes to `config.toml` take effect the next time the app starts. An invalid configuration is reported at startup instead of being partly applied.
+- Changes to `config.toml` take effect the next time the app starts. An invalid configuration is reported at startup instead of being partly applied. A file from a version of the app that wrote settings in another format is set aside and replaced with the defaults, and the app says so; older settings are not converted.
 
 ## What Meeting Assistant does not promise
 
@@ -99,9 +100,9 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 - On macOS the installer, start at login, the extension path and finalization on quit, update and uninstall were run on one Mac with synthetic meetings on 2026-11-18. A real logout during a recording, the browser launchers and the menu bar appearance were not checked.
 - On macOS, recording the display with all output audio and the microphone was observed on one Mac on 2026-11-19, through the self-test and manual screen recordings, after a defect that dropped all output audio was fixed. Recording a meeting app's window and audio has not been observed, nor whether an app's audio includes what its helper processes play. Each update of the app currently makes macOS stop honouring its Screen & System Audio Recording permission until it is granted again; see [the issue](docs/issue/issue-20261119-every-update-drops-the-macos-screen-reco.md).
 - The microphone recorded by the app and added to a browser tab recording was observed once, on one Mac on 2026-11-19, in a 15-second Google Meet call without other participants: the voice was in the second audio track and the tab's own tracks were copied unchanged. How well the microphone lines up with the other side's audio has not been measured. On Windows the two audio tracks and this merge have only been type-checked.
-- The tray menu, the status panel and notifications were not inspected by an automated test; their logic is tested, their appearance is not. On one Mac on 2026-11-18 the panel, the menu bar icon and its running time were looked at by the user, with a stand-in for the extension reporting synthetic meetings; on Windows they have not been observed.
+- The tray menu, the status panel and notifications were not inspected by an automated test; their logic is tested, their appearance is not. On one Mac on 2026-11-18 the panel, the menu bar icon and its running time were looked at by the user, with a stand-in for the extension reporting synthetic meetings. On one Windows 11 PC on 2026-11-18 the panel was opened from the tray and captured with no meeting detected; its other states were only rendered from sample content in Edge, and the tray icon, its tooltip and the menu were not looked at.
 - The status panel needs the system web view. On Windows this is the WebView2 runtime; without it only the menu is available.
-- Long recordings, several displays with different scaling, and protected content have not been measured.
+- On one Windows PC on 2026-11-18 a 60-minute self-test of a 3840x2160 display kept the sound where it started against the picture for the whole hour, without a gap; it recorded the output audio only, as there was no microphone ([the measurement note](docs/note/note-20261118-windows-recording-measured.md)). Long recordings with a microphone or of a meeting app, several displays with different scaling, and protected content have not been measured.
 
 [The verification note](docs/note/note-20261117-local-verification.md) records what was observed and on which date. Open gaps are tracked under [docs/issue](docs/issue/).
 

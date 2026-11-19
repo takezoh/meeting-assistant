@@ -19,9 +19,7 @@ fn sources() -> Vec<(String, String)> {
             } else if path.extension().is_some_and(|extension| extension == "rs") {
                 let relative = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
                 let text = std::fs::read_to_string(&path).unwrap();
-                // Tests may use threads and temporary files to drive fakes, so they are excluded from the scan.
-                let production = text.split("#[cfg(test)]").next().unwrap().to_owned();
-                found.push((relative, production));
+                found.push((relative, production(&text)));
             }
         }
     }
@@ -31,6 +29,46 @@ fn sources() -> Vec<(String, String)> {
     collect(&root, &root, &mut found);
     assert!(found.len() > 10, "no source files found");
     found
+}
+
+/// The part of a source file that is built into the app. Tests may use threads and temporary files to drive fakes, so
+/// they are left out: the test modules at the end of a file, from the first `#[cfg(test)]` that opens a module there,
+/// and a test-only module declaration such as `mod architecture;`. Anything else marked `#[cfg(test)]` is scanned.
+fn production(text: &str) -> String {
+    let mut kept = String::new();
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line == "#[cfg(test)]"
+            && let Some(next) = lines.peek()
+        {
+            if next.trim_end().ends_with(';') {
+                lines.next();
+                continue;
+            }
+            if next.starts_with("mod ") || next.starts_with("pub mod ") {
+                break;
+            }
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    kept
+}
+
+#[test]
+fn test_code_is_left_out_of_the_scan_but_production_code_after_it_is_not() {
+    let text = "mod a;\n#[cfg(test)]\nmod architecture;\nfn main() { std::thread::spawn(f); }\n\
+                impl X {\n    #[cfg(test)]\n    fn len(&self) {}\n    fn later() {}\n}\n\
+                #[cfg(test)]\nmod tests {\n    use std::fs;\n}\n";
+
+    let kept = production(text);
+
+    assert!(kept.contains("std::thread::spawn"), "{kept}");
+    assert!(kept.contains("fn later"), "{kept}");
+    assert!(
+        !kept.contains("mod architecture") && !kept.contains("std::fs"),
+        "{kept}"
+    );
 }
 
 fn violations(files: &[(String, String)], is_target: impl Fn(&str) -> bool, forbidden: &[&str]) -> Vec<String> {
@@ -54,6 +92,7 @@ fn os_apis_are_used_only_inside_platform() {
         "signal_hook::",
         "notify_rust::",
         "window_vibrancy::",
+        "tao::platform::",
         "objc2",
         "block2::",
         "dispatch2::",
@@ -94,6 +133,7 @@ fn decision_modules_have_no_side_effects() {
         "recording/mod.rs",
         "recording/merge.rs",
         "recording/mp4.rs",
+        "recording/fit.rs",
         "recording/timeline.rs",
         "recording/mixer.rs",
         "recording/pcm.rs",

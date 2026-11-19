@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use crate::ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
 use crate::recording::{Recorder, RecordingRequest};
-use crate::signals::{AudioSession, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry};
+use crate::signals::{
+    AudioSession, BrowserLink, BrowserMeeting, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry,
+};
 
 pub const MIC: &str = "mic-1";
 pub const SPEAKER: &str = "speaker-1";
@@ -96,6 +98,8 @@ impl Recorder for FakeRecorder {
 struct SignalScript {
     next: SignalSnapshot,
     failure: Option<String>,
+    /// The OS reads made, in order, until taken.
+    reads: Vec<&'static str>,
 }
 
 /// A signal source that returns the signals the test sets.
@@ -111,15 +115,42 @@ impl ScriptedSignals {
     pub fn set_failure(&self, failure: Option<&str>) {
         self.0.lock().unwrap().failure = failure.map(str::to_owned);
     }
+
+    /// The OS reads made since the last call: `capture_sessions`, `render_sessions`, `processes`, `windows`.
+    pub fn take_reads(&self) -> Vec<&'static str> {
+        std::mem::take(&mut self.0.lock().unwrap().reads)
+    }
+
+    fn read<T>(&self, name: &'static str, part: impl Fn(&SignalSnapshot) -> T) -> anyhow::Result<T> {
+        let mut script = self.0.lock().unwrap();
+        script.reads.push(name);
+        match &script.failure {
+            Some(error) => anyhow::bail!(error.clone()),
+            None => Ok(part(&script.next)),
+        }
+    }
 }
 
 impl SignalSource for ScriptedSignals {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot> {
+    fn capture_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        self.read("capture_sessions", |s| s.capture_sessions.clone())
+    }
+
+    fn render_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        self.read("render_sessions", |s| s.render_sessions.clone())
+    }
+
+    fn processes(&mut self) -> anyhow::Result<Vec<ProcessEntry>> {
+        self.read("processes", |s| s.processes.clone())
+    }
+
+    fn windows(&mut self) -> anyhow::Result<Vec<WindowEntry>> {
+        self.read("windows", |s| s.windows.clone())
+    }
+
+    fn browser(&mut self) -> (Vec<BrowserLink>, Vec<BrowserMeeting>) {
         let script = self.0.lock().unwrap();
-        match &script.failure {
-            Some(error) => anyhow::bail!(error.clone()),
-            None => Ok(script.next.clone()),
-        }
+        (script.next.browser_links.clone(), script.next.browser_meetings.clone())
     }
 }
 

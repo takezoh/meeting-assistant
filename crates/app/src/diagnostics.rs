@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use anyhow::Context;
 use meeting_assistant_core::{
-    AudioSession, Config, Recorder, RecordingRequest, RuleEvaluator, SignalSource, VideoTarget,
+    AudioSession, Config, Recorder, RecordingRequest, RuleEvaluator, VideoTarget, full_snapshot,
 };
 
 use crate::platform::{self, PlatformSignalSource};
 
 /// Shows the current signals and the verdict of each rule. Used for tuning rules.
 pub fn probe(config: &Config) -> anyhow::Result<()> {
-    let snapshot = PlatformSignalSource::new()?.capture()?;
+    let snapshot = full_snapshot(&mut PlatformSignalSource::new()?)?;
     let names: HashMap<u32, &str> = snapshot
         .processes
         .iter()
@@ -90,10 +90,10 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
             .process_id
             .map(|p| format!(" audio target=pid {p}"))
             .unwrap_or_default();
-        let window = evidence.window.map(|w| format!(" window={w:#x}")).unwrap_or_default();
-        let display = evidence.display.map(|d| format!(" display={d}")).unwrap_or_default();
+        // Which window is the meeting's depends on when it appeared, which a single reading cannot tell.
+        let windows = format!(" windows={}", evidence.windows.len());
         println!(
-            "  {}: active={}{process}{window}{display}",
+            "  {}: active={}{process}{windows}",
             evidence.rule_name,
             mark(evidence.active),
         );
@@ -101,9 +101,9 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Records the main display and the default audio device for 5 seconds and checks that a file is produced.
+/// Records the main display and the default audio devices for `length` and checks that a file is produced.
 /// If `keep` is given the file is kept there; otherwise it is deleted.
-pub fn self_test(config: &Config, keep: Option<PathBuf>) -> anyhow::Result<()> {
+pub fn self_test(config: &Config, keep: Option<PathBuf>, length: Duration) -> anyhow::Result<()> {
     let output_path = keep
         .clone()
         .unwrap_or_else(|| std::env::temp_dir().join(format!("meeting-assistant-selftest-{}.mp4", std::process::id())));
@@ -117,8 +117,8 @@ pub fn self_test(config: &Config, keep: Option<PathBuf>) -> anyhow::Result<()> {
     };
 
     recorder.start(&request).context("cannot start recording")?;
-    println!("Recording started. Recording for 5 seconds.");
-    std::thread::sleep(Duration::from_secs(5));
+    println!("Recording started. Recording for {} seconds.", length.as_secs());
+    std::thread::sleep(length);
     let failure = recorder.take_failure();
     let stopped = recorder.stop();
 

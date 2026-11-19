@@ -10,7 +10,7 @@ use std::time::Duration;
 use meeting_assistant_core::VideoConfig;
 
 use super::plan::{AudioSource, CHANNELS, CapturePlan, MediaFormat, SAMPLE_RATE, VideoPlan, VideoSource};
-use super::timeline::Timeline;
+use super::timeline::{Step, Timeline};
 
 /// Upper limit on waiting for the first picture after capture starts.
 const FIRST_PICTURE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -43,6 +43,9 @@ pub trait CaptureBackend {
     fn take_picture(&mut self, video: &mut Self::Video) -> anyhow::Result<Option<Self::Picture>>;
     /// A solid black picture at the output size.
     fn black_picture(&mut self) -> anyhow::Result<Self::Picture>;
+    /// Writing starts now. Drops the sound this input captured before, apart from the little kept against jitter,
+    /// so that its first sound written lines up with the first picture.
+    fn start_writing(&mut self, audio: &mut Self::Audio);
     /// Adds this input's sound to `out`.
     fn mix_audio(&mut self, audio: &mut Self::Audio, out: &mut [i16]);
 
@@ -179,18 +182,22 @@ impl<B: CaptureBackend> Pipeline<B> {
     /// A failure while writing ends the recording, and the file is still finalized so that it keeps what was written.
     /// The writing failure is the one returned.
     pub fn run(mut self, control: &mut dyn Control, pacer: &mut dyn Pacer) -> anyhow::Result<()> {
-        let written = self.write_until_stopped(control, pacer);
+        let mut pacing = Pacing::default();
+        let written = self.write_until_stopped(control, pacer, &mut pacing);
+        pacing.log(self.framerate);
 
-        // Stop capture first, then finalize the file.
+        // Stop capture first, then finalize the file, and release everything before the OS-side cleanup in `backend`.
         let Self {
             video,
             audio,
             writer,
+            picture,
             mut backend,
             ..
         } = self;
         drop(audio);
         let finalized = backend.finalize(writer);
+        drop(picture);
         drop(video);
         if let (Err(_), Err(error)) = (&written, &finalized) {
             log::warn!("Could not finalize the recording after it failed: {error:#}");
@@ -198,20 +205,56 @@ impl<B: CaptureBackend> Pipeline<B> {
         written.and(finalized)
     }
 
-    fn write_until_stopped(&mut self, control: &mut dyn Control, pacer: &mut dyn Pacer) -> anyhow::Result<()> {
+    fn write_until_stopped(
+        &mut self,
+        control: &mut dyn Control,
+        pacer: &mut dyn Pacer,
+        pacing: &mut Pacing,
+    ) -> anyhow::Result<()> {
         let started = pacer.elapsed();
         let mut timeline = Timeline::new(self.framerate, SAMPLE_RATE);
+        let frame = Duration::from_secs(1) / self.framerate.max(1);
+        // Audio was captured while the output and the first picture were being prepared; it would lag the picture by
+        // that long for the whole recording.
+        for audio in self.audio.iter_mut().flatten() {
+            self.backend.start_writing(audio);
+        }
+        // The sound of a frame interval is written at the next step, once it has been captured. Mixed at the start
+        // of its own interval it would have to come from what was captured before, a frame late.
+        let mut captured_next: Option<Step> = None;
 
         while !control.should_stop() {
             let elapsed = pacer.elapsed().saturating_sub(started);
             let wait = timeline.next_due().saturating_sub(elapsed);
             if wait.is_zero() {
-                timeline.skip_ahead_if_late(elapsed, RESYNC_THRESHOLD);
+                let behind = elapsed.saturating_sub(timeline.next_due());
+                if timeline.skip_ahead_if_late(elapsed, RESYNC_THRESHOLD) {
+                    log::warn!(
+                        "Writing fell {:.1} s behind; nothing was recorded for that time.",
+                        behind.as_secs_f64()
+                    );
+                    pacing.skips += 1;
+                    pacing.skipped += behind;
+                    // The sound queued meanwhile belongs to the time jumped over; written from now on, it would lag
+                    // the picture. The interval left from before the jump goes too.
+                    for audio in self.audio.iter_mut().flatten() {
+                        self.backend.start_writing(audio);
+                    }
+                    captured_next = None;
+                } else if behind > frame {
+                    pacing.late += 1;
+                }
             } else {
                 pacer.sleep(wait);
             }
+            let began = pacer.elapsed();
 
+            // Opening a capture takes time, so of several queued requests only the last one is opened.
+            let mut retarget = None;
             while let Some(window) = control.take_retarget() {
+                retarget = Some(window);
+            }
+            if let Some(window) = retarget {
                 self.switch_window(window);
             }
             if let Some(video) = &mut self.video
@@ -225,20 +268,36 @@ impl<B: CaptureBackend> Pipeline<B> {
                 self.backend
                     .write_video(&mut self.writer, picture, step.video_time, step.video_duration)?;
             }
-            for (track, audio) in self.audio.iter_mut().enumerate() {
-                self.block.clear();
-                self.block.resize(step.audio_frames * CHANNELS, 0);
-                if let Some(audio) = audio {
-                    self.backend.mix_audio(audio, &mut self.block);
-                }
-                self.backend.write_audio(
-                    &mut self.writer,
-                    track,
-                    &self.block,
-                    step.audio_time,
-                    step.audio_duration,
-                )?;
+            if let Some(previous) = captured_next.replace(step) {
+                self.write_audio(&previous)?;
             }
+            let busy = pacer.elapsed().saturating_sub(began);
+            pacing.frames += 1;
+            pacing.busy += busy;
+            pacing.slowest = pacing.slowest.max(busy);
+        }
+        // The last interval, with as much of its sound as has arrived.
+        if let Some(last) = captured_next {
+            self.write_audio(&last)?;
+        }
+        Ok(())
+    }
+
+    /// Writes one interval's sound to each audio track: its own source's, or silence.
+    fn write_audio(&mut self, step: &Step) -> anyhow::Result<()> {
+        for (track, audio) in self.audio.iter_mut().enumerate() {
+            self.block.clear();
+            self.block.resize(step.audio_frames * CHANNELS, 0);
+            if let Some(audio) = audio {
+                self.backend.mix_audio(audio, &mut self.block);
+            }
+            self.backend.write_audio(
+                &mut self.writer,
+                track,
+                &self.block,
+                step.audio_time,
+                step.audio_duration,
+            )?;
         }
         Ok(())
     }
@@ -256,6 +315,35 @@ impl<B: CaptureBackend> Pipeline<B> {
             }
             Err(error) => log::warn!("Could not switch the window being recorded: {error:#}"),
         }
+    }
+}
+
+/// How the write loop kept to its schedule, for the log.
+#[derive(Default)]
+struct Pacing {
+    frames: u64,
+    /// Frames that began more than one frame interval after they were due.
+    late: u64,
+    /// Times writing fell so far behind that it jumped to the current time, and the time it jumped over.
+    skips: u32,
+    skipped: Duration,
+    /// The total and the longest time taking, writing and mixing one frame took.
+    busy: Duration,
+    slowest: Duration,
+}
+
+impl Pacing {
+    fn log(&self, framerate: u32) {
+        log::info!(
+            "wrote {} frames at {framerate}fps: {} began more than a frame late, each took {:.2} ms on average \
+             and the slowest {} ms, skipped ahead {} times ({:.1} s)",
+            self.frames,
+            self.late,
+            self.busy.as_secs_f64() * 1000.0 / self.frames.max(1) as f64,
+            self.slowest.as_millis(),
+            self.skips,
+            self.skipped.as_secs_f64(),
+        );
     }
 }
 
@@ -329,6 +417,8 @@ pub mod fakes {
         pub audio_level: i16,
         /// Sound value a microphone input adds, so that tests can tell the tracks apart.
         pub microphone_level: i16,
+        /// The inputs told that writing starts, with how many items had been written at that moment.
+        pub started_writing: Vec<(AudioSource, usize)>,
     }
 
     #[derive(Clone)]
@@ -414,6 +504,12 @@ pub mod fakes {
 
         fn black_picture(&mut self) -> anyhow::Result<String> {
             Ok("black".to_owned())
+        }
+
+        fn start_writing(&mut self, audio: &mut AudioSource) {
+            let mut state = self.state();
+            let written = state.written.len();
+            state.started_writing.push((audio.clone(), written));
         }
 
         fn mix_audio(&mut self, audio: &mut AudioSource, out: &mut [i16]) {
@@ -772,10 +868,10 @@ mod tests {
     }
 
     #[test]
-    fn writes_video_and_each_audio_track_at_the_same_time() {
+    fn writes_each_interval_with_the_same_times_and_its_sound_once_it_has_been_captured() {
         let (backend, pipeline) = opened_window();
         pipeline
-            .run(&mut StopAfter::steps(2), &mut FakePacer::default())
+            .run(&mut StopAfter::steps(3), &mut FakePacer::default())
             .unwrap();
 
         let state = backend.state();
@@ -793,12 +889,32 @@ mod tests {
             times,
             [
                 (None, 0, 333_333),
+                (None, 333_333, 333_333),
                 (Some(0), 0, 333_333),
                 (Some(1), 0, 333_333),
-                (None, 333_333, 333_333),
+                (None, 666_666, 333_334),
                 (Some(0), 333_333, 333_333),
-                (Some(1), 333_333, 333_333)
-            ]
+                (Some(1), 333_333, 333_333),
+                (Some(0), 666_666, 333_334),
+                (Some(1), 666_666, 333_334),
+            ],
+            "each track's sound one step later; the last interval's when stopping"
+        );
+    }
+
+    #[test]
+    fn drops_audio_captured_before_writing_starts() {
+        let (backend, pipeline) = opened_window();
+        assert!(backend.state().started_writing.is_empty(), "not while opening");
+
+        pipeline
+            .run(&mut StopAfter::steps(2), &mut FakePacer::default())
+            .unwrap();
+
+        assert_eq!(
+            backend.state().started_writing,
+            [(AudioSource::ProcessAudio(100), 0), (AudioSource::Microphone(None), 0)],
+            "every input, before anything is written"
         );
     }
 
@@ -847,6 +963,59 @@ mod tests {
             "time spent on preparation is not included in the timestamps"
         );
         assert!(pacer.slept.is_empty());
+    }
+
+    /// Sleeps as asked, but once `after` sleeps have passed the clock jumps by `by`, as after resuming from sleep.
+    struct JumpingPacer {
+        inner: FakePacer,
+        after: usize,
+        by: Duration,
+    }
+
+    impl Pacer for JumpingPacer {
+        fn elapsed(&self) -> Duration {
+            self.inner.elapsed()
+        }
+
+        fn sleep(&mut self, duration: Duration) {
+            self.inner.sleep(duration);
+            if self.inner.slept.len() == self.after {
+                self.inner.now += self.by;
+            }
+        }
+    }
+
+    #[test]
+    fn after_falling_far_behind_it_jumps_ahead_and_drops_the_sound_queued_meanwhile() {
+        let (backend, pipeline) = opened_window();
+        let mut pacer = JumpingPacer {
+            inner: FakePacer::default(),
+            after: 1,
+            by: Duration::from_secs(10),
+        };
+
+        pipeline.run(&mut StopAfter::steps(3), &mut pacer).unwrap();
+
+        let state = backend.state();
+        assert_eq!(
+            state.started_writing.len(),
+            4,
+            "both inputs at the start and again after the jump: {:?}",
+            state.started_writing
+        );
+        let audio_times: Vec<i64> = state
+            .written
+            .iter()
+            .filter_map(|w| match w {
+                Written::Audio { time, .. } => Some(*time),
+                Written::Video { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            audio_times,
+            [0, 0, 100_000_000, 100_000_000],
+            "each track once per interval; the interval before the jump is not written after it"
+        );
     }
 
     #[test]
@@ -899,6 +1068,22 @@ mod tests {
             backend.state().format.as_ref().map(|f| (f.width, f.height)),
             Some((1920, 1080)),
             "the size does not change"
+        );
+    }
+
+    #[test]
+    fn opens_only_the_last_of_several_queued_window_switches() {
+        let (backend, pipeline) = opened_window();
+        let mut control = StopAfter {
+            retargets: vec![(1, 8), (1, 9), (1, 10)],
+            ..StopAfter::steps(2)
+        };
+
+        pipeline.run(&mut control, &mut FakePacer::default()).unwrap();
+
+        assert_eq!(
+            backend.state().opened_video,
+            [VideoSource::Window(7), VideoSource::Window(10)]
         );
     }
 

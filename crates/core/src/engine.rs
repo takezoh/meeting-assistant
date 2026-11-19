@@ -6,7 +6,7 @@ use crate::coordinator::{CoordinatorStatus, ManualTarget, Notice, NoticeLevel, R
 use crate::detector::{MeetingDetector, Timing};
 use crate::recording::Recorder;
 use crate::rules::{RuleEvaluator, RuleEvidence};
-use crate::signals::SignalSource;
+use crate::signals::{SignalSnapshot, SignalSource};
 
 /// Ties together signal acquisition, rule evaluation, start/end detection, and recording coordination.
 /// Call [`Engine::tick`] periodically. Use it from a single thread.
@@ -22,6 +22,8 @@ pub struct Engine<S: SignalSource, R: Recorder> {
     signal_outage_limit: Duration,
     failing_since: Option<Instant>,
     outage_reported: bool,
+    /// Whether the windows were read at the previous tick.
+    reading_windows: bool,
 }
 
 impl<S: SignalSource, R: Recorder> Engine<S, R> {
@@ -45,21 +47,24 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             signal_outage_limit: Self::DEFAULT_SIGNAL_OUTAGE_LIMIT,
             failing_since: None,
             outage_reported: false,
+            reading_windows: false,
         })
     }
 
     pub fn tick(&mut self, now: Instant) {
         self.coordinator.poll_recorder();
 
-        // Hold the list of current windows only when signals were acquired.
+        // Hold the list of current windows only when they were read.
         let mut windows: Option<HashSet<u64>> = None;
-        let evidence = match self.source.capture() {
-            Ok(snapshot) => {
+        let evidence = match self.read_signals() {
+            Ok((snapshot, windows_read)) => {
                 if self.failing_since.take().is_some() {
                     log::info!("Signal acquisition recovered.");
                 }
                 self.outage_reported = false;
-                windows = Some(snapshot.windows.iter().map(|w| w.id).collect());
+                if windows_read {
+                    windows = Some(snapshot.windows.iter().map(|w| w.id).collect());
+                }
                 self.evaluator.evaluate(&snapshot)
             }
             Err(error) => {
@@ -82,7 +87,8 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             }
         };
 
-        for event in self.detector.update(now, &evidence) {
+        self.note_window_reading(windows.is_some(), &evidence);
+        for event in self.detector.update(now, &evidence, windows.is_some()) {
             self.coordinator.handle(event);
         }
         if let Some(windows) = windows {
@@ -90,10 +96,57 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
         }
     }
 
-    /// If the window being recorded was closed (or has not been decided yet),
-    /// moves the recording target to a window of the same app.
-    /// While the target window remains, does not move even if a larger window appears. A meeting that is only waiting
-    /// out its end grace keeps its last picture rather than moving to another window of the app.
+    /// Reads what this tick needs, and whether the windows were among it.
+    ///
+    /// The microphone sessions and the extension's reports are read on every tick. A rule can only be satisfied by
+    /// an app that uses the microphone, so the processes (to find each session's app), the windows (to find the window
+    /// that appears with its meeting) and the playback sessions (to find the app's output device) are read only when
+    /// some process uses the microphone. While an app's meeting is detected or recorded, the processes and windows
+    /// are read anyway: its window keeps it going when the app lets go of the microphone, and is followed when it
+    /// closes. The windows found when reading begins count as open before any meeting.
+    fn read_signals(&mut self) -> anyhow::Result<(SignalSnapshot, bool)> {
+        let (browser_links, browser_meetings) = self.source.browser();
+        let mut snapshot = SignalSnapshot {
+            capture_sessions: self.source.capture_sessions()?,
+            browser_links,
+            browser_meetings,
+            ..Default::default()
+        };
+        let microphone_in_use = !snapshot.capture_sessions.is_empty();
+        let recording_an_app = self
+            .coordinator
+            .recorded_meeting()
+            .is_some_and(|meeting| meeting.browser_tab.is_none());
+        // A desktop meeting goes on while its window is open, also when the app has let go of the microphone.
+        let app_meeting = self.detector.meetings().any(|meeting| meeting.browser_tab.is_none());
+        if microphone_in_use {
+            snapshot.render_sessions = self.source.render_sessions()?;
+        }
+        let windows_read = microphone_in_use || recording_an_app || app_meeting;
+        if windows_read {
+            snapshot.processes = self.source.processes()?;
+            snapshot.windows = self.source.windows()?;
+        }
+        Ok((snapshot, windows_read))
+    }
+
+    /// Logs when the windows begin and stop being read, since the windows open when reading begins are never a
+    /// meeting's.
+    fn note_window_reading(&mut self, windows_read: bool, evidence: &[RuleEvidence]) {
+        if windows_read == std::mem::replace(&mut self.reading_windows, windows_read) {
+            return;
+        }
+        if windows_read {
+            let open: usize = evidence.iter().map(|e| e.windows.len()).sum();
+            log::info!("Looking at the windows: {open} of meeting apps are open and are not taken for a meeting's.");
+        } else {
+            log::info!("Stopped looking at the windows.");
+        }
+    }
+
+    /// If the window being recorded was closed (or has not been decided yet), moves the recording to the meeting's
+    /// window once it has one. While the target window remains, does not move even if another window appears. A
+    /// meeting that is only waiting out its end grace keeps its last picture.
     fn follow_window(&mut self, windows: &HashSet<u64>, evidence: &[RuleEvidence]) {
         let Some(meeting) = self.coordinator.recorded_meeting().cloned() else {
             return;
@@ -101,7 +154,11 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
         if !self.detector.is_ongoing(&meeting, evidence) || !self.coordinator.needs_window(windows) {
             return;
         }
-        let replacement = evidence.iter().find(|e| e.key() == meeting).and_then(|e| e.window);
+        // Only the meeting's own window, never another window of the app.
+        let replacement = self
+            .detector
+            .meeting_window(&meeting)
+            .filter(|window| windows.contains(window));
         if let Some(replacement) = replacement {
             self.coordinator.retarget(replacement);
         }

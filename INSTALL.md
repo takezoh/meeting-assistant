@@ -83,6 +83,8 @@ Build the new version and run its `--install` again. The installer asks the runn
 
 After an update that changes the extension, press **Reload** for the extension on the browser's extensions page.
 
+If the new version stores its settings in another format, it keeps your old `config.toml` beside the new one as `config.toml.unversioned.bak` or `config.toml.v<version>.bak` and starts with the defaults; a notification says so. Copy back the settings you need; see [Configuration](docs/usage/configuration.md).
+
 ## Uninstall
 
 Use Settings > Apps, or run:
@@ -101,7 +103,8 @@ meeting-assistant --install            Install or update
 meeting-assistant --uninstall          Uninstall
 meeting-assistant --quit               Ask the running app to finalize its recording and exit
 meeting-assistant --probe              Print the current signals and how each rule evaluates
-meeting-assistant --self-test [<path>] Check that a five-second recording can be made
+meeting-assistant --self-test [<path> [<seconds>]]
+                                       Check that a recording can be made, five seconds unless <seconds> is given
 meeting-assistant --config <path> ...  Use another configuration file
 ```
 

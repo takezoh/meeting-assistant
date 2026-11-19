@@ -67,7 +67,31 @@ pub struct SignalSnapshot {
     pub browser_meetings: Vec<BrowserMeeting>,
 }
 
-/// A port that acquires signals from the OS.
+/// A port that acquires signals from the OS. Each kind of signal is a separate read, so that detection reads only
+/// what it needs: most of the time no app uses the microphone, and then nothing but the microphone sessions and the
+/// extension's reports is read ([`crate::Engine`] decides).
 pub trait SignalSource {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot>;
+    /// Sessions using an input device such as the microphone.
+    fn capture_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>>;
+    /// Sessions using an output device such as the speakers.
+    fn render_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>>;
+    fn processes(&mut self) -> anyhow::Result<Vec<ProcessEntry>>;
+    fn windows(&mut self) -> anyhow::Result<Vec<WindowEntry>>;
+    /// Connected browser extensions and the meetings they report. The OS itself reports none.
+    fn browser(&mut self) -> (Vec<BrowserLink>, Vec<BrowserMeeting>) {
+        (Vec::new(), Vec::new())
+    }
+}
+
+/// Every signal a source can read, for diagnostics. Detection reads less.
+pub fn full_snapshot(source: &mut impl SignalSource) -> anyhow::Result<SignalSnapshot> {
+    let (browser_links, browser_meetings) = source.browser();
+    Ok(SignalSnapshot {
+        capture_sessions: source.capture_sessions()?,
+        render_sessions: source.render_sessions()?,
+        processes: source.processes()?,
+        windows: source.windows()?,
+        browser_links,
+        browser_meetings,
+    })
 }

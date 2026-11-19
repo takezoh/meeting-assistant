@@ -40,8 +40,8 @@ pub trait Recorder {
     fn stop(&mut self) -> anyhow::Result<()>;
 
     /// Switches the video target of the recording to the given window. The file is not split.
-    /// Used when the target window is closed and recording moves to another window of the same app,
-    /// or to give a window to a recording started with no video target.
+    /// Used to give the meeting's window to a recording started with no video target, or a window that appeared
+    /// later to one whose window closed.
     fn retarget(&mut self, window: u64) -> anyhow::Result<()>;
 
     /// If a successfully started recording failed without a stop instruction, returns the cause once.

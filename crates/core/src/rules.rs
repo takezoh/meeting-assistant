@@ -45,11 +45,8 @@ pub struct RuleEvidence {
     pub render_device_id: Option<String>,
     /// Top-level process of the app that is using the microphone. Used to record only that app's sound.
     pub process_id: Option<u32>,
-    /// The app's largest window: what is recorded when no window can be told to be the meeting's.
-    pub window: Option<u64>,
-    /// The display that holds that window.
-    pub display: Option<String>,
-    /// Every window of the app, from which the detector tells which one appeared with the meeting.
+    /// Every window of the app, when the windows were read, from which the detector tells which one appeared with the
+    /// meeting. The app's other windows, its main window among them, are never recorded.
     pub windows: Vec<AppWindow>,
     /// For a meeting reported by the browser extension, that tab.
     pub browser_tab: Option<BrowserTab>,
@@ -123,7 +120,6 @@ impl RuleEvaluator {
                         display: w.display.clone(),
                     })
                     .collect();
-                let window = windows.iter().max_by_key(|w| w.area);
 
                 RuleEvidence {
                     rule_name: rule.name.clone(),
@@ -131,9 +127,7 @@ impl RuleEvaluator {
                     capture_device_id: capture.map(|(s, _)| s.device_id.clone()),
                     render_device_id: render.map(|s| s.device_id.clone()),
                     process_id: capture.map(|(_, o)| o.root_process_id),
-                    window: window.map(|w| w.id),
-                    display: window.and_then(|w| w.display.clone()),
-                    windows: windows.clone(),
+                    windows,
                     browser_tab: None,
                     title: None,
                 }
@@ -163,8 +157,6 @@ impl RuleEvaluator {
                 capture_device_id: None,
                 render_device_id: None,
                 process_id: None,
-                window: None,
-                display: None,
                 windows: Vec::new(),
                 browser_tab: Some(meeting.tab),
                 title: meeting.title.clone(),

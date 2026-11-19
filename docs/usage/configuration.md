@@ -2,12 +2,17 @@
 
 Meeting Assistant reads one TOML file, `%APPDATA%\MeetingAssistant\config.toml` on Windows and `~/Library/Application Support/MeetingAssistant/config.toml` on macOS. It is created with the defaults the first time the app starts. The tray menu opens it.
 
-Changes take effect the next time the app starts. A file that cannot be parsed, contains an unknown key or fails validation stops the app at startup with a message that names the file and the reason; nothing is applied partially. Keys you leave out keep their defaults.
+Changes take effect the next time the app starts. Keys you leave out keep their defaults.
+
+The file starts with `version`, the format of the settings; leave it as it is. A file of another version, including one written by an earlier release that did not number its settings, is not read: the app moves it to `config.toml.unversioned.bak` (or `config.toml.v<version>.bak`) beside the new one, writes the defaults and starts with them, and says so in a notification and the log. Settings from the old file are not carried over; copy back what you need.
+
+A file of the current version that cannot be parsed, contains an unknown key or fails validation stops the app at startup with a message that names the file and the reason; nothing is applied partially, and the file is left for you to fix.
 
 ## Settings
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `version` | `1` | The format of this file. Not a setting; a file of another version is replaced with the defaults |
 | `output_directory` | `Videos\MeetingAssistant` (`~/Movies/MeetingAssistant` on macOS) | Folder for recordings |
 | `start_debounce_seconds` | `3.0` | How long a desktop app must use the microphone before its meeting is considered started |
 | `end_grace_seconds` | `2.0` | How long a desktop app must have neither used the microphone nor kept its meeting's window open before its meeting is considered ended |
@@ -40,7 +45,7 @@ process_names = ["zoom"]
 | `name` | Used in the recording's file name and in the log |
 | `process_names` | Executable names without extension, case-insensitive. Child processes of a matching process count as that process |
 
-A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`. A window of the app that appeared from 10 seconds before the microphone was taken, such as a call window, is the meeting's window and is recorded; otherwise the app's largest window is. The meeting lasts while the microphone is in use or the meeting's window is open.
+A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`. A window of the app that appears once the microphone is taken, such as a call window, is the meeting's window and is recorded; until one appears the picture is black. The app's other windows, its main window among them, are not recorded. The meeting lasts while the microphone is in use or the meeting's window is open.
 
 The first rule in the file that is satisfied names the recording. Writing a `rules` list replaces the defaults entirely, so copy the default rules from the generated file before editing them.
 

@@ -56,15 +56,18 @@ pub enum DetectorEvent {
 /// evidence. Several meetings can be in progress at once.
 ///
 /// - Start: when a meeting has been active (its app uses the microphone, or the extension reports a call) for the
-///   start debounce. A desktop app's meeting is given the window that appeared with it (see
-///   [`MEETING_WINDOW_LOOKBACK`]), or else the app's largest window.
-/// - Continue: while it stays active, or while the window that appeared with it stays open (an app may let go of the
-///   microphone while muted, but its call window stays).
+///   start debounce.
+/// - Its window: a window of the app that appeared once the windows were being read, from
+///   [`MEETING_WINDOW_LOOKBACK`] before the meeting's condition began, either by its start or later during it. Windows
+///   already open when reading began, the app's main window among them, are never the meeting's. Until it has one, a
+///   meeting has no window and nothing is recorded for its picture.
+/// - Continue: while it stays active, or while its window stays open (an app may let go of the microphone while
+///   muted, but its call window stays).
 /// - End: when it has been neither for the end grace.
 ///
 /// Desktop apps and browser meetings have their own [`Timing`].
 ///
-/// The caller supplies the time. It has no side effects.
+/// The caller supplies the time and says whether the windows were read. It has no side effects.
 #[derive(Debug)]
 pub struct MeetingDetector {
     apps: Timing,
@@ -73,17 +76,20 @@ pub struct MeetingDetector {
     meetings: Vec<Tracked>,
     /// Meetings that are active but not yet for their start debounce, with the time they became active.
     candidates: Vec<(MeetingKey, Instant)>,
-    /// When each window of a rule's app was first seen; `None` for windows already there at the first update, which
-    /// cannot have appeared with a meeting.
+    /// When each window of a rule's app appeared while the windows have been read without a break; `None` for windows
+    /// already open when reading began, which cannot be told to have appeared with a meeting.
     windows_seen: HashMap<u64, Option<Instant>>,
-    updated: bool,
+    /// Whether the windows were read at the previous update.
+    reading: bool,
 }
 
 #[derive(Debug)]
 struct Tracked {
     info: MeetingInfo,
-    /// The window that appeared with the meeting, which keeps it going while it is open.
-    meeting_window: Option<u64>,
+    /// When its condition began to hold.
+    since: Instant,
+    /// The window that appeared with the meeting, while it is open. It keeps the meeting going.
+    window: Option<AppWindow>,
     absent_since: Option<Instant>,
 }
 
@@ -96,12 +102,11 @@ impl MeetingDetector {
             meetings: Vec::new(),
             candidates: Vec::new(),
             windows_seen: HashMap::new(),
-            updated: false,
+            reading: false,
         }
     }
 
-    /// Whether the meeting with `key` is going on now: its condition holds, or the window that appeared with it is
-    /// still open.
+    /// Whether the meeting with `key` is going on now: its condition holds, or its window is open.
     pub fn is_ongoing(&self, key: &MeetingKey, evidence: &[RuleEvidence]) -> bool {
         self.meetings
             .iter()
@@ -109,44 +114,69 @@ impl MeetingDetector {
             .is_some_and(|tracked| ongoing(tracked, evidence))
     }
 
+    /// The window of the meeting with `key`, once it has one and while it is open.
+    pub fn meeting_window(&self, key: &MeetingKey) -> Option<u64> {
+        let tracked = self.meetings.iter().find(|tracked| tracked.info.key() == *key)?;
+        tracked.window.as_ref().map(|window| window.id)
+    }
+
     /// Meetings in progress, in the order they started.
     pub fn meetings(&self) -> impl Iterator<Item = &MeetingInfo> {
         self.meetings.iter().map(|tracked| &tracked.info)
     }
 
-    /// Advances every meeting by one observation. Ends are reported before starts.
-    pub fn update(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
-        self.see_windows(now, evidence);
-        let mut events = self.update_meetings(now, evidence);
+    /// Advances every meeting by one observation. `windows_read` says whether the evidence carries the apps' windows;
+    /// without them, what is known of the windows stays as it was. Ends are reported before starts.
+    pub fn update(&mut self, now: Instant, evidence: &[RuleEvidence], windows_read: bool) -> Vec<DetectorEvent> {
+        if windows_read {
+            self.see_windows(now, evidence);
+        } else {
+            self.reading = false;
+        }
+        let mut events = self.update_meetings(now, evidence, windows_read);
         events.extend(self.update_candidates(now, evidence));
         events
     }
 
-    /// Notes when each window was first seen, and forgets windows that are gone.
+    /// Notes when each window appeared, and forgets windows that are gone. When reading resumes, every window found
+    /// counts as having been open before.
     fn see_windows(&mut self, now: Instant, evidence: &[RuleEvidence]) {
-        let first = !std::mem::replace(&mut self.updated, true);
+        let resumed = !std::mem::replace(&mut self.reading, true);
         let current: HashSet<u64> = evidence.iter().flat_map(|e| e.windows.iter().map(|w| w.id)).collect();
+        if resumed {
+            self.windows_seen = current.into_iter().map(|id| (id, None)).collect();
+            return;
+        }
         self.windows_seen.retain(|id, _| current.contains(id));
         for id in current {
-            self.windows_seen.entry(id).or_insert((!first).then_some(now));
+            self.windows_seen.entry(id).or_insert(Some(now));
         }
     }
 
-    /// The window that appeared with a meeting whose condition began at `since`: the largest of the app's windows
-    /// first seen from [`MEETING_WINDOW_LOOKBACK`] before then.
-    fn meeting_window<'a>(&self, windows: &'a [AppWindow], since: Instant) -> Option<&'a AppWindow> {
-        let from = since.checked_sub(MEETING_WINDOW_LOOKBACK).unwrap_or(since);
-        windows
-            .iter()
-            .filter(|w| matches!(self.windows_seen.get(&w.id), Some(Some(seen)) if *seen >= from))
-            .max_by_key(|w| w.area)
-    }
-
-    fn update_meetings(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
+    fn update_meetings(&mut self, now: Instant, evidence: &[RuleEvidence], windows_read: bool) -> Vec<DetectorEvent> {
         let mut ended = Vec::new();
         let (apps, browser) = (self.apps, self.browser);
+        let seen = &self.windows_seen;
         self.meetings.retain_mut(|tracked| {
-            let end_grace = timing_of(&tracked.info.key(), apps, browser).end_grace;
+            let key = tracked.info.key();
+            let end_grace = timing_of(&key, apps, browser).end_grace;
+            if windows_read && key.browser_tab.is_none() {
+                let windows = evidence
+                    .iter()
+                    .find(|e| e.key() == key)
+                    .map_or(&[][..], |e| e.windows.as_slice());
+                // A closed window is let go; another that appears afterwards can take its place.
+                if tracked
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| !windows.iter().any(|w| w.id == window.id))
+                {
+                    tracked.window = None;
+                }
+                if tracked.window.is_none() {
+                    tracked.window = appeared(seen, windows, tracked.since).cloned();
+                }
+            }
             if ongoing(tracked, evidence) {
                 tracked.absent_since = None;
                 return true;
@@ -180,20 +210,21 @@ impl MeetingDetector {
                 self.candidates.push((key, since));
                 continue;
             }
-            let appeared = self.meeting_window(&found.windows, since);
+            let window = appeared(&self.windows_seen, &found.windows, since).cloned();
             let meeting = MeetingInfo {
                 rule_name: found.rule_name.clone(),
                 capture_device_id: found.capture_device_id.clone(),
                 render_device_id: found.render_device_id.clone(),
                 process_id: found.process_id,
-                window: appeared.map(|w| w.id).or(found.window),
-                display: appeared.map_or_else(|| found.display.clone(), |w| w.display.clone()),
+                window: window.as_ref().map(|w| w.id),
+                display: window.as_ref().and_then(|w| w.display.clone()),
                 browser_tab: found.browser_tab,
                 title: found.title.clone(),
             };
             self.meetings.push(Tracked {
                 info: meeting.clone(),
-                meeting_window: appeared.map(|w| w.id),
+                since,
+                window,
                 absent_since: None,
             });
             started.push(DetectorEvent::Started(meeting));
@@ -202,15 +233,24 @@ impl MeetingDetector {
     }
 }
 
-/// Whether a tracked meeting's condition holds, or the window that appeared with it is still open.
+/// The window of a meeting whose condition began at `since`: the largest of the app's windows that appeared from
+/// [`MEETING_WINDOW_LOOKBACK`] before then.
+fn appeared<'a>(
+    seen: &HashMap<u64, Option<Instant>>,
+    windows: &'a [AppWindow],
+    since: Instant,
+) -> Option<&'a AppWindow> {
+    let from = since.checked_sub(MEETING_WINDOW_LOOKBACK).unwrap_or(since);
+    windows
+        .iter()
+        .filter(|w| matches!(seen.get(&w.id), Some(Some(appeared)) if *appeared >= from))
+        .max_by_key(|w| w.area)
+}
+
+/// Whether a tracked meeting's condition holds, or its window is open (as last read).
 fn ongoing(tracked: &Tracked, evidence: &[RuleEvidence]) -> bool {
     let key = tracked.info.key();
-    evidence.iter().filter(|e| e.key() == key).any(|e| {
-        e.active
-            || tracked
-                .meeting_window
-                .is_some_and(|window| e.windows.iter().any(|w| w.id == window))
-    })
+    tracked.window.is_some() || evidence.iter().any(|e| e.key() == key && e.active)
 }
 
 /// Browser meetings are the ones the extension reports, which carry their tab.

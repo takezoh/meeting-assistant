@@ -155,7 +155,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
             .is_some_and(|r| r.follows_app && r.window.is_none_or(|w| !existing.contains(&w)))
     }
 
-    /// Moves the video target to another window of the same app.
+    /// Moves the video target to the given window of the recorded app, which the caller has decided is the meeting's.
     /// Does nothing unless recording targets an app window.
     pub fn retarget(&mut self, window: u64) {
         let Some(recording) = &mut self.recording else { return };

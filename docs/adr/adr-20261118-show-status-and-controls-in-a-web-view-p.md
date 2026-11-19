@@ -33,7 +33,7 @@ Options considered:
 
 ## Decision
 
-A left click on the tray icon opens a panel drawn by the system web view. The page is a single self-contained file embedded in the executable; it loads nothing from elsewhere and may not navigate away. What it shows and what its messages mean are decided by a pure module (`panel::view`) and tested there; the page only renders the JSON it is given and posts the user's clicks back. Window styling that differs by platform (transparency and the popover material on macOS, rounded corners and no taskbar button on Windows) is a small operation in `platform`.
+A left click on the tray icon opens a panel drawn by the system web view. The page is a single self-contained file embedded in the executable; it loads nothing from elsewhere and may not navigate away. What it shows and what its messages mean are decided by a pure module (`panel::view`) and tested there; the page only renders the JSON it is given and posts the user's clicks back. Window styling that differs by platform is a small operation in `platform`: a transparent window over the system material with rounded corners (the popover material on macOS, the acrylic of transient windows on Windows 11, no taskbar button on Windows). The page follows each platform's design with the same markup and script: the platform marks it macOS or Windows and passes the user's accent color where the design uses one, and only design tokens and a few control styles differ.
 
 The native menu stays, with the same actions, and opens with a right click, or with a left click when the panel cannot be created.
 
@@ -43,6 +43,7 @@ The native menu stays, with the same actions, and opens with a right click, or w
 - Negative: the app now depends on the system web view. On Windows that is the WebView2 runtime, which ships with Windows 11 but may be missing on older systems; then the menu is the only interface.
 - Negative: the page is not exercised by `cargo test`. Its messages and the content it is given are tested on the Rust side; its rendering was only checked in a browser with sample content.
 - Neutral: the macOS translucent material uses a private `WKWebView` key through `wry` and `window-vibrancy`; if it fails the page draws an opaque background.
+- Neutral: on Windows the material shows only on a window without the frame that gives a borderless window its shadow; with that frame the page stayed white (observed 2026-11-18). The window is therefore created without it, and the frame is put back where Windows refuses the material.
 
 ## Confirmation
 

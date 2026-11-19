@@ -8,7 +8,7 @@ use std::mem::size_of;
 use std::ptr::{NonNull, null, null_mut};
 
 use anyhow::Context;
-use meeting_assistant_core::{AudioSession, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry};
+use meeting_assistant_core::{AudioSession, ProcessEntry, SignalSource, WindowEntry};
 use objc2_core_audio::{
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID, AudioObjectPropertyAddress,
     AudioObjectPropertyScope, AudioObjectPropertySelector, kAudioDevicePropertyDeviceUID, kAudioDevicePropertyStreams,
@@ -36,73 +36,58 @@ impl MacSignalSource {
 }
 
 impl SignalSource for MacSignalSource {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot> {
-        let mut snapshot = SignalSnapshot {
-            processes: processes(),
-            windows: windows(),
-            ..Default::default()
-        };
-        for process in audio_processes().context("cannot read which processes use audio")? {
-            if let Some(device_id) = process.input {
-                snapshot.capture_sessions.push(AudioSession {
-                    process_id: process.process_id,
-                    device_id,
-                });
-            }
-            if let Some(device_id) = process.output {
-                snapshot.render_sessions.push(AudioSession {
-                    process_id: process.process_id,
-                    device_id,
-                });
-            }
-        }
-        Ok(snapshot)
+    fn capture_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        audio_sessions(kAudioProcessPropertyIsRunningInput, kAudioObjectPropertyScopeInput)
+    }
+
+    fn render_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        audio_sessions(kAudioProcessPropertyIsRunningOutput, kAudioObjectPropertyScopeOutput)
+    }
+
+    fn processes(&mut self) -> anyhow::Result<Vec<ProcessEntry>> {
+        Ok(processes())
+    }
+
+    fn windows(&mut self) -> anyhow::Result<Vec<WindowEntry>> {
+        Ok(windows())
     }
 }
 
-/// A process doing audio I/O, with the device it records from and the one it plays to (Core Audio device UIDs;
-/// empty when the device cannot be told).
-struct AudioProcess {
-    process_id: u32,
-    input: Option<String>,
-    output: Option<String>,
-}
-
-fn audio_processes() -> anyhow::Result<Vec<AudioProcess>> {
+/// The processes doing audio in one direction (`running` tells whether a process is, `scope` picks the device of
+/// that direction), with the Core Audio UID of the device, empty when it cannot be told.
+///
+/// The microphone sessions are read on every tick, so a process that is not running in that direction costs one
+/// property read and nothing more.
+fn audio_sessions(
+    running: AudioObjectPropertySelector,
+    scope: AudioObjectPropertyScope,
+) -> anyhow::Result<Vec<AudioSession>> {
     let objects: Vec<AudioObjectID> = read_array(
         kAudioObjectSystemObject as AudioObjectID,
         kAudioHardwarePropertyProcessObjectList,
         kAudioObjectPropertyScopeGlobal,
-    )?;
+    )
+    .context("cannot read which processes use audio")?;
     let mut found = Vec::new();
     for object in objects {
+        if !read_value::<u32>(object, running, kAudioObjectPropertyScopeGlobal).is_ok_and(|v| v != 0) {
+            continue;
+        }
         // A process that exits between the list and these reads is skipped.
         let Ok(process_id) = read_value::<i32>(object, kAudioProcessPropertyPID, kAudioObjectPropertyScopeGlobal)
         else {
             continue;
         };
-        let running =
-            |selector| read_value::<u32>(object, selector, kAudioObjectPropertyScopeGlobal).is_ok_and(|v| v != 0);
-        let (input, output) = (
-            running(kAudioProcessPropertyIsRunningInput),
-            running(kAudioProcessPropertyIsRunningOutput),
-        );
-        if !input && !output {
-            continue;
-        }
         let devices: Vec<AudioObjectID> =
             read_array(object, kAudioProcessPropertyDevices, kAudioObjectPropertyScopeGlobal).unwrap_or_default();
-        let device_with = |scope| {
-            devices
-                .iter()
-                .find(|&&device| has_streams(device, scope))
-                .and_then(|&device| device_uid(device))
-                .unwrap_or_default()
-        };
-        found.push(AudioProcess {
+        let device_id = devices
+            .iter()
+            .find(|&&device| has_streams(device, scope))
+            .and_then(|&device| device_uid(device))
+            .unwrap_or_default();
+        found.push(AudioSession {
             process_id: process_id as u32,
-            input: input.then(|| device_with(kAudioObjectPropertyScopeInput)),
-            output: output.then(|| device_with(kAudioObjectPropertyScopeOutput)),
+            device_id,
         });
     }
     Ok(found)
