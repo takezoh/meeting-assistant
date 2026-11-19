@@ -26,6 +26,8 @@ source_paths:
 
 A pre-design handoff for the Windows recording path, written on 2026-11-18 after a read-only review on a Mac. The video path is sound in outline: capture, scaling and the encoder share one Direct3D 11 device, frames reach the sink writer as DXGI surfaces without a CPU readback, and pacing follows an absolute schedule. The problems below are an audio offset at the start, an unverified encoder choice with a colour conversion left to Media Foundation, and per-frame GPU allocations. None of it was run or measured on Windows; numbers are estimates for 1920x1080 at 30 fps.
 
+Since commit ee9ea9c (2026-11-19) the canvas is fixed at the configured size, 1920x1080 by default: F7, F8, I5 and steps 3 and 7 no longer apply, and F6 applies to almost every frame. See [the Windows handoff of 2026-11-19](note-20261119-windows-handoff-after-the-macos-work-of-.md), which lists the other changes to check on Windows.
+
 ## Notes
 
 ### Purpose
