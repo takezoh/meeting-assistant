@@ -5,9 +5,9 @@ title: Windows handoff after the macOS work of 2026-11-19
 status: draft
 created: '2026-11-19'
 topic: handoff
-summary: What changed on 2026-11-18 and 2026-11-19, up to ca9bd37, that has only been
-  type-checked for Windows, what is expected to fail there, and the order in which
-  to check it on a Windows machine.
+summary: What changed on 2026-11-18 and 2026-11-19, up to 6900d1b, that has only been
+  type-checked for Windows, what a Windows session has run of it, and what remains
+  to run on Windows and, for the Windows session's own change, on a Mac.
 tags: []
 owners: []
 relations:
@@ -40,7 +40,7 @@ source_paths:
 
 ## Summary
 
-All macOS work of 2026-11-18 and 2026-11-19 was done and run on one Mac, up to commit ca9bd37. For Windows the code was only type-checked and linted from the Mac (`cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc`); none of it has run on Windows. This note lists what a session on a Windows machine has to check, what is expected to fail, and where to start. It does not settle any design; the contracts are in the designs and ADRs it references.
+All macOS work of 2026-11-18 and 2026-11-19 was done and run on one Mac, up to commit 6900d1b. For Windows the code was only type-checked and linted from the Mac (`cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc`); none of it has run on Windows. This note lists what a session on a Windows machine has to check, what is expected to fail, and where to start. It does not settle any design; the contracts are in the designs and ADRs it references.
 
 A Windows session worked on its own at the same time: NV12 encoding up to 1080p on any GPU, fewer signals read while idle, recorded sound started with the picture, and a versioned configuration file. Its results are in [Windows encoder and 1080p](note-20261119-windows-encoder-and-1080p.md) and [Windows idle and recording resources](note-20261119-windows-idle-and-recording-resources.md). Both lines of work were merged on the Mac in d0a8ed3; "After the merge" below says what the merge and the two commits after it changed on the Windows side, none of which has run on Windows.
 
@@ -48,7 +48,7 @@ A Windows session worked on its own at the same time: NV12 encoding up to 1080p 
 
 ### Done on Windows, 2026-11-19
 
-Recorded in [Windows checks after the macOS merge](note-20261119-windows-checks-after-the-macos-merge.md): step 1; step 2, with the issue below fixed; step 3 without a microphone, since the PC had no default one; and step 7. The sink writer accepts two AAC streams and a file without video in fragmented MP4, and a window smaller than the canvas is drawn in its middle at its own size. Steps 3 with a microphone, 4, 5 and 6 remain.
+Recorded in [Windows checks after the macOS merge](note-20261119-windows-checks-after-the-macos-merge.md) and committed in d1a8127: step 1, with the extension's tests of 6900d1b; step 2, with the issue below fixed; step 3 without a microphone, since the PC had no default one; and step 7. The sink writer accepts two AAC streams and a file without video in fragmented MP4, and a window smaller than the canvas is drawn in its middle at its own size. Steps 3 with a microphone, 4, 5 and 6 remain on Windows, and the fix of step 2 has not run on a Mac (see "For a Mac" below).
 
 ### Goal
 
@@ -67,6 +67,8 @@ The Windows build records what the macOS build was shown to record on 2026-11-19
 | No fallback to the app's largest window: without an adapter's word, a meeting's window must appear after the windows began to be read, which happens only while some process uses the microphone or an app's meeting is recorded (the Windows session's conditions) | d0a8ed3 | `signals.rs` as the Windows session left it | `crates/core/src/{detector,engine}.rs` |
 | Meeting app adapters: a port through which an adapter tells an app's main window from a meeting's; Slack's reads the "[Main]" mark in its main window's title | cbbff56 | none | `crates/core/src/apps.rs`, `crates/app/src/apps`, `crates/core/src/{rules,detector}.rs` |
 | A desktop meeting continues and ends on its app's microphone use alone; its window decides the picture only | ca9bd37 | none | `crates/core/src/{detector,engine}.rs` |
+| Every finished recording carries the meeting's metadata as QuickTime keys, written by rewriting the file once | a3aacab | none | `recording/{mp4,annotate}.rs`, `linked.rs`, `crates/core/src/metadata.rs` |
+| A tab capture is asked for only once the recording page is ready, and a start that fails releases it | 6900d1b | none | `extension/{background,offscreen}.js`, with tests in `extension/test` |
 
 ### Expected to fail
 
@@ -74,11 +76,11 @@ The Windows build records what the macOS build was shown to record on 2026-11-19
 
 ### Open questions only Windows can answer
 
-- Whether the Media Foundation sink writer accepts two AAC streams, and a file with no video stream, in fragmented MP4.
+- Whether the Media Foundation sink writer accepts two AAC streams, and a file with no video stream, in fragmented MP4. **Answered on 2026-11-19:** it does.
 - Whether Slack on Windows puts "[Main]" in its main window's title while a joined huddle is open, as on macOS. If it does not, a huddle is recorded black throughout: Slack opens the huddle window as it takes the microphone, so when the window appeared cannot tell it from the main window.
 - Whether Teams, Zoom and Webex open a separate call window, and whether it opens after the app takes the microphone. A window already open when the microphone is taken is not recorded unless the app's adapter says it is a meeting's; an app without a separate call window is recorded black.
 - Whether Teams, Zoom and Webex let go of the microphone while muted. If one does, a mute longer than the end grace ends the recording; keeping it going would belong in that app's adapter ([ADR](../adr/adr-20261119-end-a-desktop-meeting-on-the-microphone.md)).
-- Whether the D3D11 video processor puts a window smaller than the canvas in its middle at its own size. The ignored test `window_pictures_are_cropped_when_odd_and_scaled_when_resized_and_written` covers cropping and scaling down only.
+- Whether the D3D11 video processor puts a window smaller than the canvas in its middle at its own size. **Answered on 2026-11-19:** it does; the ignored test `a_picture_smaller_than_the_canvas_is_drawn_in_its_middle_at_its_own_size` checks it.
 - Whether the Windows microphone privacy setting for desktop apps silences the microphone track as it does on macOS.
 
 ### Order of work on a Windows machine
@@ -91,6 +93,13 @@ The Windows build records what the macOS build was shown to record on 2026-11-19
 6. A desktop call in Teams or Zoom, the same way. If its call window cannot be told from its main window, write an adapter for it in `crates/app/src/apps` with tests on the titles observed, and record them in a note.
 7. Measure the idle CPU again as in [the idle note](note-20261119-windows-idle-and-recording-resources.md), with the merged build; the signals are read on the Windows session's conditions, but that has not been measured on Windows since the merge.
 8. Record the outcome as a dated note, and update `PRODUCT.md` "What is not established".
+
+### For a Mac
+
+d1a8127 changed shared code on Windows that has not run on a Mac, and the macOS target could not be type-checked from Windows.
+
+- `recording::mp4` reads a source's samples from its fragments as well as from its sample tables; a fragment without a `tfdt` starts where the track's previous fragment ended. Adding a track now moves explicit `tfhd` base offsets and the `mfra` with the grown `moov`, as writing metadata already did, and both go through the same code.
+- On a Mac: `cargo clippy --workspace --all-targets` and `cargo test --workspace`; then a desktop recording, whose metadata is written into AVAssetWriter's output, with every sample unchanged; and a tab recording with the microphone added as its last track and heard where it was spoken.
 
 ### After the merge
 
