@@ -7,7 +7,6 @@ created: '2026-11-18'
 tags: []
 owners: []
 relations:
-- {type: references, target: note-20261118-windows-recording-performance-handoff}
 - {type: references, target: design-capture-pipeline}
 source_paths:
 - crates/app/src/recording/mixer.rs
@@ -24,7 +23,7 @@ topic: verification
 
 ## Summary
 
-On 2026-11-18 the Windows recording path was measured on one PC, following [the performance handoff](note-20261118-windows-recording-performance-handoff.md), before and after the changes made from it. Sound started about 150 ms behind the picture and stayed there for the whole file; after dropping the backlog it started within a frame of where it should. Dropping the backlog alone made the sound run short a few times in ten minutes; with the mixer's depth control it did not run short once in an hour, and where it sat against the picture did not move over that hour. The encoder was the NVIDIA hardware encoder taking ARGB32 directly, and the recording used little CPU, so the handoff's GPU-path work brought nothing measurable on this PC and was left as an issue. The same day the status panel was given the Windows 11 flyout look and was seen on this PC.
+On 2026-11-18 the Windows recording path was measured on one PC, following a handoff written from a reading of the source on a Mac, before and after the changes made from it. Sound started about 150 ms behind the picture and stayed there for the whole file; after dropping the backlog it started within a frame of where it should. Dropping the backlog alone made the sound run short a few times in ten minutes; with the mixer's depth control it did not run short once in an hour, and where it sat against the picture did not move over that hour. The encoder was the NVIDIA hardware encoder taking ARGB32 directly, and the recording used little CPU, so the handoff's GPU-path work brought nothing measurable on this PC and was left as an issue. The same day the status panel was given the Windows 11 flyout look and was seen on this PC.
 
 These are observations from one machine on one day, over Remote Desktop and without a microphone. They do not establish behavior on other hardware, other encoders or in real calls.
 

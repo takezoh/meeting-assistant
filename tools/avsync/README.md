@@ -1,6 +1,6 @@
 # avsync
 
-Measures how far sound and picture are apart in a recording of the screen, on Windows. It was written to check the Windows recording path against [the performance handoff](../../docs/note/note-20261118-windows-recording-performance-handoff.md); the results are in the [measurement note](../../docs/note/note-20261118-windows-recording-measured.md).
+Measures how far sound and picture are apart in a recording of the screen, on Windows. It was written to check the Windows recording path; the results are in the [measurement note](../../docs/note/note-20261118-windows-recording-measured.md).
 
 It is not part of the app's workspace and is built and run by hand:
 

@@ -9,7 +9,6 @@ tags: []
 owners: []
 relations:
 - {type: references, target: note-20261118-windows-recording-measured}
-- {type: references, target: note-20261118-windows-recording-performance-handoff}
 subject_paths:
 - crates/app/src/platform/win/recorder/scale.rs
 - crates/app/src/platform/win/recorder/writer.rs
@@ -34,4 +33,4 @@ Since 2026-11-19 the scaler draws pictures into a pool of textures and draws int
 
 ## Context for follow-up
 
-Step 5 of [the performance handoff](../note/note-20261118-windows-recording-performance-handoff.md). Knowing when a texture is free needs either tracked samples (`IMFTrackedSample`) or the video sample allocator (`MFCreateVideoSampleAllocatorEx`), which must also cover a picture written several times. The [capture pipeline design](../design/design-capture-pipeline.md) leaves the scaling method and the encoder to the backend.
+Knowing when a texture is free needs either tracked samples (`IMFTrackedSample`) or the video sample allocator (`MFCreateVideoSampleAllocatorEx`), which must also cover a picture written several times. The [capture pipeline design](../design/design-capture-pipeline.md) leaves the scaling method and the encoder to the backend.

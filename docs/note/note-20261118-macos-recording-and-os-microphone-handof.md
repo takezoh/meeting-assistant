@@ -90,7 +90,7 @@ These are for the design step, not decided here:
 
 - Recording several meetings in parallel (declined by the user).
 - Detecting browser meetings without the extension (removed on all platforms).
-- Windows performance work; it has its own [handoff](note-20261118-windows-recording-performance-handoff.md).
+- Windows performance work; it was done on Windows and measured in [the Windows measurement note](note-20261118-windows-recording-measured.md).
 
 ## Other open items
 
