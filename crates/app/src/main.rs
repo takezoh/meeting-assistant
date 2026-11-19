@@ -17,6 +17,7 @@
 //! | `composition`, `tray`, `panel::window`, `diagnostics`, `logging` | Wiring and interaction with the user | Yes |
 
 mod adapters;
+mod apps;
 #[cfg(test)]
 mod architecture;
 mod browser;

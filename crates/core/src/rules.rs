@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::apps::{MeetingApp, WindowRole};
 use crate::config::ConfigError;
 use crate::detector::MeetingKey;
 use crate::signals::{BrowserTab, ProcessEntry, SignalSnapshot};
@@ -45,8 +47,8 @@ pub struct RuleEvidence {
     pub render_device_id: Option<String>,
     /// Top-level process of the app that is using the microphone. Used to record only that app's sound.
     pub process_id: Option<u32>,
-    /// Every window of the app, when the windows were read, from which the detector tells which one appeared with the
-    /// meeting. The app's other windows, its main window among them, are never recorded.
+    /// Every window of the app, when the windows were read, from which the detector tells which one is the meeting's.
+    /// The app's other windows, its main window among them, are never recorded.
     pub windows: Vec<AppWindow>,
     /// For a meeting reported by the browser extension, that tab.
     pub browser_tab: Option<BrowserTab>,
@@ -60,6 +62,8 @@ pub struct AppWindow {
     pub id: u64,
     pub area: u64,
     pub display: Option<String>,
+    /// What the app's adapter tells of it; [`WindowRole::Unknown`] for an app without one.
+    pub role: WindowRole,
 }
 
 impl RuleEvidence {
@@ -83,6 +87,8 @@ pub struct RuleEvaluator {
 struct CompiledRule {
     name: String,
     process_names: HashSet<String>,
+    /// The adapter for the rule's app, if there is one.
+    app: Option<Arc<dyn MeetingApp>>,
 }
 
 const MAX_ANCESTOR_DEPTH: usize = 32;
@@ -92,6 +98,17 @@ impl RuleEvaluator {
         let rules = rules.iter().map(compile).collect::<Result<Vec<_>, _>>()?;
         let known_names = rules.iter().flat_map(|r| r.process_names.iter().cloned()).collect();
         Ok(Self { rules, known_names })
+    }
+
+    /// Gives each rule the first of `apps` that handles one of its process names.
+    pub fn with_apps(mut self, apps: &[Arc<dyn MeetingApp>]) -> Self {
+        for rule in &mut self.rules {
+            rule.app = apps
+                .iter()
+                .find(|app| rule.process_names.iter().any(|name| app.handles(name)))
+                .cloned();
+        }
+        self
     }
 
     pub fn evaluate(&self, snapshot: &SignalSnapshot) -> Vec<RuleEvidence> {
@@ -110,14 +127,23 @@ impl RuleEvaluator {
                     .iter()
                     .find_map(|s| owned(s.process_id).map(|o| (s, o)));
                 let render = snapshot.render_sessions.iter().find(|s| owned(s.process_id).is_some());
-                let windows: Vec<AppWindow> = snapshot
+                let entries: Vec<_> = snapshot
                     .windows
                     .iter()
                     .filter(|w| owned(w.process_id).is_some())
-                    .map(|w| AppWindow {
+                    .collect();
+                let roles = rule.app.as_ref().map_or_else(
+                    || vec![WindowRole::Unknown; entries.len()],
+                    |app| app.window_roles(&entries.iter().map(|w| w.title.as_str()).collect::<Vec<_>>()),
+                );
+                let windows: Vec<AppWindow> = entries
+                    .iter()
+                    .zip(roles.into_iter().chain(std::iter::repeat(WindowRole::Unknown)))
+                    .map(|(w, role)| AppWindow {
                         id: w.id,
                         area: w.area,
                         display: w.display.clone(),
+                        role,
                     })
                     .collect();
 
@@ -231,5 +257,6 @@ fn compile(rule: &MeetingRule) -> Result<CompiledRule, ConfigError> {
     Ok(CompiledRule {
         name: rule.name.clone(),
         process_names: rule.process_names.iter().map(|n| normalize_process_name(n)).collect(),
+        app: None,
     })
 }

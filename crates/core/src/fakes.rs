@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use crate::apps::{MeetingApp, WindowRole};
 use crate::ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
 use crate::recording::{Recorder, RecordingRequest};
 use crate::signals::{
@@ -307,4 +308,32 @@ pub fn snapshot(
 
 pub fn zoom_in_meeting() -> SignalSnapshot {
     snapshot(&[process(100, 1, "Zoom.exe")], &[100], &[], &[])
+}
+
+/// A meeting app adapter for the app run as `process_name`: a window whose title starts with "main:" is its main
+/// window, one whose title starts with "meeting:" a meeting's, and nothing is told of the others.
+#[derive(Debug)]
+pub struct FakeMeetingApp {
+    pub process_name: &'static str,
+}
+
+impl MeetingApp for FakeMeetingApp {
+    fn handles(&self, process_name: &str) -> bool {
+        process_name == self.process_name
+    }
+
+    fn window_roles(&self, titles: &[&str]) -> Vec<WindowRole> {
+        titles
+            .iter()
+            .map(|title| {
+                if title.starts_with("main:") {
+                    WindowRole::Main
+                } else if title.starts_with("meeting:") {
+                    WindowRole::Meeting
+                } else {
+                    WindowRole::Unknown
+                }
+            })
+            .collect()
+    }
 }

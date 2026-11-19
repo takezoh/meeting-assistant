@@ -122,6 +122,8 @@ fn decision_modules_have_no_side_effects() {
     ];
     let pure = [
         "cli.rs",
+        "apps/mod.rs",
+        "apps/slack.rs",
         "bundle.rs",
         "install/mod.rs",
         "linked.rs",

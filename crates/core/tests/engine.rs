@@ -1,10 +1,12 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use meeting_assistant_core::fakes::{
-    FakeRecorder, ScriptedSignals, fake_ports, process, snapshot, window, window_id, zoom_in_meeting,
+    FakeMeetingApp, FakeRecorder, ScriptedSignals, fake_ports, process, snapshot, window, window_id, zoom_in_meeting,
 };
 use meeting_assistant_core::{
-    BrowserLink, BrowserMeeting, BrowserTab, Config, Engine, NoticeLevel, RecordingCoordinator, VideoTarget,
+    BrowserLink, BrowserMeeting, BrowserTab, Config, Engine, MeetingApp, NoticeLevel, RecordingCoordinator,
+    VideoTarget, WindowEntry,
 };
 
 struct Fixture {
@@ -16,10 +18,17 @@ struct Fixture {
 
 /// Built with the default settings (start grace 3 s, end grace 2 s, signal outage limit 60 s).
 fn fixture() -> Fixture {
+    fixture_with_apps(&[])
+}
+
+/// As [`fixture`], with these meeting app adapters.
+fn fixture_with_apps(apps: &[Arc<dyn MeetingApp>]) -> Fixture {
     let recorder = FakeRecorder::default();
     let signals = ScriptedSignals::default();
     let coordinator = RecordingCoordinator::new(recorder.clone(), fake_ports(&recorder));
-    let engine = Engine::new(signals.clone(), coordinator, &Config::default()).unwrap();
+    let engine = Engine::new(signals.clone(), coordinator, &Config::default())
+        .unwrap()
+        .with_apps(apps);
     Fixture {
         recorder,
         signals,
@@ -355,4 +364,39 @@ fn keeps_reading_the_windows_while_an_apps_meeting_is_recorded_without_the_micro
         [window_id("Zoom Workplace")],
         "the recording follows the app's other window"
     );
+}
+
+#[test]
+fn records_the_window_an_apps_adapter_tells_is_a_meetings_when_it_was_open_at_the_first_reading() {
+    let mut f = fixture_with_apps(&[Arc::new(FakeMeetingApp { process_name: "slack" })]);
+    let entry = |id: u64, title: &str, area: u64| WindowEntry {
+        id,
+        process_id: 100,
+        title: title.into(),
+        display: Some("DISPLAY1".into()),
+        area,
+    };
+    let slack = |microphone: bool, windows: &[WindowEntry]| {
+        let users: &[u32] = if microphone { &[100] } else { &[] };
+        snapshot(&[process(100, 1, "Slack")], users, &[], windows)
+    };
+    let alone = entry(1, "general - team", 9000);
+    let told = entry(1, "main: general - team", 9000);
+    let huddle = entry(2, "meeting: general - team", 500);
+    f.signals.set(slack(false, std::slice::from_ref(&alone)));
+    f.run(5);
+    // The huddle window opens as the microphone is taken, and the adapter tells the two apart.
+    f.signals.set(slack(true, &[told.clone(), huddle.clone()]));
+    f.run(5);
+    assert_eq!(
+        f.recorder.state().started[0].video,
+        VideoTarget::Window(2),
+        "the huddle window, not the larger main window"
+    );
+
+    // Leaving closes the huddle window and lets go of the microphone.
+    f.signals.set(slack(false, std::slice::from_ref(&alone)));
+    f.run(4);
+    assert!(!f.recording());
+    assert!(f.recorder.state().retargets.is_empty());
 }

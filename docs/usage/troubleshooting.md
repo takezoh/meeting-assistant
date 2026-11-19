@@ -22,8 +22,8 @@ A window that opened with the meeting is still open, for example a call window t
 
 ## The picture is black or frozen
 
-- **Black from the start, or throughout:** no window appeared with the meeting. The picture appears when the meeting's window does. A window that was already open when the app took the microphone is not taken for the meeting's, so a call window that opens just before the microphone is taken stays unrecorded. The app's main window and the whole display are deliberately not recorded instead.
-- **Frozen:** the recorded window is minimized, or it was closed while the meeting went on. Audio continues.
+- **Black from the start, or throughout:** the meeting's window has not been found. The picture appears when it is. A Slack huddle is black while it is previewed and shows from the moment it is joined. For other apps, a window that was already open when the app took the microphone is not taken for the meeting's, so a call window that opens just before the microphone is taken stays unrecorded. The app's main window and the whole display are deliberately not recorded instead.
+- **Frozen:** the recorded window is minimized, or it was closed while the meeting went on. Audio continues. On macOS a minimized window, or one on another Space, is not counted as open, so in an app that lets go of the microphone while muted the meeting ends if its window is minimized.
 - **Black bars:** the window's shape differs from the picture's (`video.width` by `video.height`, 16:9 by default), and the window is scaled to fit with its aspect ratio kept.
 
 ## The wrong window was recorded

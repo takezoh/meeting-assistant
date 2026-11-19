@@ -1,6 +1,8 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::apps::{MeetingApp, WindowRole};
 use crate::config::{Config, ConfigError};
 use crate::coordinator::{CoordinatorStatus, ManualTarget, Notice, NoticeLevel, RecordingCoordinator};
 use crate::detector::{MeetingDetector, Timing};
@@ -49,6 +51,12 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             outage_reported: false,
             reading_windows: false,
         })
+    }
+
+    /// Uses what `apps` know about particular meeting apps to tell their meetings' windows.
+    pub fn with_apps(mut self, apps: &[Arc<dyn MeetingApp>]) -> Self {
+        self.evaluator = self.evaluator.with_apps(apps);
+        self
     }
 
     pub fn tick(&mut self, now: Instant) {
@@ -130,15 +138,21 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
         Ok((snapshot, windows_read))
     }
 
-    /// Logs when the windows begin and stop being read, since the windows open when reading begins are never a
-    /// meeting's.
+    /// Logs when the windows begin and stop being read, since what is open when reading begins decides whether a
+    /// meeting's window can be told from its app's main window.
     fn note_window_reading(&mut self, windows_read: bool, evidence: &[RuleEvidence]) {
         if windows_read == std::mem::replace(&mut self.reading_windows, windows_read) {
             return;
         }
         if windows_read {
-            let open: usize = evidence.iter().map(|e| e.windows.len()).sum();
-            log::info!("Looking at the windows: {open} of meeting apps are open and are not taken for a meeting's.");
+            let windows = || evidence.iter().flat_map(|e| e.windows.iter());
+            let told = |role| windows().filter(|w| w.role == role).count();
+            log::info!(
+                "Looking at the windows: {} of meeting apps are open; their apps tell {} as a main window and {} as a meeting's.",
+                windows().count(),
+                told(WindowRole::Main),
+                told(WindowRole::Meeting),
+            );
         } else {
             log::info!("Stopped looking at the windows.");
         }

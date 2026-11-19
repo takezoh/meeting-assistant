@@ -52,6 +52,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | Module | Responsibility |
 | --- | --- |
 | `rules` | `MeetingRule`, the default rules, and `RuleEvaluator`: given a signal snapshot, which rule is satisfied and by which process and window. Pure |
+| `apps` | `MeetingApp`, the port through which an adapter for one meeting app tells what each of its windows is (main, a meeting's, or unknown), and `WindowRole`. Pure |
 | `detector` | `MeetingDetector`: start debounce and end grace over a sequence of evaluations, and which window appeared with a meeting. Pure; time is passed in |
 | `coordinator` | `RecordingCoordinator`: turns meeting starts, ends and manual commands into recorder calls; chooses the video target and audio process; retries after failure; names the file |
 | `engine` | `Engine`: one tick = capture signals, evaluate, update the detector, tell the coordinator; returns state and notices |
@@ -81,6 +82,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
 | `panel/view` | What the status panel and the tray icon show, the tooltip and running time, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
 | `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it. One page for both platforms; it follows the macOS or the Windows 11 design through a mark the platform gives it |
+| `apps` | The `MeetingApp` adapters, one per app that more is known about (Slack: the mark it puts in its main window's title while a joined huddle is open). Pure; given to the engine in `composition` |
 | `adapters` | Real implementations of the core ports (system clock, recordings folder, sleeping, configuration file) and of the merge's ports (`Mp4Remuxer`, files) |
 | `platform/win`, `platform/mac` | The only modules that call operating system APIs |
 | `composition`, `tray`, `main`, `diagnostics`, `logging`, `bundle` | Wiring of real implementations, the tray UI, entry point, `--probe`/`--self-test`, the log file, embedded extension files |

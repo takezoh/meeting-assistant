@@ -45,7 +45,7 @@ process_names = ["zoom"]
 | `name` | Used in the recording's file name and in the log |
 | `process_names` | Executable names without extension, case-insensitive. Child processes of a matching process count as that process |
 
-A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`. A window of the app that appears once the microphone is taken, such as a call window, is the meeting's window and is recorded; until one appears the picture is black. The app's other windows, its main window among them, are not recorded. The meeting lasts while the microphone is in use or the meeting's window is open.
+A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`. The meeting's window is recorded: for Slack the huddle window, which the app tells from Slack's main window; for other apps a window that appears once the microphone is taken, such as a call window. Until it is found the picture is black. The app's other windows, its main window among them, are not recorded. Which apps the app knows more about is built in, not configured. The meeting lasts while the microphone is in use or the meeting's window is open.
 
 The first rule in the file that is satisfied names the recording. Writing a `rules` list replaces the defaults entirely, so copy the default rules from the generated file before editing them.
 

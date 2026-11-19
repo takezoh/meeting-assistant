@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{AppWindow, BrowserTab, DetectorEvent, MeetingDetector, RuleEvidence, Timing};
+use meeting_assistant_core::{AppWindow, BrowserTab, DetectorEvent, MeetingDetector, RuleEvidence, Timing, WindowRole};
 
 /// Updates with the windows read, as while an app uses the microphone.
 trait Observe {
@@ -58,6 +58,7 @@ fn window(id: u64, area: u64) -> AppWindow {
         id,
         area,
         display: Some(format!("DISPLAY-{id}")),
+        role: WindowRole::Unknown,
     }
 }
 
@@ -396,4 +397,64 @@ fn windows_open_when_reading_resumes_count_as_open_before() {
         None,
         "it cannot be told to have appeared with the meeting"
     );
+}
+
+/// Slack, whose adapter tells its main window 77 apart, and these other windows, told as a meeting's.
+fn slack_told(microphone: bool, others: &[AppWindow]) -> Vec<RuleEvidence> {
+    let mut evidence = slack(microphone, others);
+    for window in &mut evidence[0].windows {
+        window.role = if window.id == 77 {
+            WindowRole::Main
+        } else {
+            WindowRole::Meeting
+        };
+    }
+    evidence
+}
+
+#[test]
+fn a_window_the_apps_adapter_tells_is_a_meetings_is_taken_although_it_was_open_at_the_first_reading() {
+    let (mut d, t) = detector();
+    let huddle = window(88, 500);
+    // The huddle window opened with the microphone, before the windows were first read.
+    d.observe(t.at(0.0), &slack_told(true, std::slice::from_ref(&huddle)));
+    assert_eq!(
+        started_window(d.observe(t.at(3.0), &slack_told(true, std::slice::from_ref(&huddle)))).0,
+        Some(88)
+    );
+}
+
+#[test]
+fn a_window_told_as_the_main_one_is_never_the_meetings_and_untold_windows_go_by_when_they_appeared() {
+    let (mut d, t) = detector();
+    // Only the main window: nothing to record, although it is the largest.
+    d.observe(t.at(0.0), &slack_told(true, &[]));
+    assert_eq!(
+        started_window(d.observe(t.at(3.0), &slack_told(true, &[]))),
+        (None, None)
+    );
+
+    // Told nothing, a window open at the first reading is not taken.
+    let (mut d, t) = detector();
+    let huddle = window(88, 500);
+    d.observe(t.at(0.0), &slack(true, std::slice::from_ref(&huddle)));
+    assert_eq!(
+        started_window(d.observe(t.at(3.0), &slack(true, std::slice::from_ref(&huddle)))).0,
+        None
+    );
+}
+
+#[test]
+fn a_window_told_as_a_meetings_later_in_the_meeting_is_adopted() {
+    let (mut d, t) = detector();
+    let huddle = window(88, 500);
+    // Previewed: the adapter cannot tell yet.
+    d.observe(t.at(0.0), &slack(true, std::slice::from_ref(&huddle)));
+    started_window(d.observe(t.at(3.0), &slack(true, std::slice::from_ref(&huddle))));
+    let key = d.meetings().next().unwrap().key();
+    assert_eq!(d.meeting_window(&key), None);
+
+    // Joined: now it can.
+    d.observe(t.at(12.0), &slack_told(true, std::slice::from_ref(&huddle)));
+    assert_eq!(d.meeting_window(&key), Some(88));
 }

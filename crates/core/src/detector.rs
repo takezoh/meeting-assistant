@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use crate::apps::WindowRole;
 use crate::rules::{AppWindow, RuleEvidence};
 use crate::signals::BrowserTab;
 
@@ -57,10 +58,12 @@ pub enum DetectorEvent {
 ///
 /// - Start: when a meeting has been active (its app uses the microphone, or the extension reports a call) for the
 ///   start debounce.
-/// - Its window: a window of the app that appeared once the windows were being read, from
-///   [`MEETING_WINDOW_LOOKBACK`] before the meeting's condition began, either by its start or later during it. Windows
-///   already open when reading began, the app's main window among them, are never the meeting's. Until it has one, a
-///   meeting has no window and nothing is recorded for its picture.
+/// - Its window: a window that the app's adapter (see [`crate::MeetingApp`]) tells is a meeting's, or else, of the
+///   windows nothing is told about, one that appeared once the windows were being read, from
+///   [`MEETING_WINDOW_LOOKBACK`] before the meeting's condition began. It is chosen by the start or later during the
+///   meeting. A window the adapter tells is the app's main window, and an untold window already open when reading
+///   began, are never the meeting's. Until it has one, a meeting has no window and nothing is recorded for its
+///   picture.
 /// - Continue: while it stays active, or while its window stays open (an app may let go of the microphone while
 ///   muted, but its call window stays).
 /// - End: when it has been neither for the end grace.
@@ -174,7 +177,7 @@ impl MeetingDetector {
                     tracked.window = None;
                 }
                 if tracked.window.is_none() {
-                    tracked.window = appeared(seen, windows, tracked.since).cloned();
+                    tracked.window = meeting_window_among(seen, windows, tracked.since).cloned();
                 }
             }
             if ongoing(tracked, evidence) {
@@ -210,7 +213,7 @@ impl MeetingDetector {
                 self.candidates.push((key, since));
                 continue;
             }
-            let window = appeared(&self.windows_seen, &found.windows, since).cloned();
+            let window = meeting_window_among(&self.windows_seen, &found.windows, since).cloned();
             let meeting = MeetingInfo {
                 rule_name: found.rule_name.clone(),
                 capture_device_id: found.capture_device_id.clone(),
@@ -233,9 +236,10 @@ impl MeetingDetector {
     }
 }
 
-/// The window of a meeting whose condition began at `since`: the largest of the app's windows that appeared from
+/// The window of a meeting whose condition began at `since`, the largest of the app's windows that can be its: those
+/// the app's adapter tells are a meeting's, and of the others it tells nothing about, those that appeared from
 /// [`MEETING_WINDOW_LOOKBACK`] before then.
-fn appeared<'a>(
+fn meeting_window_among<'a>(
     seen: &HashMap<u64, Option<Instant>>,
     windows: &'a [AppWindow],
     since: Instant,
@@ -243,7 +247,11 @@ fn appeared<'a>(
     let from = since.checked_sub(MEETING_WINDOW_LOOKBACK).unwrap_or(since);
     windows
         .iter()
-        .filter(|w| matches!(seen.get(&w.id), Some(Some(appeared)) if *appeared >= from))
+        .filter(|w| match w.role {
+            WindowRole::Meeting => true,
+            WindowRole::Main => false,
+            WindowRole::Unknown => matches!(seen.get(&w.id), Some(Some(appeared)) if *appeared >= from),
+        })
         .max_by_key(|w| w.area)
 }
 

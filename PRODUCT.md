@@ -36,7 +36,7 @@ It is a personal tool for one logged-in user on one computer. It has no accounts
 
 Desktop meeting apps are detected from their use of the microphone; browser meetings are detected by the browser extension, and only by it. Once per `poll_interval_milliseconds` the app reads which processes hold an active microphone session and evaluates the rules; it looks at the windows only while an app uses the microphone or a desktop meeting is detected or recorded.
 
-- **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default). A window of the app that appears after the app took the microphone, or up to 10 seconds before while the windows were already being looked at, such as a Slack huddle window or a Zoom meeting window, is taken to be the meeting's window, also when it appears later during the meeting. Windows already open when the microphone was taken, the app's main window among them, are never the meeting's.
+- **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default). The meeting's window is found from what can be seen once the app has taken the microphone. For an app the app knows more about, that is what the app shows: Slack marks its main window while a joined huddle is open, so the huddle window is the meeting's from the moment of joining. For other apps it is a window that appears after the app took the microphone, or up to 10 seconds before while the windows were already being looked at, such as a Zoom meeting window. Either way it may be found later during the meeting, and the app's main window is never the meeting's.
 - **Continue.** The meeting lasts while the app keeps using the microphone or keeps that window open, so that muting in an app that lets go of the microphone does not end it.
 - **End.** Both have been absent for `end_grace_seconds` (2 by default). When no window appeared with the meeting, its end depends on the microphone alone; the app's main window, which stays open, does not keep it going.
 
@@ -52,7 +52,7 @@ With the default `capture_scope = "app"`:
 
 | | Desktop app | Browser meeting (extension) |
 | --- | --- | --- |
-| Video | One window: the window that appeared with the meeting; black until it appears | The meeting tab |
+| Video | One window: the meeting's window; black until it is found | The meeting tab |
 | Other side's audio | Audio played by the app's top-level process and its descendants | Audio of the tab |
 | Your audio | The microphone | The microphone, recorded by the app beside the tab |
 

@@ -85,13 +85,20 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
 
     let mark = |value: bool| if value { "yes" } else { "no" };
     println!("Verdict per rule:");
-    for evidence in RuleEvaluator::new(&config.rules)?.evaluate(&snapshot) {
+    let evaluator = RuleEvaluator::new(&config.rules)?.with_apps(&crate::apps::adapters());
+    for evidence in evaluator.evaluate(&snapshot) {
         let process = evidence
             .process_id
             .map(|p| format!(" audio target=pid {p}"))
             .unwrap_or_default();
-        // Which window is the meeting's depends on when it appeared, which a single reading cannot tell.
-        let windows = format!(" windows={}", evidence.windows.len());
+        // Of a window the app's adapter tells nothing about, whether it is the meeting's depends on when it appeared,
+        // which a single reading cannot tell.
+        let roles: Vec<String> = evidence
+            .windows
+            .iter()
+            .map(|w| format!("{:#x}:{:?}", w.id, w.role))
+            .collect();
+        let windows = format!(" windows=[{}]", roles.join(" "));
         println!(
             "  {}: active={}{process}{windows}",
             evidence.rule_name,

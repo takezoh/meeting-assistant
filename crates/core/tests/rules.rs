@@ -1,7 +1,9 @@
-use meeting_assistant_core::fakes::{MIC, process, snapshot, window, window_id, zoom_in_meeting};
+use std::sync::Arc;
+
+use meeting_assistant_core::fakes::{FakeMeetingApp, MIC, process, snapshot, window, window_id, zoom_in_meeting};
 use meeting_assistant_core::{
-    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ConfigError, MeetingRule, RuleEvaluator, RuleEvidence,
-    SignalSnapshot, default_rules,
+    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ConfigError, MeetingApp, MeetingRule, RuleEvaluator,
+    RuleEvidence, SignalSnapshot, WindowRole, default_rules,
 };
 
 fn evaluate(snapshot: &SignalSnapshot) -> Vec<RuleEvidence> {
@@ -279,4 +281,39 @@ fn a_desktop_app_is_detected_as_before_even_when_the_extension_is_connected() {
     }];
 
     assert!(evidence(&linked(s, false), "Zoom").active);
+}
+
+#[test]
+fn the_adapter_of_a_rules_app_tells_what_its_windows_are_and_an_app_without_one_is_told_nothing() {
+    let apps: [Arc<dyn MeetingApp>; 1] = [Arc::new(FakeMeetingApp { process_name: "zoom" })];
+    let s = snapshot(
+        &[process(100, 1, "Zoom.exe"), process(200, 1, "Slack")],
+        &[100],
+        &[],
+        &[
+            window(100, "main: Zoom", "DISPLAY1", 9000),
+            window(100, "meeting: Zoom Meeting", "DISPLAY1", 5000),
+            window(100, "Settings", "DISPLAY1", 500),
+            window(200, "main: Slack", "DISPLAY1", 9000),
+        ],
+    );
+    let evidence = RuleEvaluator::new(&default_rules())
+        .unwrap()
+        .with_apps(&apps)
+        .evaluate(&s);
+    let roles = |rule: &str| -> Vec<WindowRole> {
+        evidence
+            .iter()
+            .find(|e| e.rule_name == rule)
+            .unwrap()
+            .windows
+            .iter()
+            .map(|w| w.role)
+            .collect()
+    };
+    assert_eq!(
+        roles("Zoom"),
+        [WindowRole::Main, WindowRole::Meeting, WindowRole::Unknown]
+    );
+    assert_eq!(roles("Slack"), [WindowRole::Unknown], "no adapter for Slack here");
 }

@@ -164,7 +164,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
         }
         match self.recorder.retarget(window) {
             Ok(()) => {
-                log::info!("Switched the window being recorded.");
+                log::info!("Asked the recording to move to window {window:#x}.");
                 recording.window = Some(window);
             }
             Err(error) => log::warn!("Could not switch the window being recorded: {error:#}"),

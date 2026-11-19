@@ -11,6 +11,7 @@
 //!
 //! With the `fakes` feature enabled, fakes of these (the `fakes` module) are available.
 
+mod apps;
 mod config;
 mod coordinator;
 mod detector;
@@ -23,6 +24,7 @@ mod recording;
 mod rules;
 mod signals;
 
+pub use apps::{MeetingApp, WindowRole};
 pub use config::{AudioConfig, CONFIG_VERSION, CaptureScope, Config, ConfigError, VideoConfig};
 pub use coordinator::{
     CoordinatorStatus, ManualTarget, MeetingStatus, Notice, NoticeLevel, RecordingCoordinator, RecordingStatus,
