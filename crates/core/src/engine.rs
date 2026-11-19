@@ -109,9 +109,9 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
     /// The microphone sessions and the extension's reports are read on every tick. A rule can only be satisfied by
     /// an app that uses the microphone, so the processes (to find each session's app), the windows (to find the window
     /// that appears with its meeting) and the playback sessions (to find the app's output device) are read only when
-    /// some process uses the microphone. While an app's meeting is detected or recorded, the processes and windows
-    /// are read anyway: its window keeps it going when the app lets go of the microphone, and is followed when it
-    /// closes. The windows found when reading begins count as open before any meeting.
+    /// some process uses the microphone. While an app's meeting is recorded, the processes and windows are read anyway,
+    /// to follow its window. The windows found when reading begins count as open before any meeting unless the app's
+    /// adapter tells otherwise.
     fn read_signals(&mut self) -> anyhow::Result<(SignalSnapshot, bool)> {
         let (browser_links, browser_meetings) = self.source.browser();
         let mut snapshot = SignalSnapshot {
@@ -125,12 +125,10 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             .coordinator
             .recorded_meeting()
             .is_some_and(|meeting| meeting.browser_tab.is_none());
-        // A desktop meeting goes on while its window is open, also when the app has let go of the microphone.
-        let app_meeting = self.detector.meetings().any(|meeting| meeting.browser_tab.is_none());
         if microphone_in_use {
             snapshot.render_sessions = self.source.render_sessions()?;
         }
-        let windows_read = microphone_in_use || recording_an_app || app_meeting;
+        let windows_read = microphone_in_use || recording_an_app;
         if windows_read {
             snapshot.processes = self.source.processes()?;
             snapshot.windows = self.source.windows()?;

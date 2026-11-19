@@ -14,16 +14,16 @@ Run `meeting-assistant --probe` while the meeting is in progress.
 
 ## The recording stopped during the meeting
 
-The meeting app stopped using the microphone for longer than `end_grace_seconds` while no window that opened with the meeting was open. Some apps release the microphone while you are muted; if such an app shows the call in its main window, the meeting ends. Increase `end_grace_seconds`, or start the recording manually; a manual recording is not ended by detection.
+The meeting app stopped using the microphone for longer than `end_grace_seconds`. An app that releases the microphone while you are muted ends the meeting during a longer mute. Increase `end_grace_seconds`, or start the recording manually; a manual recording is not ended by detection.
 
 ## The recording does not stop after the meeting
 
-A window that opened with the meeting is still open, for example a call window that stays after the call. The recording ends when it is closed.
+The meeting app, or another process of it, still uses the microphone. `meeting-assistant --probe` lists the processes using the microphone. The recording ends `end_grace_seconds` after the app lets it go.
 
 ## The picture is black or frozen
 
 - **Black from the start, or throughout:** the meeting's window has not been found. The picture appears when it is. A Slack huddle is black while it is previewed and shows from the moment it is joined. For other apps, a window that was already open when the app took the microphone is not taken for the meeting's, so a call window that opens just before the microphone is taken stays unrecorded. The app's main window and the whole display are deliberately not recorded instead.
-- **Frozen:** the recorded window is minimized, or it was closed while the meeting went on. Audio continues. On macOS a minimized window, or one on another Space, is not counted as open, so in an app that lets go of the microphone while muted the meeting ends if its window is minimized.
+- **Frozen:** the recorded window is minimized, or it was closed while the meeting went on. Audio continues.
 - **Black bars:** the window's shape differs from the picture's (`video.width` by `video.height`, 16:9 by default), and the window is scaled to fit with its aspect ratio kept.
 
 ## The wrong window was recorded

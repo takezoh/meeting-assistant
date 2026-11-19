@@ -64,9 +64,9 @@ pub enum DetectorEvent {
 ///   meeting. A window the adapter tells is the app's main window, and an untold window already open when reading
 ///   began, are never the meeting's. Until it has one, a meeting has no window and nothing is recorded for its
 ///   picture.
-/// - Continue: while it stays active, or while its window stays open (an app may let go of the microphone while
-///   muted, but its call window stays).
-/// - End: when it has been neither for the end grace.
+/// - Continue: while it stays active, as it started. Its window is for the picture only: Slack hides its huddle window
+///   when the huddle is left and destroys it seconds later, and a window cannot tell that apart from a meeting.
+/// - End: when it has not been active for the end grace.
 ///
 /// Desktop apps and browser meetings have their own [`Timing`].
 ///
@@ -91,7 +91,7 @@ struct Tracked {
     info: MeetingInfo,
     /// When its condition began to hold.
     since: Instant,
-    /// The window that appeared with the meeting, while it is open. It keeps the meeting going.
+    /// The meeting's window, while it is open.
     window: Option<AppWindow>,
     absent_since: Option<Instant>,
 }
@@ -109,7 +109,7 @@ impl MeetingDetector {
         }
     }
 
-    /// Whether the meeting with `key` is going on now: its condition holds, or its window is open.
+    /// Whether the meeting with `key` is going on now: its condition holds.
     pub fn is_ongoing(&self, key: &MeetingKey, evidence: &[RuleEvidence]) -> bool {
         self.meetings
             .iter()
@@ -255,10 +255,10 @@ fn meeting_window_among<'a>(
         .max_by_key(|w| w.area)
 }
 
-/// Whether a tracked meeting's condition holds, or its window is open (as last read).
+/// Whether a tracked meeting's condition holds.
 fn ongoing(tracked: &Tracked, evidence: &[RuleEvidence]) -> bool {
     let key = tracked.info.key();
-    tracked.window.is_some() || evidence.iter().any(|e| e.key() == key && e.active)
+    evidence.iter().any(|e| e.key() == key && e.active)
 }
 
 /// Browser meetings are the ones the extension reports, which carry their tab.

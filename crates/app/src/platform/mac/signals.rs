@@ -227,7 +227,7 @@ fn process(pid: libc::pid_t) -> Option<ProcessEntry> {
 /// without it they are empty, and no app's adapter can tell its windows apart.
 ///
 /// Only windows on screen are listed: Slack hides its huddle window when the huddle is left and destroys it about 13 s
-/// later (observed on 2026-11-19), and a hidden window must not keep a meeting going. The window list cannot tell a
+/// later (observed on 2026-11-19), and a hidden window is not one to record. The window list cannot tell a
 /// hidden window from a minimized one or one on another Space, so those are left out too.
 fn windows() -> Vec<WindowEntry> {
     let Some(list) = CGWindowListCopyWindowInfo(

@@ -16,7 +16,7 @@ summary: 'Two huddles on one Mac: windows read only from the microphone left the
 
 ## Summary
 
-On 2026-11-19, on one Mac (macOS 26) with Slack (desktop, English), the user previewed, joined and left a huddle twice, once with each of two builds installed. With the merged build of d0a8ed3, which reads the windows only from the moment some process uses the microphone, the picture was black throughout. With a build that also takes Slack's mark of its main window into account, the huddle window was recorded from the moment of joining and the main window was not. One huddle each, alone in the huddle; Windows and other apps were not tried. The mark was then moved from a rule setting into a Slack adapter ([ADR](../adr/adr-20261119-tell-meeting-windows-apart-through-app-adapters.md)), and that build recorded a third huddle the same way. Its recording ended 18.7 s after leaving; a fourth huddle, watched every 200 ms, showed that Slack hides the huddle window when the huddle is left and destroys it about 13 s later, and the macOS window list, which then included windows off screen, kept the meeting going meanwhile. The list was changed to windows on screen only. In a fifth huddle with that build the recording ended 2.8 s after Slack let go of the microphone, but Slack destroyed its hidden window 0.45 s after hiding it that time, so the change was not what ended it; that a hidden window leaves the on-screen list was checked with a window of a test program instead.
+On 2026-11-19, on one Mac (macOS 26) with Slack (desktop, English), the user previewed, joined and left a huddle twice, once with each of two builds installed. With the merged build of d0a8ed3, which reads the windows only from the moment some process uses the microphone, the picture was black throughout. With a build that also takes Slack's mark of its main window into account, the huddle window was recorded from the moment of joining and the main window was not. One huddle each, alone in the huddle; Windows and other apps were not tried. The mark was then moved from a rule setting into a Slack adapter ([ADR](../adr/adr-20261119-tell-meeting-windows-apart-through-app-adapters.md)), and that build recorded a third huddle the same way. Its recording ended 18.7 s after leaving; a fourth huddle, watched every 200 ms, showed that Slack hides the huddle window when the huddle is left and destroys it about 13 s later, and the macOS window list, which then included windows off screen, kept the meeting going meanwhile. The list was changed to windows on screen only. In a fifth huddle with that build the recording ended 2.8 s after Slack let go of the microphone, but Slack destroyed its hidden window 0.45 s after hiding it that time, so the change was not what ended it; that a hidden window leaves the on-screen list was checked with a window of a test program instead. The meeting was then made to end on the microphone alone ([ADR](../adr/adr-20261119-end-a-desktop-meeting-on-the-microphone.md)); in a sixth huddle Slack kept its hidden window for 27.6 s and the recording still ended 2.7 s after Slack let go of the microphone, and it went on through a mute.
 
 ## Notes
 
@@ -98,3 +98,21 @@ The build that lists only windows on screen was installed and a fifth huddle was
 The picture was the huddle window from 6.7 s to 22.9 s of the 25.8-s recording and black otherwise; Slack's main window did not appear. How long Slack keeps a hidden huddle window varied: 13 s in the fourth huddle, 0.45 s here.
 
 A test program opened a window and hid it with `orderOut`, as an app hides a window it keeps: the hidden window stayed in the list of all windows and left the list of windows on screen. So with this build a hidden huddle window no longer keeps a meeting going; a huddle in which Slack keeps it hidden for long has not been recorded with this build.
+
+### Ending on the microphone alone
+
+The build in which a desktop meeting continues and ends on its app's microphone use alone was installed, and a sixth huddle was watched the same way, with a mute.
+
+| Time | Event |
+| --- | --- |
+| 18:35:30.7 | huddle window 0x6e7 appears; Slack takes the microphone 0.2 s later |
+| 18:35:35.4 | recording started with no window (black) |
+| 18:35:43.1 | joined: the huddle window turns 1224x714 |
+| 18:35:44.4 | asked to move to window 0x6e7, switched 0.1 s later |
+| 18:35:43.5 to 18:35:58.7 | Slack Helper takes microphone input without a break, through a mute |
+| 18:35:58.69 | left: Slack lets go of the microphone |
+| 18:35:58.91 | huddle window off screen |
+| 18:36:01.37 | the recording ended, 2.7 s after Slack let go of the microphone |
+| 18:36:26.5 | huddle window gone, 27.6 s after it went off screen |
+
+The picture was the huddle window from 8.7 s to 23.0 s of the 25.8-s recording and black otherwise; Slack's main window did not appear. At 16 s the huddle's microphone button showed muted ("Unmute mic"), at 20 s unmuted, and the recording went on throughout.

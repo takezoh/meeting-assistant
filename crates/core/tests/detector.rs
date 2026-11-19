@@ -302,28 +302,29 @@ fn the_window_that_appears_with_a_meeting_is_recorded_rather_than_the_largest() 
 }
 
 #[test]
-fn a_meeting_continues_while_its_window_is_open_and_ends_soon_after_it_closes() {
+fn a_meeting_ends_when_its_app_lets_go_of_the_microphone_although_its_window_is_still_listed() {
     let (mut d, t) = detector();
     let huddle = window(88, 500);
     d.observe(t.at(0.0), &slack(false, &[]));
     d.observe(t.at(1.0), &slack(true, std::slice::from_ref(&huddle)));
     started_rule(d.observe(t.at(4.0), &slack(true, std::slice::from_ref(&huddle))));
+    let key = d.meetings().next().unwrap().key();
+    assert_eq!(d.meeting_window(&key), Some(88));
 
-    // Muted in an app that lets go of the microphone: the call window keeps the meeting going.
+    // Left: the microphone is let go while the app still keeps the window (Slack hides it for seconds).
     assert!(
         d.observe(t.at(10.0), &slack(false, std::slice::from_ref(&huddle)))
             .is_empty()
     );
     assert!(
-        d.observe(t.at(100.0), &slack(false, std::slice::from_ref(&huddle)))
+        d.observe(t.at(24.9), &slack(false, std::slice::from_ref(&huddle)))
             .is_empty()
     );
-    assert_eq!(detected(&d), ["Slack"]);
-
-    // Leaving closes the window and releases the microphone.
-    assert!(d.observe(t.at(101.0), &slack(false, &[])).is_empty());
-    assert!(d.observe(t.at(115.9), &slack(false, &[])).is_empty());
-    assert_eq!(ended_rule(d.observe(t.at(116.0), &slack(false, &[]))), "Slack");
+    assert_eq!(
+        ended_rule(d.observe(t.at(25.0), &slack(false, std::slice::from_ref(&huddle)))),
+        "Slack",
+        "after the grace from the microphone alone"
+    );
 }
 
 #[test]

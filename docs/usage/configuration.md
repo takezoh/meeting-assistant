@@ -45,7 +45,7 @@ process_names = ["zoom"]
 | `name` | Used in the recording's file name and in the log |
 | `process_names` | Executable names without extension, case-insensitive. Child processes of a matching process count as that process |
 
-A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`. The meeting's window is recorded: for Slack the huddle window, which the app tells from Slack's main window; for other apps a window that appears once the microphone is taken, such as a call window. Until it is found the picture is black. The app's other windows, its main window among them, are not recorded. Which apps the app knows more about is built in, not configured. The meeting lasts while the microphone is in use or the meeting's window is open.
+A rule starts a meeting when one of its processes has used the microphone for `start_debounce_seconds`. The meeting's window is recorded: for Slack the huddle window, which the app tells from Slack's main window; for other apps a window that appears once the microphone is taken, such as a call window. Until it is found the picture is black. The app's other windows, its main window among them, are not recorded. Which apps the app knows more about is built in, not configured. The meeting lasts while the microphone is in use, whatever windows are open.
 
 The first rule in the file that is satisfied names the recording. Writing a `rules` list replaces the defaults entirely, so copy the default rules from the generated file before editing them.
 
@@ -65,7 +65,7 @@ prints, for this moment, the processes with an active microphone session, the wi
 ## Choosing the timings
 
 - A longer `start_debounce_seconds` avoids recordings of a brief microphone test at the cost of missing the first seconds.
-- A longer `end_grace_seconds` keeps one file across short interruptions, for example when an app without a separate call window releases the microphone while you are muted, at the cost of a longer tail after the meeting.
+- A longer `end_grace_seconds` keeps one file across short interruptions, for example when an app releases the microphone while you are muted, at the cost of a longer tail after the meeting.
 - Browser meetings have their own timings. A connected call does not come and go while you are muted, and the extension counts a call that is reconnecting as connected, so the recording can stop a second after you leave.
 
 ## Using another file
