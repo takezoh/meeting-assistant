@@ -251,6 +251,7 @@ mod tests {
             framerate: 60,
             quality: 70,
             fallback_bitrate_kbps: 4000,
+            ..VideoConfig::default()
         };
         ThreadedRecorder::new(video, AudioConfig::default(), create)
     }

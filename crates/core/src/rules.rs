@@ -45,14 +45,24 @@ pub struct RuleEvidence {
     pub render_device_id: Option<String>,
     /// Top-level process of the app that is using the microphone. Used to record only that app's sound.
     pub process_id: Option<u32>,
-    /// The window considered to be showing the meeting: the app's largest window.
+    /// The app's largest window: what is recorded when no window can be told to be the meeting's.
     pub window: Option<u64>,
     /// The display that holds that window.
     pub display: Option<String>,
+    /// Every window of the app, from which the detector tells which one appeared with the meeting.
+    pub windows: Vec<AppWindow>,
     /// For a meeting reported by the browser extension, that tab.
     pub browser_tab: Option<BrowserTab>,
     /// What tells the meeting apart from others of the same rule, when known. Shown to the user only.
     pub title: Option<String>,
+}
+
+/// A window of the app a rule names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppWindow {
+    pub id: u64,
+    pub area: u64,
+    pub display: Option<String>,
 }
 
 impl RuleEvidence {
@@ -103,11 +113,17 @@ impl RuleEvaluator {
                     .iter()
                     .find_map(|s| owned(s.process_id).map(|o| (s, o)));
                 let render = snapshot.render_sessions.iter().find(|s| owned(s.process_id).is_some());
-                let window = snapshot
+                let windows: Vec<AppWindow> = snapshot
                     .windows
                     .iter()
                     .filter(|w| owned(w.process_id).is_some())
-                    .max_by_key(|w| w.area);
+                    .map(|w| AppWindow {
+                        id: w.id,
+                        area: w.area,
+                        display: w.display.clone(),
+                    })
+                    .collect();
+                let window = windows.iter().max_by_key(|w| w.area);
 
                 RuleEvidence {
                     rule_name: rule.name.clone(),
@@ -117,6 +133,7 @@ impl RuleEvaluator {
                     process_id: capture.map(|(_, o)| o.root_process_id),
                     window: window.map(|w| w.id),
                     display: window.and_then(|w| w.display.clone()),
+                    windows: windows.clone(),
                     browser_tab: None,
                     title: None,
                 }
@@ -148,6 +165,7 @@ impl RuleEvaluator {
                 process_id: None,
                 window: None,
                 display: None,
+                windows: Vec::new(),
                 browser_tab: Some(meeting.tab),
                 title: meeting.title.clone(),
             })

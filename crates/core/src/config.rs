@@ -17,6 +17,10 @@ pub enum ConfigError {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct VideoConfig {
+    /// Size of every recording's picture, in pixels. The encoder cannot change size during a recording and a window
+    /// can change shape while it is recorded, so each picture is fitted into this size with its aspect ratio kept.
+    pub width: u32,
+    pub height: u32,
     pub framerate: u32,
     /// Quality (1-100). Higher means better image quality and larger files.
     pub quality: u32,
@@ -24,9 +28,16 @@ pub struct VideoConfig {
     pub fallback_bitrate_kbps: u32,
 }
 
+/// The largest picture: recordings are for minutes, so nothing above 1080p is kept.
+pub const MAX_VIDEO_SIZE: (u32, u32) = (1920, 1080);
+/// The smallest picture the encoders take.
+pub const MIN_VIDEO_SIZE: (u32, u32) = (320, 240);
+
 impl Default for VideoConfig {
     fn default() -> Self {
         Self {
+            width: MAX_VIDEO_SIZE.0,
+            height: MAX_VIDEO_SIZE.1,
             framerate: 30,
             quality: 70,
             fallback_bitrate_kbps: 4000,
@@ -90,10 +101,13 @@ impl Default for Config {
         Self {
             output_directory: None,
             start_debounce_seconds: 3.0,
-            end_grace_seconds: 15.0,
-            // A connected call is a firmer signal than microphone use, which apps drop while muted.
+            // A desktop meeting continues while its app uses the microphone or keeps the window that appeared with
+            // it, so it can end soon after both are gone.
+            end_grace_seconds: 2.0,
+            // A connected call is a firmer signal than microphone use; the extension already treats a call that is
+            // reconnecting as connected.
             browser_start_debounce_seconds: 1.0,
-            browser_end_grace_seconds: 5.0,
+            browser_end_grace_seconds: 1.0,
             poll_interval_milliseconds: 1000,
             capture_scope: CaptureScope::default(),
             video: VideoConfig::default(),
@@ -155,6 +169,15 @@ impl Config {
         }
         if !(100..=100_000).contains(&self.video.fallback_bitrate_kbps) {
             return invalid("video.fallback_bitrate_kbps must be between 100 and 100000");
+        }
+        for (name, value, min, max) in [
+            ("width", self.video.width, MIN_VIDEO_SIZE.0, MAX_VIDEO_SIZE.0),
+            ("height", self.video.height, MIN_VIDEO_SIZE.1, MAX_VIDEO_SIZE.1),
+        ] {
+            // H.264 needs even dimensions.
+            if !(min..=max).contains(&value) || value % 2 != 0 {
+                return invalid(&format!("video.{name} must be an even number between {min} and {max}"));
+            }
         }
         if self.rules.is_empty() {
             return invalid("rules is empty");

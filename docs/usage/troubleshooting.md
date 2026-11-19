@@ -14,13 +14,17 @@ Run `meeting-assistant --probe` while the meeting is in progress.
 
 ## The recording stopped during the meeting
 
-The meeting app stopped using the microphone for longer than `end_grace_seconds`. Some apps release the microphone while you are muted. Increase `end_grace_seconds`, or start the recording manually; a manual recording is not ended by detection.
+The meeting app stopped using the microphone for longer than `end_grace_seconds` while no window that opened with the meeting was open. Some apps release the microphone while you are muted; if such an app shows the call in its main window, the meeting ends. Increase `end_grace_seconds`, or start the recording manually; a manual recording is not ended by detection.
+
+## The recording does not stop after the meeting
+
+A window that opened with the meeting is still open, for example a call window that stays after the call. The recording ends when it is closed.
 
 ## The picture is black or frozen
 
 - **Black from the start:** no window of the app was found when the recording began. The picture appears when the window does. The whole display is deliberately not recorded instead.
 - **Frozen:** the recorded window is minimized, or it was closed and the app has no other window. Audio continues.
-- **Black bars:** the window was resized after the recording started. The picture size is fixed at the start and later pictures are scaled to fit.
+- **Black bars:** the window's shape differs from the picture's (`video.width` by `video.height`, 16:9 by default), and the window is scaled to fit with its aspect ratio kept.
 
 ## The wrong window was recorded
 

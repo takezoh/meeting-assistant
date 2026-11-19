@@ -6,11 +6,6 @@ use meeting_assistant_core::{AudioConfig, RecordingRequest, VideoTarget};
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
 
-/// Minimum video size, so the picture never goes below what the encoder can handle.
-const MIN_SIZE: (u32, u32) = (320, 240);
-/// Size of a recording started without a video target. If a window is specified later, it is fitted into this size.
-const BLANK_SIZE: (u32, u32) = (1280, 720);
-
 /// The video target to capture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoSource {
@@ -142,15 +137,6 @@ pub fn microphone_plan(config: &AudioConfig, device: Option<String>) -> CaptureP
     }
 }
 
-/// Size of the video to write. `source` is the size of the capture target, `None` when starting without a target.
-///
-/// H.264 requires even dimensions, so odd sizes are trimmed by one pixel.
-/// From then on, video is written at this size (it cannot change midway).
-pub fn canvas_size(source: Option<(u32, u32)>) -> (u32, u32) {
-    let (width, height) = source.unwrap_or(BLANK_SIZE);
-    ((width & !1).max(MIN_SIZE.0), (height & !1).max(MIN_SIZE.1))
-}
-
 #[cfg(test)]
 mod tests {
     use meeting_assistant_core::BrowserTab;
@@ -262,22 +248,5 @@ mod tests {
             record_microphone: false,
         };
         assert_eq!(microphone_plan(&off, None).tracks, [(Track::Microphone, None)]);
-    }
-
-    #[test]
-    fn output_size_is_made_even() {
-        assert_eq!(canvas_size(Some((1584, 992))), (1584, 992));
-        assert_eq!(canvas_size(Some((1585, 993))), (1584, 992));
-    }
-
-    #[test]
-    fn too_small_a_target_is_written_at_the_minimum_size() {
-        assert_eq!(canvas_size(Some((160, 28))), (320, 240));
-        assert_eq!(canvas_size(Some((1000, 100))), (1000, 240));
-    }
-
-    #[test]
-    fn starting_without_a_target_writes_at_a_fixed_size() {
-        assert_eq!(canvas_size(None), (1280, 720));
     }
 }

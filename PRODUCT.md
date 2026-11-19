@@ -25,7 +25,7 @@ It is a personal tool for one logged-in user on one computer. It has no accounts
 | Desired benefit | Supporting behavior |
 | --- | --- |
 | Never forget to record | The app starts at logon and starts a recording when a rule's process has used the microphone for `start_debounce_seconds` |
-| Do not record the gaps | A recording ends when microphone use has stopped for `end_grace_seconds` |
+| Do not record the gaps | A recording ends `end_grace_seconds` after the app has stopped using the microphone and closed its call window |
 | Record the meeting, not the desktop | Video is one window or one tab; the other side's audio is the audio of that app or tab |
 | Keep recording while you work elsewhere | A tab recording continues while another tab is visible; a window recording continues while the window is covered |
 | Never lose the file | Fragmented MP4 is written continuously; exit, logoff and shutdown finalize it |
@@ -36,13 +36,13 @@ It is a personal tool for one logged-in user on one computer. It has no accounts
 
 Desktop meeting apps are detected from their use of the microphone; browser meetings are detected by the browser extension, and only by it. Once per `poll_interval_milliseconds` the app reads which processes hold an active microphone session and which windows exist, and evaluates the rules.
 
-- **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default).
-- **Continue.** The meeting lasts while that process keeps using the microphone.
-- **End.** Microphone use has been absent for `end_grace_seconds` (15 by default).
+- **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default). A window of the app that appeared from 10 seconds before that, such as a Slack huddle window or a Zoom meeting window, is taken to be the meeting's window.
+- **Continue.** The meeting lasts while the app keeps using the microphone or keeps that window open, so that muting in an app that lets go of the microphone does not end it.
+- **End.** Both have been absent for `end_grace_seconds` (2 by default). When no window appeared with the meeting, its end depends on the microphone alone; the app's main window, which stays open, does not keep it going.
 
 Each meeting is followed on its own, so several can be detected at once, for example a Zoom call and a Google Meet tab, or two Meet tabs; two meetings of one service are told apart by the Google Meet meeting code or the tab's title. Only one recording exists at a time: a meeting that starts while nothing is recorded is recorded automatically, and when that meeting ends, a meeting that started meanwhile is recorded next.
 
-A browser meeting is detected when the extension reports that a page on a supported meeting site holds a connected WebRTC call, with its own shorter timing: it starts after `browser_start_debounce_seconds` (1 by default) and ends after `browser_end_grace_seconds` (5 by default) without a call, since a connected call does not drop out while you are muted the way microphone use does. This also detects a call you only listen to. Without the extension, a meeting in a browser is not detected; a browser that uses the microphone is not taken for a meeting.
+A browser meeting is detected when the extension reports that a page on a supported meeting site holds a connected WebRTC call, with its own shorter timing: it starts after `browser_start_debounce_seconds` (1 by default) and ends after `browser_end_grace_seconds` (1 by default) without a call. A connected call does not drop out while you are muted, and a call that loses its connection briefly counts as connected while the browser tries to restore it; only a call that is closed or has failed ends the meeting. This also detects a call you only listen to. Without the extension, a meeting in a browser is not detected; a browser that uses the microphone is not taken for a meeting.
 
 The default rules cover Zoom, Microsoft Teams, Webex and Slack as desktop apps. The extension supports Chrome and Edge and the sites listed in `extension/manifest.json`.
 
@@ -52,7 +52,7 @@ With the default `capture_scope = "app"`:
 
 | | Desktop app | Browser meeting (extension) |
 | --- | --- | --- |
-| Video | One window: the largest window of the app | The meeting tab |
+| Video | One window: the window that appeared with the meeting, or else the largest window of the app | The meeting tab |
 | Other side's audio | Audio played by the app's top-level process and its descendants | Audio of the tab |
 | Your audio | The microphone | The microphone, recorded by the app beside the tab |
 
@@ -60,7 +60,7 @@ Every recording has two audio tracks in this order: the other side's audio first
 
 For a browser meeting the extension records the tab, and the app records the microphone beside it in a file named `<recording>.microphone.m4a`. When the meeting ends, the app adds the microphone to the tab's file as its second audio track without re-encoding either, and removes the separate file. If that fails, or the browser recorded WebM, the tab's file stays as the browser wrote it and the microphone file stays beside it; the log says so.
 
-- The picture size is fixed when the recording starts. If the window is resized, the picture is scaled to fit with its aspect ratio kept and the rest filled with black.
+- The picture is `video.width` by `video.height`, 1920x1080 by default and at most. The window or display is scaled to fit with its aspect ratio kept and the rest filled with black, also when the window changes size or shape during the recording.
 - If the recorded window closes, recording moves to another window of the same app. If there is none, the last picture stays and audio continues.
 - If no window of the app is found at the start, the recording starts black and moves to the window when it appears. The app does not substitute the whole display.
 - If the app's audio cannot be captured, the recording continues without it. The app does not substitute all output audio.
@@ -94,7 +94,7 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 
 ## What is not established
 
-- Detection has been checked with synthetic meetings (a test process holding the microphone, and a test page holding a WebRTC connection), not in real calls on each service. Whether a given service releases the microphone while you are muted, and so ends the recording after the grace period, is unknown.
+- Detection has been checked with synthetic meetings (a test process holding the microphone, and a test page holding a WebRTC connection), and on 2026-11-19 with Slack huddles on one Mac: Slack kept the microphone while muted, its huddle window was a separate window that closed as the huddle was left, and it let go of the microphone at once. Zoom, Teams and Webex have not been observed: whether they release the microphone while muted, and whether their call window closes when the call ends (if one stayed open, the recording would not end until it is closed), is unknown.
 - The browser switch that permits automatic tab recording, `--allowlisted-extension-id`, is undocumented and intended for testing. It worked in Chrome and Edge on 2026-11-17. A later browser version may remove it; recording then does not start and the log says why.
 - On macOS the installer, start at login, the extension path and finalization on quit, update and uninstall were run on one Mac with synthetic meetings on 2026-11-18. A real logout during a recording, the browser launchers and the menu bar appearance were not checked.
 - On macOS, recording the display with all output audio and the microphone was observed on one Mac on 2026-11-19, through the self-test and manual screen recordings, after a defect that dropped all output audio was fixed. Recording a meeting app's window and audio has not been observed, nor whether an app's audio includes what its helper processes play. Each update of the app currently makes macOS stop honouring its Screen & System Audio Recording permission until it is granted again; see [the issue](docs/issue/issue-20261119-every-update-drops-the-macos-screen-reco.md).

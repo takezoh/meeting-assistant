@@ -104,16 +104,3 @@ pub fn application_filter(display: &SCDisplay, application: &SCRunningApplicatio
         )
     }
 }
-
-/// The size in pixels of what a filter captures.
-pub fn pixel_size(filter: &SCContentFilter) -> (u32, u32) {
-    // SAFETY: reading the filter's content information.
-    let (rect, scale) = unsafe {
-        let info = SCShareableContent::infoForFilter(filter);
-        (info.contentRect(), f64::from(info.pointPixelScale()))
-    };
-    (
-        (rect.size.width * scale).round() as u32,
-        (rect.size.height * scale).round() as u32,
-    )
-}

@@ -24,7 +24,7 @@ invariants:
   statement: "In app scope a recording is never widened to the whole display or to all output audio as a fallback."
   enforcement: test
 - id: INV-003
-  statement: "A meeting in a browser is detected only from the extension's reports. Rules detect desktop apps from microphone use; the default rules name no browser, and nothing matches window titles."
+  statement: "A meeting in a browser is detected only from the extension's reports. Rules start desktop meetings from microphone use; such a meeting continues while its app uses the microphone or keeps open the window that appeared with it, and never because of a window that was open before it. The default rules name no browser, and nothing matches window titles."
   enforcement: test
 - id: INV-004
   statement: "A browser process with a connected extension is not detected through microphone and window signals."
@@ -60,7 +60,7 @@ boundaries:
 variability:
   fixed:
   - id: FIX-001
-    statement: "The meaning of the configuration keys start_debounce_seconds and end_grace_seconds (desktop apps), browser_start_debounce_seconds and browser_end_grace_seconds (meetings the extension reports), capture_scope and of the rule fields."
+    statement: "The meaning of the configuration keys start_debounce_seconds and end_grace_seconds (desktop apps: how long a meeting's condition must hold to start it, and how long it and the meeting's window must be absent to end it), browser_start_debounce_seconds and browser_end_grace_seconds (meetings the extension reports), capture_scope and of the rule fields."
   free:
   - id: FREE-001
     statement: "The default rules, the heuristics that choose a window, and the retry timing."
@@ -96,7 +96,7 @@ Decide, from what can be observed about the machine, when the user is in a meeti
 
 ## Responsibilities
 
-`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and the largest window of that app. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after its microphone use has been absent for the grace period. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick.
+`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree, the app's windows and the largest of them. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after it has been absent for the grace period. It notes when each window was first seen; a desktop meeting's window is the largest of the app's windows that appeared from `MEETING_WINDOW_LOOKBACK` (10 seconds) before its microphone use began, or else the largest window, and only a window that appeared with the meeting keeps it going after the microphone is let go. Windows already open at the first observation never count as having appeared. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick.
 
 ## Boundaries
 
@@ -120,7 +120,9 @@ A failed start is retried on later ticks while the meeting lasts, with a notice 
 
 ## Variability
 
-Rules are user data. The window heuristic (the largest window of the app) and the retry timing may change without changing this contract. The meaning of configuration keys is fixed.
+Rules are user data. The window heuristic (the window that appeared with the meeting, else the largest window of the app), its lookback and the retry timing may change without changing this contract. The meaning of configuration keys is fixed.
+
+The window that appeared with a meeting was chosen over window titles after a Slack huddle was observed on 2026-11-19: its window is titled like any other Slack window ("channel - workspace - Slack"), it opened as the huddle started and closed as it was left, Slack kept the microphone while muted, and its audio output went on for about 10 seconds after leaving, so output was not taken as a sign of a meeting.
 
 ## Conformance
 

@@ -51,7 +51,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | Module | Responsibility |
 | --- | --- |
 | `rules` | `MeetingRule`, the default rules, and `RuleEvaluator`: given a signal snapshot, which rule is satisfied and by which process and window. Pure |
-| `detector` | `MeetingDetector`: start debounce and end grace over a sequence of evaluations. Pure; time is passed in |
+| `detector` | `MeetingDetector`: start debounce and end grace over a sequence of evaluations, and which window appeared with a meeting. Pure; time is passed in |
 | `coordinator` | `RecordingCoordinator`: turns meeting starts, ends and manual commands into recorder calls; chooses the video target and audio process; retries after failure; names the file |
 | `engine` | `Engine`: one tick = capture signals, evaluate, update the detector, tell the coordinator; returns state and notices |
 | `naming` | Recording file names and collision handling. Pure |
@@ -112,7 +112,7 @@ The [meeting detection design](docs/design/design-meeting-detection.md) holds th
 
 ## Recording on the OS path
 
-`ThreadedRecorder::start` spawns a thread, creates the backend inside it (capture objects are bound to the thread that creates them) and waits up to 20 seconds for the first picture. The pipeline then writes one video frame and, for each of the two audio tracks, the matching block of that track's source (or silence) per frame interval, using the timeline so that all carry the same clock. The canvas size is fixed at start; later pictures are scaled into it. The file is fragmented MP4, so what has been written stays playable if the process dies. See the [capture pipeline design](docs/design/design-capture-pipeline.md).
+`ThreadedRecorder::start` spawns a thread, creates the backend inside it (capture objects are bound to the thread that creates them) and waits up to 20 seconds for the first picture. The pipeline then writes one video frame and, for each of the two audio tracks, the matching block of that track's source (or silence) per frame interval, using the timeline so that all carry the same clock. The canvas is `video.width` by `video.height` (1920x1080 by default and at most); every picture is scaled into it with its aspect ratio kept, so a window may change size or shape. The file is fragmented MP4, so what has been written stays playable if the process dies. See the [capture pipeline design](docs/design/design-capture-pipeline.md).
 
 ## Recording through the extension
 

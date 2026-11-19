@@ -14,7 +14,7 @@ struct Fixture {
     now: Instant,
 }
 
-/// Built with the default settings (start grace 3 s, end grace 15 s, signal outage limit 60 s).
+/// Built with the default settings (start grace 3 s, end grace 2 s, signal outage limit 60 s).
 fn fixture() -> Fixture {
     let recorder = FakeRecorder::default();
     let signals = ScriptedSignals::default();
@@ -180,6 +180,41 @@ fn keeps_recording_and_waits_when_there_is_no_replacement_window() {
     f.signals.set(zoom_with(&[("Zoom Meeting 2", 5000)]));
     f.run(2);
     assert_eq!(f.recorder.state().retargets, [window_id("Zoom Meeting 2")]);
+}
+
+#[test]
+fn records_the_call_window_until_it_closes_and_stops_soon_after_without_moving_to_the_main_window() {
+    let mut f = fixture();
+    let main = window(100, "Zoom", "DISPLAY1", 9000);
+    let call = window(100, "Zoom Meeting", "DISPLAY1", 5000);
+    let zoom = |microphone: bool, windows: &[meeting_assistant_core::WindowEntry]| {
+        let users: &[u32] = if microphone { &[100] } else { &[] };
+        snapshot(&[process(100, 1, "Zoom.exe")], users, &[], windows)
+    };
+    f.signals.set(zoom(false, std::slice::from_ref(&main)));
+    f.run(1);
+    // Joining opens the call window and the microphone.
+    f.signals.set(zoom(true, &[main.clone(), call.clone()]));
+    f.run(5);
+    assert_eq!(
+        f.recorder.state().started[0].video,
+        VideoTarget::Window(window_id("Zoom Meeting")),
+        "the window that appeared with the meeting, not the larger main window"
+    );
+
+    // Muted in an app that lets go of the microphone: the call window keeps the recording going.
+    f.signals.set(zoom(false, &[main.clone(), call.clone()]));
+    f.run(30);
+    assert!(f.recording());
+
+    // Leaving closes the call window.
+    f.signals.set(zoom(false, std::slice::from_ref(&main)));
+    f.run(3);
+    assert!(!f.recording(), "ends after the 2-second grace");
+    assert!(
+        f.recorder.state().retargets.is_empty(),
+        "the grace is not spent recording the main window"
+    );
 }
 
 #[test]

@@ -92,14 +92,13 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
 
     /// If the window being recorded was closed (or has not been decided yet),
     /// moves the recording target to a window of the same app.
-    /// While the target window remains, does not move even if a larger window appears.
+    /// While the target window remains, does not move even if a larger window appears. A meeting that is only waiting
+    /// out its end grace keeps its last picture rather than moving to another window of the app.
     fn follow_window(&mut self, windows: &HashSet<u64>, evidence: &[RuleEvidence]) {
         let Some(meeting) = self.coordinator.recorded_meeting().cloned() else {
             return;
         };
-        if !self.detector.meetings().any(|detected| detected.key() == meeting)
-            || !self.coordinator.needs_window(windows)
-        {
+        if !self.detector.is_ongoing(&meeting, evidence) || !self.coordinator.needs_window(windows) {
             return;
         }
         let replacement = evidence.iter().find(|e| e.key() == meeting).and_then(|e| e.window);

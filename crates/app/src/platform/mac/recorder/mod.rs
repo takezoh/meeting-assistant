@@ -27,12 +27,12 @@ use objc2_core_video::{
     CVPixelBufferUnlockBaseAddress,
 };
 
-use self::content::{Content, application_filter, display_filter, pixel_size, window_filter};
+use self::content::{Content, application_filter, display_filter, window_filter};
 pub use self::microphone::Microphone;
 use self::stream::{Capture, Kind, PIXEL_FORMAT, Picture};
 use self::writer::Mp4Writer;
 use crate::recording::pipeline::CaptureBackend;
-use crate::recording::plan::{self, AudioSource, MediaFormat, VideoSource};
+use crate::recording::plan::{AudioSource, MediaFormat, VideoSource};
 use crate::recording::session::ThreadedRecorder;
 
 /// The most pictures per second asked of ScreenCaptureKit. It sends a picture only when something changed, and the
@@ -79,29 +79,24 @@ impl CaptureBackend for MacBackend {
     type Picture = Picture;
     type Writer = Mp4Writer;
 
-    fn open_video(&mut self, source: &VideoSource) -> anyhow::Result<(Video, (u32, u32))> {
+    fn open_video(&mut self, source: &VideoSource, canvas: (u32, u32)) -> anyhow::Result<Video> {
         let content = Content::current()?;
         let filter = match source {
             VideoSource::Window(window) => window_filter(&*content.window(*window)?),
             VideoSource::Display(display) => display_filter(&*content.display(display.as_deref())?),
         };
-        let source_size = pixel_size(&filter);
-        // Before the output exists the canvas is what the pipeline will choose for this source.
-        let size = self.canvas.unwrap_or_else(|| plan::canvas_size(Some(source_size)));
+        // ScreenCaptureKit fits the target into this size itself, also when a window changes size or shape.
         let capture = Capture::start(
             &filter,
             &Kind::Pictures {
-                size,
+                size: canvas,
                 framerate: MAX_FRAMERATE,
             },
         )?;
-        Ok((
-            Video {
-                capture,
-                is_window: source.is_window(),
-            },
-            source_size,
-        ))
+        Ok(Video {
+            capture,
+            is_window: source.is_window(),
+        })
     }
 
     fn open_audio(&mut self, source: &AudioSource) -> anyhow::Result<Audio> {
@@ -222,7 +217,7 @@ fn black_picture(width: u32, height: u32) -> anyhow::Result<Picture> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::recording::plan::Track;
+    use crate::recording::plan::{self, Track};
 
     /// The handler type of each track in an MP4 file, in order: `vide` or `soun`. Reads only the boxes it needs.
     pub(crate) fn track_kinds(bytes: &[u8]) -> Vec<String> {

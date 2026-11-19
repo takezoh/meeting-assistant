@@ -83,14 +83,13 @@ impl CaptureBackend for WindowsBackend {
     type Picture = ID3D11Texture2D;
     type Writer = Mp4Writer;
 
-    fn open_video(&mut self, source: &VideoSource) -> anyhow::Result<(ScreenCapture, (u32, u32))> {
+    fn open_video(&mut self, source: &VideoSource, _canvas: (u32, u32)) -> anyhow::Result<ScreenCapture> {
         let target = match source {
             VideoSource::Window(window) => CaptureTarget::Window(*window),
             VideoSource::Display(name) => CaptureTarget::Display(name.as_deref()),
         };
-        let capture = ScreenCapture::start(&self.graphics, target)?;
-        let size = capture.initial_size();
-        Ok((capture, size))
+        // Each picture is fitted into the canvas by the scaler, whatever the target's size and shape.
+        ScreenCapture::start(&self.graphics, target)
     }
 
     fn open_audio(&mut self, source: &AudioSource) -> anyhow::Result<AudioCapture> {

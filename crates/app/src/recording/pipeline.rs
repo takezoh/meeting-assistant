@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use meeting_assistant_core::VideoConfig;
 
-use super::plan::{self, AudioSource, CHANNELS, CapturePlan, MediaFormat, SAMPLE_RATE, VideoPlan, VideoSource};
+use super::plan::{AudioSource, CHANNELS, CapturePlan, MediaFormat, SAMPLE_RATE, VideoPlan, VideoSource};
 use super::timeline::Timeline;
 
 /// Upper limit on waiting for the first picture after capture starts.
@@ -30,8 +30,9 @@ pub trait CaptureBackend {
     /// The output file.
     type Writer;
 
-    /// Starts capturing video. Also returns the size of the target.
-    fn open_video(&mut self, source: &VideoSource) -> anyhow::Result<(Self::Video, (u32, u32))>;
+    /// Starts capturing video, with each picture fitted into `canvas` (width, height) whatever the target's size and
+    /// shape, its aspect ratio kept.
+    fn open_video(&mut self, source: &VideoSource, canvas: (u32, u32)) -> anyhow::Result<Self::Video>;
     /// Starts capturing audio.
     fn open_audio(&mut self, source: &AudioSource) -> anyhow::Result<Self::Audio>;
     /// Opens the output. From then on, pictures are handled at the size given by `format`.
@@ -90,6 +91,8 @@ pub struct Pipeline<B: CaptureBackend> {
     picture: Option<B::Picture>,
     backend: B,
     framerate: u32,
+    /// The size every picture is fitted into.
+    canvas: (u32, u32),
     block: Vec<i16>,
 }
 
@@ -102,14 +105,12 @@ impl<B: CaptureBackend> Pipeline<B> {
         video_config: &VideoConfig,
         pacer: &mut dyn Pacer,
     ) -> anyhow::Result<Self> {
-        let mut video = None;
-        let mut source_size = None;
-        if let VideoPlan::Capture(source) = &plan.video {
-            let (opened, size) = backend.open_video(source)?;
-            video = Some(opened);
-            source_size = Some(size);
-        }
-        let (width, height) = plan::canvas_size(source_size);
+        let canvas = (video_config.width, video_config.height);
+        let mut video = match &plan.video {
+            VideoPlan::Capture(source) => Some(backend.open_video(source, canvas)?),
+            VideoPlan::Blank | VideoPlan::None => None,
+        };
+        let (width, height) = canvas;
 
         // A source that cannot be opened leaves its track silent; nothing else takes its place.
         let mut audio = Vec::new();
@@ -168,6 +169,7 @@ impl<B: CaptureBackend> Pipeline<B> {
             picture,
             backend,
             framerate: video_config.framerate,
+            canvas,
             block: Vec::new(),
         })
     }
@@ -247,8 +249,8 @@ impl<B: CaptureBackend> Pipeline<B> {
         if self.picture.is_none() {
             return;
         }
-        match self.backend.open_video(&VideoSource::Window(window)) {
-            Ok((video, _)) => {
+        match self.backend.open_video(&VideoSource::Window(window), self.canvas) {
+            Ok(video) => {
                 self.video = Some(video);
                 log::info!("Switched the window being recorded.");
             }
@@ -313,8 +315,6 @@ pub mod fakes {
         pub format: Option<MediaFormat>,
         pub written: Vec<Written>,
         pub finalized: bool,
-        /// Size per target (1280x720 if not specified).
-        pub video_size: (u32, u32),
         /// Pictures that will arrive. Used from the front, one per `take_picture` call
         /// (`None` means "nothing arrived").
         pub pictures: VecDeque<Option<String>>,
@@ -323,6 +323,8 @@ pub mod fakes {
         pub failing_audio: Vec<AudioSource>,
         /// While true, video capture fails.
         pub video_broken: bool,
+        /// The canvas each video target was opened with.
+        pub canvases: Vec<(u32, u32)>,
         /// Sound value an app or output device input adds.
         pub audio_level: i16,
         /// Sound value a microphone input adds, so that tests can tell the tracks apart.
@@ -335,7 +337,6 @@ pub mod fakes {
     impl Default for FakeBackend {
         fn default() -> Self {
             Self(Arc::new(Mutex::new(BackendState {
-                video_size: (1280, 720),
                 audio_level: 1,
                 microphone_level: 20,
                 ..Default::default()
@@ -383,11 +384,12 @@ pub mod fakes {
         type Picture = String;
         type Writer = ();
 
-        fn open_video(&mut self, source: &VideoSource) -> anyhow::Result<(VideoSource, (u32, u32))> {
+        fn open_video(&mut self, source: &VideoSource, canvas: (u32, u32)) -> anyhow::Result<VideoSource> {
             let mut state = self.state();
+            state.canvases.push(canvas);
             anyhow::ensure!(!state.failing_video.contains(source), "cannot capture {source:?}");
             state.opened_video.push(source.clone());
-            Ok((source.clone(), state.video_size))
+            Ok(source.clone())
         }
 
         fn open_audio(&mut self, source: &AudioSource) -> anyhow::Result<AudioSource> {
@@ -512,7 +514,7 @@ pub mod fakes {
 mod tests {
     use meeting_assistant_core::{AudioConfig, RecordingRequest, VideoTarget};
 
-    use super::super::plan::Track;
+    use super::super::plan::{self, Track};
     use super::fakes::*;
     use super::*;
 
@@ -540,6 +542,7 @@ mod tests {
             framerate: 30,
             quality: 70,
             fallback_bitrate_kbps: 4000,
+            ..VideoConfig::default()
         }
     }
 
@@ -569,8 +572,8 @@ mod tests {
         assert_eq!(
             state.format,
             Some(MediaFormat {
-                width: 1280,
-                height: 720,
+                width: 1920,
+                height: 1080,
                 framerate: 30,
                 quality: 70,
                 fallback_bitrate: 4_000_000,
@@ -581,14 +584,44 @@ mod tests {
     }
 
     #[test]
-    fn output_size_is_the_target_size_made_even() {
-        let backend = FakeBackend::default();
-        backend.state().video_size = (1585, 993);
-        backend.state().pictures.push_back(Some("first".into()));
-        open(&backend, VideoTarget::Window(7)).unwrap();
+    fn every_recording_with_video_is_written_at_1080p_whatever_its_target() {
+        for target in [VideoTarget::Window(7), VideoTarget::Display(None), VideoTarget::Blank] {
+            let backend = FakeBackend::default();
+            backend.state().pictures.push_back(Some("first".into()));
+            open(&backend, target.clone()).unwrap();
 
-        let format = backend.state().format.clone().unwrap();
-        assert_eq!((format.width, format.height), (1584, 992));
+            let format = backend.state().format.clone().unwrap();
+            assert_eq!((format.width, format.height), (1920, 1080), "{target:?}");
+        }
+    }
+
+    #[test]
+    fn the_configured_size_is_the_canvas_for_every_target_including_a_switched_window() {
+        let backend = FakeBackend::default();
+        backend.state().pictures.push_back(Some("first".into()));
+        let config = VideoConfig {
+            width: 1280,
+            height: 720,
+            ..video_config()
+        };
+        let plan = plan::meeting_plan(&request(VideoTarget::Window(7), Some(100)), &AudioConfig::default()).unwrap();
+        let pipeline = Pipeline::open(
+            backend.clone(),
+            &plan,
+            Path::new("out.mp4"),
+            &config,
+            &mut FakePacer::default(),
+        )
+        .unwrap();
+        let mut control = StopAfter {
+            retargets: vec![(1, 8)],
+            ..StopAfter::steps(2)
+        };
+        pipeline.run(&mut control, &mut FakePacer::default()).unwrap();
+
+        let state = backend.state();
+        assert_eq!(state.format.as_ref().map(|f| (f.width, f.height)), Some((1280, 720)));
+        assert_eq!(state.canvases, [(1280, 720), (1280, 720)]);
     }
 
     #[test]
@@ -864,7 +897,7 @@ mod tests {
         assert_eq!(backend.written_pictures(), ["first", "first", "from new window"]);
         assert_eq!(
             backend.state().format.as_ref().map(|f| (f.width, f.height)),
-            Some((1280, 720)),
+            Some((1920, 1080)),
             "the size does not change"
         );
     }

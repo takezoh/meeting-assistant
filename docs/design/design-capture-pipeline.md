@@ -19,8 +19,9 @@ responsibilities:
     as the MicrophoneRecorder that records the microphone beside a browser tab recording.
 invariants:
 - id: INV-001
-  statement: The output size is fixed when the recording opens, is even in both dimensions
-    and is at least the encoder minimum.
+  statement: Every video is written at the configured video.width by video.height (1920x1080
+    by default and at most), whatever the target's size and however it changes; each
+    picture is fitted into it with its aspect ratio kept.
   enforcement: test
 - id: INV-002
   statement: Video and audio timestamps derive from the same elapsed time.
@@ -111,7 +112,7 @@ Produce one file from a recording request, with the procedure shared across plat
 
 ## Invariants
 
-The canvas size never changes during a recording because the encoder cannot change it; a resized or different window is scaled into the canvas with its aspect ratio kept. When no new picture arrives, the previous one is written again so the video keeps pace with the audio.
+The canvas size never changes during a recording because the encoder cannot change it, and it does not depend on the target: a window can change shape while it is recorded (a Slack huddle window turned from portrait to landscape as the huddle was joined, and a canvas taken from its first size left about 60% of the later picture black). Every picture, of a resized or different window or of a display, is scaled into the configured size (1920x1080 by default) with its aspect ratio kept; `CaptureBackend::open_video` is given that size. Recordings are for minutes, so the configuration accepts nothing above 1080p. When no new picture arrives, the previous one is written again so the video keeps pace with the audio.
 
 INV-004 and INV-005 implement the product's scope rule on this side: degraded input gives less in the file, never more than was asked for. INV-007 fixes the layout of the file so that analysis can rely on the second audio track being the user: a missing source makes its track silent rather than removing it or moving the other one into its place.
 

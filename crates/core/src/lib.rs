@@ -32,7 +32,7 @@ pub use detector::{DetectorEvent, MeetingDetector, MeetingInfo, MeetingKey, Timi
 pub use engine::Engine;
 pub use ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
 pub use recording::{Recorder, RecordingRequest, VideoTarget};
-pub use rules::{MeetingRule, RuleEvaluator, RuleEvidence, default_rules};
+pub use rules::{AppWindow, MeetingRule, RuleEvaluator, RuleEvidence, default_rules};
 pub use signals::{
     AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry,
 };

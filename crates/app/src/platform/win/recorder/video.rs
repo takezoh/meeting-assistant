@@ -109,7 +109,6 @@ pub struct ScreenCapture {
     latest: Arc<Mutex<Option<Direct3D11CaptureFrame>>>,
     closed: Arc<AtomicBool>,
     pool_size: SizeInt32,
-    initial_size: (u32, u32),
     is_window: bool,
 }
 
@@ -174,15 +173,9 @@ impl ScreenCapture {
                 latest,
                 closed,
                 pool_size,
-                initial_size: (pool_size.Width as u32, pool_size.Height as u32),
                 is_window: matches!(target, CaptureTarget::Window(_)),
             })
         }
-    }
-
-    /// Size of the target at the moment capture started.
-    pub fn initial_size(&self) -> (u32, u32) {
-        self.initial_size
     }
 
     /// If a new picture has arrived since the previous call, duplicates it into a dedicated texture and returns it.

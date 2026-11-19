@@ -50,7 +50,7 @@ fn edited_values_are_loaded_and_omitted_values_become_defaults() {
     assert_eq!(config.end_grace_seconds, 30.0);
     assert_eq!(config.start_debounce_seconds, 3.0);
     assert_eq!(config.browser_start_debounce_seconds, 1.0);
-    assert_eq!(config.browser_end_grace_seconds, 5.0);
+    assert_eq!(config.browser_end_grace_seconds, 1.0);
     assert_eq!(config.rules.len(), 1);
     assert_eq!(config.rules[0].name, "Custom");
 }
@@ -58,6 +58,14 @@ fn edited_values_are_loaded_and_omitted_values_become_defaults() {
 #[test]
 fn an_empty_string_gives_all_defaults() {
     assert_eq!(Config::from_toml("").unwrap(), Config::default());
+}
+
+#[test]
+fn the_picture_is_1080p_unless_a_smaller_size_is_set() {
+    let default = Config::default();
+    assert_eq!((default.video.width, default.video.height), (1920, 1080));
+    let smaller = Config::from_toml("[video]\nwidth = 1280\nheight = 720").unwrap();
+    assert_eq!((smaller.video.width, smaller.video.height), (1280, 720));
 }
 
 #[test]
@@ -72,6 +80,12 @@ fn invalid_content_is_a_config_error() {
         "unknown_key = 1",
         "capture_scope = \"tab\"",
         "[video]\nframerate = 0",
+        // Above 1080p, below the encoder minimum, or odd.
+        "[video]\nwidth = 3840\nheight = 2160",
+        "[video]\nwidth = 2560",
+        "[video]\nheight = 1440",
+        "[video]\nwidth = 160",
+        "[video]\nwidth = 1279",
         // Window-title matching for browsers without the extension no longer exists.
         "[[rules]]\nname = \"Bad\"\nprocess_names = [\"x\"]\nrequire_window_title = true",
         "[[rules]]\nname = \"Bad\"\nprocess_names = []",

@@ -40,6 +40,49 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
         snapshot.windows.len()
     );
 
+    // The windows of processes that a rule names, or their descendants: what a rule can choose from. Other apps'
+    // windows are left out, since their titles may show anything.
+    let parents: HashMap<u32, u32> = snapshot
+        .processes
+        .iter()
+        .map(|p| (p.process_id, p.parent_process_id))
+        .collect();
+    let rule_names: Vec<String> = config
+        .rules
+        .iter()
+        .flat_map(|rule| rule.process_names.iter().map(|name| name.to_lowercase()))
+        .collect();
+    let named_by_rule = |mut pid: u32| {
+        for _ in 0..32 {
+            let name = names.get(&pid).map(|name| name.to_lowercase());
+            if name.is_some_and(|name| rule_names.iter().any(|rule| name.trim_end_matches(".exe") == *rule)) {
+                return true;
+            }
+            match parents.get(&pid) {
+                Some(&parent) if parent != pid && parent != 0 => pid = parent,
+                _ => return false,
+            }
+        }
+        false
+    };
+    println!("Windows of meeting apps:");
+    let mut shown = 0;
+    for window in snapshot.windows.iter().filter(|w| named_by_rule(w.process_id)) {
+        println!(
+            "  {:#x} {} (pid {}) area={} display={} title={:?}",
+            window.id,
+            names.get(&window.process_id).unwrap_or(&"?"),
+            window.process_id,
+            window.area,
+            window.display.as_deref().unwrap_or("?"),
+            window.title,
+        );
+        shown += 1;
+    }
+    if shown == 0 {
+        println!("  (none)");
+    }
+
     let mark = |value: bool| if value { "yes" } else { "no" };
     println!("Verdict per rule:");
     for evidence in RuleEvaluator::new(&config.rules)?.evaluate(&snapshot) {

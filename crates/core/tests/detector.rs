@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{BrowserTab, DetectorEvent, MeetingDetector, RuleEvidence, Timing};
+use meeting_assistant_core::{AppWindow, BrowserTab, DetectorEvent, MeetingDetector, RuleEvidence, Timing};
 
 struct Clock(Instant);
 
@@ -34,6 +34,7 @@ fn active(rule: &str) -> RuleEvidence {
         process_id: Some(100),
         window: Some(77),
         display: Some("DISPLAY2".into()),
+        windows: vec![window(77, 1000)],
         browser_tab: None,
         title: None,
     }
@@ -41,6 +42,29 @@ fn active(rule: &str) -> RuleEvidence {
 
 fn start(rule: &str) -> Vec<RuleEvidence> {
     vec![active(rule)]
+}
+
+fn window(id: u64, area: u64) -> AppWindow {
+    AppWindow {
+        id,
+        area,
+        display: Some(format!("DISPLAY-{id}")),
+    }
+}
+
+/// Slack: its main window 77, and the evidence of `microphone` use with these other windows open.
+fn slack(microphone: bool, extra: &[AppWindow]) -> Vec<RuleEvidence> {
+    let mut evidence = active("Slack");
+    evidence.active = microphone;
+    evidence.windows.extend_from_slice(extra);
+    vec![evidence]
+}
+
+fn started_window(events: Vec<DetectorEvent>) -> (Option<u64>, Option<String>) {
+    match <[DetectorEvent; 1]>::try_from(events) {
+        Ok([DetectorEvent::Started(meeting)]) => (meeting.window, meeting.display),
+        other => panic!("not one start event: {other:?}"),
+    }
 }
 
 /// A meeting reported by the extension in tab `tab`.
@@ -53,6 +77,7 @@ fn tab(service: &str, tab: u64) -> RuleEvidence {
         process_id: None,
         window: None,
         display: None,
+        windows: Vec::new(),
         browser_tab: Some(BrowserTab { link: 1, tab }),
         title: None,
     }
@@ -249,4 +274,83 @@ fn a_desktop_app_keeps_its_longer_timing_while_a_browser_meeting_uses_its_own() 
     assert_eq!(ended_rule(d.update(t.at(15.0), NOTHING)), "GoogleMeet");
     assert!(d.update(t.at(24.9), NOTHING).is_empty());
     assert_eq!(ended_rule(d.update(t.at(25.0), NOTHING)), "Zoom");
+}
+
+#[test]
+fn the_window_that_appears_with_a_meeting_is_recorded_rather_than_the_largest() {
+    let (mut d, t) = detector();
+    let huddle = window(88, 500);
+    d.update(t.at(0.0), &slack(false, &[]));
+    // The huddle window opens, and the microphone a little later.
+    d.update(t.at(1.0), &slack(false, std::slice::from_ref(&huddle)));
+    d.update(t.at(2.0), &slack(true, std::slice::from_ref(&huddle)));
+    assert_eq!(
+        started_window(d.update(t.at(5.0), &slack(true, std::slice::from_ref(&huddle)))),
+        (Some(88), Some("DISPLAY-88".into()))
+    );
+}
+
+#[test]
+fn a_meeting_continues_while_its_window_is_open_and_ends_soon_after_it_closes() {
+    let (mut d, t) = detector();
+    let huddle = window(88, 500);
+    d.update(t.at(0.0), &slack(false, &[]));
+    d.update(t.at(1.0), &slack(true, std::slice::from_ref(&huddle)));
+    started_rule(d.update(t.at(4.0), &slack(true, std::slice::from_ref(&huddle))));
+
+    // Muted in an app that lets go of the microphone: the call window keeps the meeting going.
+    assert!(
+        d.update(t.at(10.0), &slack(false, std::slice::from_ref(&huddle)))
+            .is_empty()
+    );
+    assert!(
+        d.update(t.at(100.0), &slack(false, std::slice::from_ref(&huddle)))
+            .is_empty()
+    );
+    assert_eq!(detected(&d), ["Slack"]);
+
+    // Leaving closes the window and releases the microphone.
+    assert!(d.update(t.at(101.0), &slack(false, &[])).is_empty());
+    assert!(d.update(t.at(115.9), &slack(false, &[])).is_empty());
+    assert_eq!(ended_rule(d.update(t.at(116.0), &slack(false, &[]))), "Slack");
+}
+
+#[test]
+fn the_apps_own_window_does_not_keep_a_meeting_going() {
+    let (mut d, t) = detector();
+    d.update(t.at(0.0), &slack(false, &[]));
+    d.update(t.at(1.0), &slack(true, &[]));
+    // No window appeared with the meeting: the largest one is recorded.
+    assert_eq!(
+        started_window(d.update(t.at(4.0), &slack(true, &[]))),
+        (Some(77), Some("DISPLAY2".into()))
+    );
+
+    // The main window stays open, but the microphone stopped.
+    assert!(d.update(t.at(10.0), &slack(false, &[])).is_empty());
+    assert_eq!(ended_rule(d.update(t.at(25.0), &slack(false, &[]))), "Slack");
+}
+
+#[test]
+fn windows_open_before_the_first_observation_or_long_before_the_meeting_are_not_its_window() {
+    let (mut d, t) = detector();
+    let preview = window(88, 500);
+    // Already open when detection began.
+    d.update(t.at(0.0), &slack(false, std::slice::from_ref(&preview)));
+    d.update(t.at(1.0), &slack(true, std::slice::from_ref(&preview)));
+    assert_eq!(
+        started_window(d.update(t.at(4.0), &slack(true, std::slice::from_ref(&preview)))).0,
+        Some(77)
+    );
+
+    let (mut d, t) = detector();
+    let settings = window(99, 500);
+    d.update(t.at(0.0), &slack(false, &[]));
+    // Opened 20 s before the microphone, longer than the lookback.
+    d.update(t.at(1.0), &slack(false, std::slice::from_ref(&settings)));
+    d.update(t.at(21.0), &slack(true, std::slice::from_ref(&settings)));
+    assert_eq!(
+        started_window(d.update(t.at(24.0), &slack(true, std::slice::from_ref(&settings)))).0,
+        Some(77)
+    );
 }

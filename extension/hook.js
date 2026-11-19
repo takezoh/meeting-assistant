@@ -7,16 +7,23 @@
   window.__meetingAssistantHooked = true;
 
   const connections = new Set();
+  /** Connections that have connected at least once. */
+  const established = new WeakSet();
   let reported = false;
 
   const isConnected = (pc) =>
     pc.connectionState === "connected" || pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed";
+  // A connected call that drops briefly goes "disconnected" while it tries to recover, and "failed" if it cannot.
+  // Only "failed" and "closed" end it, so the app can end the meeting as soon as the call is really over.
+  const isReconnecting = (pc) =>
+    established.has(pc) && (pc.connectionState === "disconnected" || pc.iceConnectionState === "disconnected");
 
   const update = () => {
     for (const pc of connections) {
       if (pc.connectionState === "closed" || pc.signalingState === "closed") connections.delete(pc);
+      else if (isConnected(pc)) established.add(pc);
     }
-    const inCall = [...connections].some(isConnected);
+    const inCall = [...connections].some((pc) => isConnected(pc) || isReconnecting(pc));
     if (inCall !== reported) {
       reported = inCall;
       window.postMessage({ source: "meeting-assistant", inCall }, window.location.origin);

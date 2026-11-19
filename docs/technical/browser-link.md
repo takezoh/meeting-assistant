@@ -8,7 +8,7 @@ There are two channels. Control messages (meetings, start, stop, start failures)
 
 | Party | Role |
 | --- | --- |
-| `hook.js` | Runs in the page's own JavaScript world. Wraps `RTCPeerConnection` and reports whether a connected call exists |
+| `hook.js` | Runs in the page's own JavaScript world. Wraps `RTCPeerConnection` and reports whether a connected call exists; a call that was connected counts while it is reconnecting, until it has failed or closed |
 | `bridge.js` | Content script. Forwards the call state and the page title from the page to the extension |
 | `background.js` | Service worker. Tracks meetings per tab, holds the native-messaging port, obtains the tab-capture stream ID and drives the offscreen document |
 | `offscreen.js` | Offscreen document. Records the tab's video and audio with `MediaRecorder` and sends the recording to the app over the upload WebSocket. It does not use the microphone; the app records it |
