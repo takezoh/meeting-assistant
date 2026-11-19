@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::apps::{MeetingApp, WindowRole};
 use crate::config::ConfigError;
 use crate::detector::MeetingKey;
+use crate::metadata::MeetingMetadata;
 use crate::signals::{BrowserTab, ProcessEntry, SignalSnapshot};
 
 /// A detection rule: "if this process is using the microphone, a meeting is in progress".
@@ -52,8 +53,9 @@ pub struct RuleEvidence {
     pub windows: Vec<AppWindow>,
     /// For a meeting reported by the browser extension, that tab.
     pub browser_tab: Option<BrowserTab>,
-    /// What tells the meeting apart from others of the same rule, when known. Shown to the user only.
-    pub title: Option<String>,
+    /// What is known of the meeting itself: for a meeting reported by the browser extension, what it reports.
+    /// A desktop app's meeting is told about by its window instead (see [`AppWindow::metadata`]).
+    pub metadata: MeetingMetadata,
 }
 
 /// A window of the app a rule names.
@@ -64,6 +66,8 @@ pub struct AppWindow {
     pub display: Option<String>,
     /// What the app's adapter tells of it; [`WindowRole::Unknown`] for an app without one.
     pub role: WindowRole,
+    /// What the window tells of the meeting, if it is the meeting's, as the app's adapter reads its title.
+    pub metadata: MeetingMetadata,
 }
 
 impl RuleEvidence {
@@ -144,6 +148,10 @@ impl RuleEvaluator {
                         area: w.area,
                         display: w.display.clone(),
                         role,
+                        metadata: match &rule.app {
+                            Some(app) if role != WindowRole::Main => app.meeting_metadata(&w.title),
+                            _ => MeetingMetadata::default(),
+                        },
                     })
                     .collect();
 
@@ -155,7 +163,7 @@ impl RuleEvaluator {
                     process_id: capture.map(|(_, o)| o.root_process_id),
                     windows,
                     browser_tab: None,
-                    title: None,
+                    metadata: MeetingMetadata::default(),
                 }
             })
             .collect();
@@ -185,7 +193,7 @@ impl RuleEvaluator {
                 process_id: None,
                 windows: Vec::new(),
                 browser_tab: Some(meeting.tab),
-                title: meeting.title.clone(),
+                metadata: meeting.metadata.clone(),
             })
             .collect();
         result.append(&mut by_rule);

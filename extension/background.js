@@ -7,7 +7,7 @@ const RECONNECT_ALARM = "reconnect";
 let port = null;
 /** Tab ID -> set of frame IDs that are in a call */
 const callFrames = new Map();
-/** Tab ID -> { service, title } (tabs already reported to the app as in a meeting) */
+/** Tab ID -> { service, metadata } (tabs already reported to the app as in a meeting) */
 const meetings = new Map();
 /** ID of the tab being recorded */
 let recordingTab = null;
@@ -74,21 +74,23 @@ connect();
 // ---- Meeting detection
 
 /**
- * What tells this meeting apart from others of the same service: the meeting code for Google Meet, otherwise the
- * page's title.
+ * What the extension tells the app of a meeting, which differs per service, as [key, value] pairs in order. The first
+ * tells the meeting apart from others of the same service: the meeting code for Google Meet, otherwise the page's
+ * title. The app keeps keys of lowercase letters, digits and "_", and drops empty values.
  */
-function meetingTitle(host, url, title) {
+function meetingMetadata(host, url, title) {
+  const pageTitle = ["page_title", String(title ?? "").trim()];
   if (host === "meet.google.com") {
     let path = "";
     try {
       path = new URL(url).pathname;
     } catch {
-      // No usable URL; fall back to the title.
+      // No usable URL; the page's title is all there is.
     }
     const code = /^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/.exec(path);
-    if (code) return code[1];
+    if (code) return [["meeting_code", code[1]], pageTitle];
   }
-  return String(title ?? "").trim().slice(0, 120);
+  return [pageTitle];
 }
 
 function setCallState(tab, frame, inCall, host, url, title) {
@@ -101,7 +103,7 @@ function setCallState(tab, frame, inCall, host, url, title) {
   const active = frames.size > 0;
   if (active === meetings.has(tab)) return;
   if (active) {
-    const meeting = { service: serviceName(host), title: meetingTitle(host, url, title) };
+    const meeting = { service: serviceName(host), metadata: meetingMetadata(host, url, title) };
     meetings.set(tab, meeting);
     connect();
     post({ type: "meeting", tab, active: true, ...meeting });

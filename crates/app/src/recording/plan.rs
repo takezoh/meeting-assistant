@@ -150,6 +150,7 @@ mod tests {
             audio_process_id,
             render_device_id: Some("speaker".into()),
             capture_device_id: Some("mic".into()),
+            metadata: meeting_assistant_core::RecordingMetadata::default(),
         }
     }
 

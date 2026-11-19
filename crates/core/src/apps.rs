@@ -6,6 +6,8 @@
 
 use std::fmt::Debug;
 
+use crate::metadata::MeetingMetadata;
+
 /// What one of an app's windows is, as far as the app's adapter can tell from the windows read at one time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowRole {
@@ -26,4 +28,9 @@ pub trait MeetingApp: Debug + Send + Sync {
 
     /// What each of the app's windows is, from their titles read at one time, in the same order.
     fn window_roles(&self, titles: &[&str]) -> Vec<WindowRole>;
+
+    /// What a window of the app that is not its main window tells of the meeting, from its title. Nothing by default.
+    fn meeting_metadata(&self, _title: &str) -> MeetingMetadata {
+        MeetingMetadata::default()
+    }
 }

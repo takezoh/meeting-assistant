@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use crate::config::CaptureScope;
 use crate::detector::{DetectorEvent, MeetingInfo, MeetingKey};
+use crate::metadata::RecordingMetadata;
 use crate::naming;
-use crate::ports::CoordinatorPorts;
+use crate::ports::{CoordinatorPorts, LocalDateTime};
 use crate::recording::{Recorder, RecordingRequest, VideoTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +92,8 @@ struct ActiveRecording {
     window: Option<u64>,
     /// Whether this recording targets only the app's window for video (false for whole-display recordings).
     follows_app: bool,
+    /// What the recording was last told to write into its file.
+    metadata: RecordingMetadata,
 }
 
 /// Maps meeting start/end and manual actions to starting and stopping recordings.
@@ -179,7 +182,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
                 .iter()
                 .map(|meeting| MeetingStatus {
                     key: meeting.info.key(),
-                    title: meeting.info.title.clone(),
+                    title: meeting.info.metadata.label().map(str::to_owned),
                     auto_stopped: meeting.auto_stopped,
                 })
                 .collect(),
@@ -217,6 +220,17 @@ impl<R: Recorder> RecordingCoordinator<R> {
                     && !self.start(RecordingTrigger::Auto, Some(key.clone()))
                 {
                     self.mark_auto_stopped(&key);
+                }
+            }
+            DetectorEvent::Updated(meeting) => {
+                let key = meeting.key();
+                if let Some(recording) = self.recording.as_mut().filter(|r| r.meeting.as_ref() == Some(&key)) {
+                    // The app and the start stay as they were; only what is known of the meeting changes.
+                    recording.metadata.meeting = meeting.metadata.clone();
+                    self.recorder.describe(&recording.metadata);
+                }
+                if let Some(known) = self.meetings.iter_mut().find(|m| m.info.key() == key) {
+                    known.info = meeting;
                 }
             }
             DetectorEvent::Ended(meeting) => {
@@ -364,6 +378,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
             match self.try_start(meeting.as_ref()) {
                 Ok(request) => {
                     let path = request.output_path;
+                    let metadata = request.metadata;
                     log::info!("Recording started ({trigger:?}): {}", path.display());
                     self.notify(NoticeLevel::Info, format!("Recording started: {}", file_name(&path)));
                     let (window, follows_app) = match request.video {
@@ -377,6 +392,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
                         meeting,
                         window,
                         follows_app,
+                        metadata,
                     });
                     return true;
                 }
@@ -408,7 +424,8 @@ impl<R: Recorder> RecordingCoordinator<R> {
         let label = meeting
             .as_ref()
             .map_or_else(|| "Manual".to_owned(), |m| m.rule_name.clone());
-        let output_path = self.new_output_path(&label)?;
+        let started_at = self.ports.clock.now();
+        let output_path = self.new_output_path(started_at, &label)?;
         let meeting = meeting.as_ref();
         // Recording only the app is possible only when the target app is known (a detected meeting).
         let app = meeting.filter(|_| self.capture_scope == CaptureScope::App);
@@ -426,6 +443,11 @@ impl<R: Recorder> RecordingCoordinator<R> {
             audio_process_id: app.and_then(|m| m.process_id),
             render_device_id: meeting.and_then(|m| m.render_device_id.clone()),
             capture_device_id: meeting.and_then(|m| m.capture_device_id.clone()),
+            metadata: RecordingMetadata {
+                app: label,
+                started_at: Some(started_at),
+                meeting: meeting.map(|m| m.metadata.clone()).unwrap_or_default(),
+            },
         };
         // Report the file that is actually written; a tab recorded as WebM gets another extension.
         let written = self.recorder.start(&request)?;
@@ -459,9 +481,9 @@ impl<R: Recorder> RecordingCoordinator<R> {
     }
 
     /// Prepares the output folder and picks a file location that is not yet in use.
-    fn new_output_path(&mut self, label: &str) -> anyhow::Result<PathBuf> {
+    fn new_output_path(&mut self, started_at: LocalDateTime, label: &str) -> anyhow::Result<PathBuf> {
         self.ports.output.prepare()?;
-        let stem = naming::recording_stem(self.ports.clock.now(), label);
+        let stem = naming::recording_stem(started_at, label);
         let file_name = naming::first_unused_file_name(&stem, |name| self.ports.output.contains(name));
         Ok(self.ports.output.path_of(&file_name))
     }

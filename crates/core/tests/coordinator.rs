@@ -42,7 +42,7 @@ fn zoom() -> MeetingInfo {
         window: Some(77),
         display: Some("DISPLAY2".into()),
         browser_tab: None,
-        title: None,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }
 }
 
@@ -453,7 +453,7 @@ fn meet_tab() -> MeetingInfo {
         window: None,
         display: None,
         browser_tab: Some(BrowserTab { link: 1, tab: 42 }),
-        title: None,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }
 }
 
@@ -574,10 +574,13 @@ fn the_file_the_recorder_actually_writes_is_the_one_reported() {
 }
 
 #[test]
-fn the_title_that_tells_a_meeting_apart_is_reported_with_it() {
+fn the_first_metadata_entry_tells_a_meeting_apart_in_the_status() {
     let mut f = fixture();
     let meet = MeetingInfo {
-        title: Some("abc-defg-hij".into()),
+        metadata: meeting_assistant_core::MeetingMetadata::new([
+            ("meeting_code", "abc-defg-hij"),
+            ("page_title", "Meet - abc-defg-hij"),
+        ]),
         ..meet_tab()
     };
     f.coordinator.handle(DetectorEvent::Started(meet));
@@ -586,6 +589,38 @@ fn the_title_that_tells_a_meeting_apart_is_reported_with_it() {
         f.coordinator.status().meetings[0].title.as_deref(),
         Some("abc-defg-hij")
     );
+}
+
+#[test]
+fn a_recording_is_started_with_the_meetings_metadata_and_told_what_is_learned_later() {
+    let mut f = fixture();
+    let meeting = zoom();
+    f.coordinator.handle(DetectorEvent::Started(meeting.clone()));
+    assert_eq!(
+        f.recorder.state().started[0].metadata,
+        meeting_assistant_core::RecordingMetadata {
+            app: "Zoom".into(),
+            started_at: Some(meeting_assistant_core::fakes::FIXED_TIME),
+            meeting: meeting_assistant_core::MeetingMetadata::default(),
+        },
+        "started at the time the file is named after"
+    );
+
+    let learned = MeetingInfo {
+        metadata: meeting_assistant_core::MeetingMetadata::new([("conversation", "standup")]),
+        ..meeting
+    };
+    f.coordinator.handle(DetectorEvent::Updated(learned));
+    assert_eq!(
+        f.recorder.state().described,
+        [meeting_assistant_core::RecordingMetadata {
+            app: "Zoom".into(),
+            started_at: Some(meeting_assistant_core::fakes::FIXED_TIME),
+            meeting: meeting_assistant_core::MeetingMetadata::new([("conversation", "standup")]),
+        }],
+        "the app and the start stay"
+    );
+    assert_eq!(f.coordinator.status().meetings[0].title.as_deref(), Some("standup"));
 }
 
 #[test]

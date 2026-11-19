@@ -13,8 +13,10 @@
 //! | [`pipeline`] | How one recording proceeds | none (capture, writing and waiting go through ports) |
 //! | [`session`] | Runs a recording on a dedicated thread | threads, clock |
 //! | [`merge`] | Adding a microphone recorded beside a tab recording to it | none (media and files go through ports) |
-//! | [`mp4`] | Adding a track to a fragmented MP4 by rewriting its structure | none (reads through a port) |
+//! | [`annotate`] | Writing what is known of a finished recording into its file, for every recording | none (media and files go through ports) |
+//! | [`mp4`] | Adding a track to a fragmented MP4, or metadata to any MP4, by rewriting its structure | none (reads through a port) |
 
+pub mod annotate;
 #[cfg_attr(
     not(windows),
     allow(dead_code, reason = "ScreenCaptureKit fits pictures to the canvas itself")

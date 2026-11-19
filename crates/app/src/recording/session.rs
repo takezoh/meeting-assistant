@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{AudioConfig, Recorder, RecordingRequest, VideoConfig};
+use meeting_assistant_core::{AudioConfig, Recorder, RecordingMetadata, RecordingRequest, VideoConfig};
 
 use super::merge::MicrophoneRecorder;
 use super::pipeline::{CaptureBackend, Control, Pacer, Pipeline};
@@ -151,6 +151,9 @@ impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
             .map_err(|_| anyhow::anyhow!("the recording thread has exited"))
     }
 
+    /// The file's metadata is written once it is finished, by `LinkedRecorder`, which every recording goes through.
+    fn describe(&mut self, _metadata: &RecordingMetadata) {}
+
     fn take_failure(&mut self) -> Option<String> {
         if !self.session.as_ref()?.thread.is_finished() {
             return None;
@@ -244,6 +247,7 @@ mod tests {
             audio_process_id: None,
             render_device_id: None,
             capture_device_id: None,
+            metadata: meeting_assistant_core::RecordingMetadata::default(),
         }
     }
 

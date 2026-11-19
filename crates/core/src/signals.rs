@@ -1,3 +1,5 @@
+use crate::metadata::MeetingMetadata;
+
 /// An audio session with an active stream. Shows which process uses which device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioSession {
@@ -47,9 +49,9 @@ pub struct BrowserMeeting {
     pub tab: BrowserTab,
     /// Name of the meeting service. Used in recording file names and logs.
     pub service: String,
-    /// What tells this meeting apart from others of the same service, such as a Google Meet meeting code or the
-    /// tab's title. Shown to the user only.
-    pub title: Option<String>,
+    /// What the extension tells of the meeting, which differs per service: a Google Meet meeting code and the tab's
+    /// title, or the tab's title.
+    pub metadata: MeetingMetadata,
 }
 
 /// The full set of signals observed from the OS at a point in time, used for meeting detection.

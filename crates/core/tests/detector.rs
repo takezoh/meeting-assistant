@@ -45,7 +45,7 @@ fn active(rule: &str) -> RuleEvidence {
         process_id: Some(100),
         windows: vec![window(77, 1000)],
         browser_tab: None,
-        title: None,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }
 }
 
@@ -59,6 +59,7 @@ fn window(id: u64, area: u64) -> AppWindow {
         area,
         display: Some(format!("DISPLAY-{id}")),
         role: WindowRole::Unknown,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }
 }
 
@@ -87,7 +88,7 @@ fn tab(service: &str, tab: u64) -> RuleEvidence {
         process_id: None,
         windows: Vec::new(),
         browser_tab: Some(BrowserTab { link: 1, tab }),
-        title: None,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }
 }
 
@@ -458,4 +459,37 @@ fn a_window_told_as_a_meetings_later_in_the_meeting_is_adopted() {
     // Joined: now it can.
     d.observe(t.at(12.0), &slack_told(true, std::slice::from_ref(&huddle)));
     assert_eq!(d.meeting_window(&key), Some(88));
+}
+
+#[test]
+fn what_the_meetings_window_tells_is_reported_once_learned_and_kept_after_the_window_goes() {
+    let (mut d, t) = detector();
+    d.observe(t.at(0.0), &slack(true, &[]));
+    assert_eq!(started_window(d.observe(t.at(3.0), &slack(true, &[]))), (None, None));
+
+    // Joined: the adapter tells the huddle window apart, and what its title says.
+    let huddle = AppWindow {
+        role: WindowRole::Meeting,
+        metadata: meeting_assistant_core::MeetingMetadata::new([("conversation", "standup")]),
+        ..window(88, 500)
+    };
+    match d
+        .observe(t.at(5.0), &slack(true, std::slice::from_ref(&huddle)))
+        .as_slice()
+    {
+        [DetectorEvent::Updated(meeting)] => assert_eq!(meeting.metadata.label(), Some("standup")),
+        other => panic!("not one update: {other:?}"),
+    }
+    assert!(
+        d.observe(t.at(6.0), &slack(true, std::slice::from_ref(&huddle)))
+            .is_empty(),
+        "nothing new"
+    );
+
+    // Left: the window goes, and the end still carries what was learned.
+    assert!(d.observe(t.at(7.0), &slack(false, &[])).is_empty());
+    match d.observe(t.at(30.0), &slack(false, &[])).as_slice() {
+        [DetectorEvent::Ended(meeting)] => assert_eq!(meeting.metadata.label(), Some("standup")),
+        other => panic!("not one end: {other:?}"),
+    }
 }

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::metadata::RecordingMetadata;
 use crate::signals::BrowserTab;
 
 /// What to record as video.
@@ -27,6 +28,8 @@ pub struct RecordingRequest {
     pub render_device_id: Option<String>,
     /// The microphone. If `None`, the default device is used.
     pub capture_device_id: Option<String>,
+    /// What to write into the file besides its media, as known at start; see [`Recorder::describe`].
+    pub metadata: RecordingMetadata,
 }
 
 /// A port that records the display and audio into one file.
@@ -43,6 +46,10 @@ pub trait Recorder {
     /// Used to give the meeting's window to a recording started with no video target, or a window that appeared
     /// later to one whose window closed.
     fn retarget(&mut self, window: u64) -> anyhow::Result<()>;
+
+    /// Replaces what is written into the file besides its media, when more is learned of the meeting during the
+    /// recording. It is written as the file is finished. Does nothing if not recording.
+    fn describe(&mut self, metadata: &RecordingMetadata);
 
     /// If a successfully started recording failed without a stop instruction, returns the cause once.
     /// By the time it is returned, the recorder is back to the not-recording state.

@@ -33,7 +33,7 @@ Each control message is a 32-bit length in native byte order followed by that ma
 | `type` | Fields | Meaning |
 | --- | --- | --- |
 | `hello` | `token`, `host_pid` | Sent by the relay first |
-| `meeting` | `tab`, `active`, `service`, `title` | A call became connected or ended in a tab. `service` and `title` come with a start. `service` names the site and is used in the file name. `title` tells two meetings of one service apart: the Google Meet meeting code, otherwise the page's title. The app keeps at most 120 characters of it and only shows it |
+| `meeting` | `tab`, `active`, `service`, `metadata` | A call became connected or ended in a tab. `service` and `metadata` come with a start. `service` names the site and is used in the file name. `metadata` is what the extension tells of the meeting, as `[key, value]` pairs in order, and differs per service: `meeting_code` and `page_title` for Google Meet, `page_title` otherwise. The first value tells two meetings of one service apart and is shown. The app keeps keys of lowercase letters, digits and `_`, trims values and cuts them at 200 characters, keeps at most 8 pairs, and writes them into the recording |
 | `error` | `tab` (optional), `message` | Recording the tab could not start |
 
 ### Messages to the extension

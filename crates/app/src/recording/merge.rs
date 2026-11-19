@@ -52,7 +52,8 @@ fn merging_path(recording: &Path) -> PathBuf {
     with_suffix(recording, "merging", extension)
 }
 
-fn with_suffix(path: &Path, suffix: &str, extension: &str) -> PathBuf {
+/// `<stem>.<suffix>.<extension>` beside `path`.
+pub(super) fn with_suffix(path: &Path, suffix: &str, extension: &str) -> PathBuf {
     let stem = path.file_stem().map(|stem| stem.to_string_lossy()).unwrap_or_default();
     path.with_file_name(format!("{stem}.{suffix}.{extension}"))
 }
@@ -86,6 +87,9 @@ pub trait Remuxer {
         placement: Placement,
         output: &Path,
     ) -> anyhow::Result<()>;
+
+    /// Writes `output`: `recording` unchanged apart from `entries` written into it as its metadata.
+    fn add_metadata(&self, recording: &Path, entries: &[(String, String)], output: &Path) -> anyhow::Result<()>;
 }
 
 /// The file operations the merge needs.
@@ -145,12 +149,17 @@ pub mod fakes {
 
     use super::*;
 
+    /// The recording, the entries and the output of one metadata write.
+    pub type Described = (PathBuf, Vec<(String, String)>, PathBuf);
+
     #[derive(Default)]
     pub struct FilesState {
         /// The files that exist.
         pub existing: BTreeSet<PathBuf>,
         /// (recording, microphone, placement, output) of each remux.
         pub remuxed: Vec<(PathBuf, PathBuf, Placement, PathBuf)>,
+        /// (recording, entries, output) of each metadata written.
+        pub described: Vec<Described>,
         pub remux_fails: bool,
         pub replace_fails: bool,
     }
@@ -188,6 +197,16 @@ pub mod fakes {
                 output.to_owned(),
             ));
             // A failed remux may leave a partial file behind.
+            state.existing.insert(output.to_owned());
+            anyhow::ensure!(!state.remux_fails, "cannot read the recording");
+            Ok(())
+        }
+
+        fn add_metadata(&self, recording: &Path, entries: &[(String, String)], output: &Path) -> anyhow::Result<()> {
+            let mut state = self.0.lock().unwrap();
+            state
+                .described
+                .push((recording.to_owned(), entries.to_vec(), output.to_owned()));
             state.existing.insert(output.to_owned());
             anyhow::ensure!(!state.remux_fails, "cannot read the recording");
             Ok(())

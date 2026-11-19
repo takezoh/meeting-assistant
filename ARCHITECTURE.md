@@ -53,7 +53,8 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | --- | --- |
 | `rules` | `MeetingRule`, the default rules, and `RuleEvaluator`: given a signal snapshot, which rule is satisfied and by which process and window. Pure |
 | `apps` | `MeetingApp`, the port through which an adapter for one meeting app tells what each of its windows is (main, a meeting's, or unknown), and `WindowRole`. Pure |
-| `detector` | `MeetingDetector`: start debounce and end grace over a sequence of evaluations, and which window appeared with a meeting. Pure; time is passed in |
+| `metadata` | `MeetingMetadata`, what is known of a meeting besides its app (keys and values per app, kept by one set of rules), and `RecordingMetadata`, what is written into a recording: the app, its start and the meeting's metadata. Pure |
+| `detector` | `MeetingDetector`: start debounce and end grace over a sequence of evaluations, which window is a meeting's, and what is learned of each meeting (reported as `Updated`). Pure; time is passed in |
 | `coordinator` | `RecordingCoordinator`: turns meeting starts, ends and manual commands into recorder calls; chooses the video target and audio process; retries after failure; names the file |
 | `engine` | `Engine`: one tick = capture signals, evaluate, update the detector, tell the coordinator; returns state and notices |
 | `naming` | Recording file names and collision handling. Pure |
@@ -74,11 +75,12 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `recording/pipeline` | How one recording proceeds: open, first picture, write loop with one audio block per track, retarget, finalize. Uses `CaptureBackend`, `Pacer` and `Control` |
 | `recording/session` | `ThreadedRecorder`: runs a pipeline on its own thread and presents it as a core `Recorder` and as the `MicrophoneRecorder` used beside a tab recording |
 | `recording/merge` | Where the microphone recorded beside a tab recording goes on its timeline, and the procedure that adds it as the second audio track and keeps both files on failure. Uses `Remuxer` and `RecordingFiles` |
-| `recording/mp4` | Adds a track to a fragmented MP4 by rewriting its `moov` and appending fragments, copying every byte of the original fragments. Reads through `ReadAt`. Pure |
+| `recording/mp4` | Adds a track to a fragmented MP4 by rewriting its `moov` and appending fragments, copying every byte of the original fragments; writes QuickTime metadata into any MP4's `moov`, moving the offsets that point past it. Reads through `ReadAt`. Pure |
+| `recording/annotate` | The keys written into a finished recording (`com.meeting-assistant.app`, `started_at`, `meeting.<key>`) and the procedure that writes them beside it and puts the result in its place, leaving the recording as it was on failure. Uses `Remuxer` and `RecordingFiles` |
 | `browser/protocol` | Message types and length-prefixed framing shared with the extension. Pure apart from generic `Read`/`Write` |
 | `browser/hub` | State machine of extension connections, reported meetings and the single tab recording and its upload. Writes data to a `ChunkSink`; touches no socket or file |
 | `browser/server`, `endpoint`, `relay` | The loopback control listener and the per-recording WebSocket upload listener, the published endpoint file, and the relay the browser launches |
-| `linked` | `LinkedSignalSource` and `LinkedRecorder`: combine the OS path and the extension path behind the core ports, using `BrowserPort` |
+| `linked` | `LinkedSignalSource` and `LinkedRecorder`: combine the OS path and the extension path behind the core ports, using `BrowserPort`; every recording that finishes or fails gets its metadata written here, the same way whichever path made it |
 | `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
 | `panel/view` | What the status panel and the tray icon show, the tooltip and running time, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
 | `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it. One page for both platforms; it follows the macOS or the Windows 11 design through a mark the platform gives it |

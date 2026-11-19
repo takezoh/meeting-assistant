@@ -18,6 +18,7 @@ mod detector;
 mod engine;
 #[cfg(feature = "fakes")]
 pub mod fakes;
+mod metadata;
 pub mod naming;
 mod ports;
 mod recording;
@@ -32,6 +33,7 @@ pub use coordinator::{
 };
 pub use detector::{DetectorEvent, MeetingDetector, MeetingInfo, MeetingKey, Timing};
 pub use engine::Engine;
+pub use metadata::{MAX_ENTRIES, MAX_KEY_LEN, MAX_VALUE_CHARS, MeetingMetadata, RecordingMetadata};
 pub use ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
 pub use recording::{Recorder, RecordingRequest, VideoTarget};
 pub use rules::{AppWindow, MeetingRule, RuleEvaluator, RuleEvidence, default_rules};

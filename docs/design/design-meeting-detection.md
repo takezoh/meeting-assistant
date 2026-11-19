@@ -44,6 +44,9 @@ invariants:
 - id: INV-009
   statement: "A desktop meeting's picture is only a window of its app that the app's adapter tells is a meeting's, or, of the windows the adapter tells nothing about, one that appeared while the windows were being read, from MEETING_WINDOW_LOOKBACK before its microphone use began; it is chosen by the start or later during the meeting. A window the adapter tells is the app's main window, and an untold window open when reading began, are never recorded; until the meeting has a window its picture is black."
   enforcement: test
+- id: INV-010
+  statement: "What is known of a meeting is one MeetingMetadata whatever told it (an app's adapter from the meeting's window, or the browser extension), kept by the same rules; what is learned during a meeting is reported once and kept when its source goes. A recording is started with its app, its start (the time its file is named after) and the meeting's metadata, and is told when the metadata changes, with the app and the start unchanged."
+  enforcement: test
 boundaries:
   provides:
   - id: PROV-001
@@ -54,11 +57,11 @@ boundaries:
   - id: CONS-001
     statement: "SignalSource, each read on its own: the audio sessions of capture devices and of playback devices, the process tree, the windows, and the extension's links and reported meetings."
   - id: CONS-002
-    statement: "Recorder: start, stop, retarget and take_failure."
+    statement: "Recorder: start, stop, retarget, describe and take_failure."
   - id: CONS-003
     statement: "Clock, OutputFolder and Pause."
   - id: CONS-004
-    statement: "MeetingApp adapters, optional: for the app run as a process name, what each of its windows is (main, a meeting's, or unknown) from their titles."
+    statement: "MeetingApp adapters, optional: for the app run as a process name, what each of its windows is (main, a meeting's, or unknown) and what a window that is not the main one tells of the meeting, from their titles."
   forbidden:
   - id: FORB-001
     statement: "Reading the clock, the file system or an operating system API directly."
@@ -87,6 +90,7 @@ source_paths:
 - crates/core/src/apps.rs
 - crates/app/src/apps
 - crates/core/src/rules.rs
+- crates/core/src/metadata.rs
 - crates/core/src/detector.rs
 - crates/core/src/coordinator.rs
 - crates/core/src/engine.rs
@@ -103,7 +107,7 @@ Decide, from what can be observed about the machine, when the user is in a meeti
 
 ## Responsibilities
 
-`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree, and the app's windows, each with what the app's `MeetingApp` adapter tells of it. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after it has been absent for the grace period. It is told on each tick whether the windows were read. While they are read without a break it notes when each window of a rule's app appeared; the windows found when reading begins count as open before any meeting. A desktop meeting's window is the largest of the app's windows that its adapter tells is a meeting's or, of those it tells nothing about, that appeared from `MEETING_WINDOW_LOOKBACK` (10 seconds) before its microphone use began, chosen at its start or, when there is none yet, as soon as there is; when it closes, a window that appears later can take its place. Only that window is recorded (INV-009); it has no part in when the meeting ends ([ADR](../adr/adr-20261119-end-a-desktop-meeting-on-the-microphone.md)). Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to the meeting's window when the recorded one is missing, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick. It reads the microphone's sessions and the extension's state on every tick, the playback sessions only while some process uses the microphone, and the process tree and the windows while some process uses the microphone or an app's meeting is recorded. Nothing else uses them, so an idle machine is not searched. That is also why the timing of the windows open when the microphone is taken tells nothing: Slack opens its huddle window as it takes the microphone. The detector names no app; what tells one app's windows apart differs per app and lives in its adapter in `crates/app/src/apps`, such as Slack's, which reads the mark Slack puts in its main window's title while a joined huddle is open ([ADR](../adr/adr-20261119-tell-meeting-windows-apart-through-app-adapters.md)).
+`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree, and the app's windows, each with what the app's `MeetingApp` adapter tells of it. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after it has been absent for the grace period. It is told on each tick whether the windows were read. While they are read without a break it notes when each window of a rule's app appeared; the windows found when reading begins count as open before any meeting. A desktop meeting's window is the largest of the app's windows that its adapter tells is a meeting's or, of those it tells nothing about, that appeared from `MEETING_WINDOW_LOOKBACK` (10 seconds) before its microphone use began, chosen at its start or, when there is none yet, as soon as there is; when it closes, a window that appears later can take its place. Only that window is recorded (INV-009); it has no part in when the meeting ends ([ADR](../adr/adr-20261119-end-a-desktop-meeting-on-the-microphone.md)). What a meeting's window or its evidence tells of it is its `MeetingMetadata`; when that changes the detector reports `Updated`, and it keeps what was learned when the window goes (INV-010). Ends and updates are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest` with the recording's metadata (the app, the time its file is named after, the meeting's metadata), tells the recorder when the meeting's metadata changes, starts and stops the recorder, moves the video to the meeting's window when the recorded one is missing, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick. It reads the microphone's sessions and the extension's state on every tick, the playback sessions only while some process uses the microphone, and the process tree and the windows while some process uses the microphone or an app's meeting is recorded. Nothing else uses them, so an idle machine is not searched. That is also why the timing of the windows open when the microphone is taken tells nothing: Slack opens its huddle window as it takes the microphone. The detector names no app; what tells one app's windows apart differs per app and lives in its adapter in `crates/app/src/apps`, such as Slack's, which reads the mark Slack puts in its main window's title while a joined huddle is open ([ADR](../adr/adr-20261119-tell-meeting-windows-apart-through-app-adapters.md)).
 
 ## Boundaries
 

@@ -14,6 +14,7 @@ use crate::adapters::{DiskFiles, Mp4Remuxer, real_ports};
 use crate::browser::BrowserLinkServer;
 use crate::linked::{LinkedRecorder, LinkedSignalSource};
 use crate::platform::{self, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource};
+use crate::recording::annotate::Annotator;
 use crate::recording::merge::Merger;
 use crate::worker::{self, Command, Update};
 
@@ -46,7 +47,13 @@ pub fn spawn_engine(
 
 type AppEngine = Engine<
     LinkedSignalSource<PlatformSignalSource, BrowserLinkServer>,
-    LinkedRecorder<PlatformRecorder, BrowserLinkServer, PlatformRecorder, Merger<Mp4Remuxer, DiskFiles>>,
+    LinkedRecorder<
+        PlatformRecorder,
+        BrowserLinkServer,
+        PlatformRecorder,
+        Merger<Mp4Remuxer, DiskFiles>,
+        Annotator<Mp4Remuxer, DiskFiles>,
+    >,
 >;
 
 fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<AppEngine> {
@@ -61,6 +68,8 @@ fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<Ap
         // A second recorder records the microphone beside a browser tab recording.
         platform::recorder(config.video.clone(), config.audio.clone()),
         Merger::new(Mp4Remuxer, DiskFiles),
+        // Every finished recording gets what is known of it written into its file.
+        Annotator::new(Mp4Remuxer, DiskFiles),
     );
     let coordinator =
         RecordingCoordinator::new(recorder, real_ports(output_directory)).with_capture_scope(config.capture_scope);

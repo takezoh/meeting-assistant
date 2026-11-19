@@ -40,15 +40,16 @@ pub fn extension_web_origin() -> String {
 pub enum Incoming {
     /// Sent first by the relay process.
     Hello { token: String, host_pid: u32 },
-    /// A meeting started or ended in a tab. `service` and `title` come with a start.
+    /// A meeting started or ended in a tab. `service` and `metadata` come with a start.
     Meeting {
         tab: u64,
         active: bool,
         #[serde(default)]
         service: String,
-        /// What tells this meeting apart from others of the same service (a Google Meet code, or the tab's title).
+        /// What the extension tells of the meeting, which differs per service, as `[key, value]` pairs in order; the
+        /// first tells it apart from others of the same service (a Google Meet code, or the tab's title).
         #[serde(default)]
-        title: String,
+        metadata: Vec<(String, String)>,
     },
     /// Recording a tab could not start.
     Error {
@@ -226,12 +227,17 @@ mod tests {
         let parse = |json: &str| Incoming::parse(json.as_bytes()).unwrap();
 
         assert_eq!(
-            parse(r#"{"type":"meeting","tab":7,"active":true,"service":"GoogleMeet","title":"abc-defg-hij"}"#),
+            parse(
+                r#"{"type":"meeting","tab":7,"active":true,"service":"GoogleMeet","metadata":[["meeting_code","abc-defg-hij"],["page_title","Meet - abc-defg-hij"]]}"#
+            ),
             Incoming::Meeting {
                 tab: 7,
                 active: true,
                 service: "GoogleMeet".into(),
-                title: "abc-defg-hij".into()
+                metadata: vec![
+                    ("meeting_code".into(), "abc-defg-hij".into()),
+                    ("page_title".into(), "Meet - abc-defg-hij".into())
+                ]
             }
         );
         assert_eq!(
@@ -240,7 +246,7 @@ mod tests {
                 tab: 7,
                 active: false,
                 service: String::new(),
-                title: String::new()
+                metadata: Vec::new()
             }
         );
         assert_eq!(

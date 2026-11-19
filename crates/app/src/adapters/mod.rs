@@ -29,6 +29,7 @@ impl Clock for SystemClock {
             hour: now.hour(),
             minute: now.minute(),
             second: now.second(),
+            utc_offset_minutes: now.offset().local_minus_utc() / 60,
         }
     }
 }
@@ -86,7 +87,7 @@ impl ReadAt for DiskFile {
     }
 }
 
-/// Adds a track by rewriting the MP4's structure (see [`mp4`]), the same on every OS.
+/// Adds a track or metadata by rewriting the MP4's structure (see [`mp4`]), the same on every OS.
 pub struct Mp4Remuxer;
 
 impl Remuxer for Mp4Remuxer {
@@ -106,9 +107,19 @@ impl Remuxer for Mp4Remuxer {
         out.into_inner().map_err(|error| error.into_error())?.sync_all()?;
         Ok(())
     }
+
+    fn add_metadata(&self, recording: &Path, entries: &[(String, String)], output: &Path) -> anyhow::Result<()> {
+        let recording = DiskFile::open(recording).context("cannot open the recording")?;
+        let pieces = mp4::with_metadata(&recording, entries)?;
+        let mut out =
+            BufWriter::new(File::create(output).with_context(|| format!("cannot create {}", output.display()))?);
+        mp4::write_pieces(&pieces, &recording, &Vec::new(), &mut out)?;
+        out.into_inner().map_err(|error| error.into_error())?.sync_all()?;
+        Ok(())
+    }
 }
 
-/// The file system, for adding the microphone to a recording.
+/// The file system, for adding the microphone or metadata to a recording.
 pub struct DiskFiles;
 
 impl RecordingFiles for DiskFiles {
@@ -151,6 +162,28 @@ mod tests {
                     delay: Duration::ZERO,
                 },
                 &path("MEETING_ASSISTANT_MERGE_OUTPUT"),
+            )
+            .unwrap();
+    }
+
+    /// Writes metadata into `MEETING_ASSISTANT_DESCRIBE_RECORDING`, writing `MEETING_ASSISTANT_DESCRIBE_OUTPUT`: for
+    /// checking with real recordings and other readers by hand.
+    #[test]
+    #[ignore = "needs files named in the environment"]
+    fn writes_metadata_into_the_file_named_in_the_environment() {
+        let path = |name: &str| PathBuf::from(std::env::var(name).unwrap());
+        let entries = [
+            ("com.meeting-assistant.app", "Slack"),
+            ("com.meeting-assistant.started_at", "2026-11-19T18:35:35+09:00"),
+            ("com.meeting-assistant.meeting.conversation", "dev-gcp-errors"),
+            ("com.meeting-assistant.meeting.workspace", "tkz"),
+        ]
+        .map(|(k, v)| (k.to_owned(), v.to_owned()));
+        Mp4Remuxer
+            .add_metadata(
+                &path("MEETING_ASSISTANT_DESCRIBE_RECORDING"),
+                &entries,
+                &path("MEETING_ASSISTANT_DESCRIBE_OUTPUT"),
             )
             .unwrap();
     }

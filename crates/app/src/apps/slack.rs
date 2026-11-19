@@ -1,6 +1,6 @@
 //! Slack (desktop).
 
-use meeting_assistant_core::{MeetingApp, WindowRole};
+use meeting_assistant_core::{MeetingApp, MeetingMetadata, WindowRole};
 
 /// What Slack adds to its main window's title while a huddle it has joined is open in another window.
 ///
@@ -11,7 +11,7 @@ use meeting_assistant_core::{MeetingApp, WindowRole};
 const MAIN_MARK: &str = "[Main]";
 
 /// While a window carries [`MAIN_MARK`], it is Slack's main window and the others are the huddle's; otherwise nothing
-/// is told.
+/// is told. A huddle window titled "<conversation> - <workspace> - Slack" tells both.
 #[derive(Debug)]
 pub struct Slack;
 
@@ -30,6 +30,20 @@ impl MeetingApp for Slack {
                 (true, false) => WindowRole::Meeting,
             })
             .collect()
+    }
+
+    fn meeting_metadata(&self, title: &str) -> MeetingMetadata {
+        if title.contains(MAIN_MARK) {
+            return MeetingMetadata::default();
+        }
+        // From the right, since a conversation's name may itself hold " - ".
+        let mut parts = title.rsplitn(3, " - ");
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some("Slack"), Some(workspace), Some(conversation)) => {
+                MeetingMetadata::new([("conversation", conversation), ("workspace", workspace)])
+            }
+            _ => MeetingMetadata::default(),
+        }
     }
 }
 
@@ -60,5 +74,28 @@ mod tests {
     fn handles_slack_only() {
         assert!(Slack.handles("slack"));
         assert!(!Slack.handles("zoom"));
+    }
+
+    #[test]
+    fn a_huddle_window_tells_its_conversation_and_workspace() {
+        let told = Slack.meeting_metadata("dev-gcp-errors - tkz - Slack");
+        let pairs: Vec<(&str, &str)> = told.entries().iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(pairs, [("conversation", "dev-gcp-errors"), ("workspace", "tkz")]);
+        assert_eq!(
+            Slack.meeting_metadata("Jane Doe - design - tkz - Slack").label(),
+            Some("Jane Doe - design"),
+            "a conversation's name may hold the separator"
+        );
+    }
+
+    #[test]
+    fn the_main_window_and_other_titles_tell_nothing() {
+        assert!(
+            Slack
+                .meeting_metadata("dev-gcp-errors (Channel) - tkz - Slack [Main] 🏠")
+                .is_empty()
+        );
+        assert!(Slack.meeting_metadata("Preferences").is_empty());
+        assert!(Slack.meeting_metadata("a - b - Not Slack").is_empty());
     }
 }

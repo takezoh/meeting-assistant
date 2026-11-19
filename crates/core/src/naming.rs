@@ -77,6 +77,7 @@ mod tests {
         hour: 9,
         minute: 3,
         second: 7,
+        utc_offset_minutes: 540,
     };
 
     #[test]

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::apps::WindowRole;
+use crate::metadata::MeetingMetadata;
 use crate::rules::{AppWindow, RuleEvidence};
 use crate::signals::BrowserTab;
 
@@ -27,8 +28,9 @@ pub struct MeetingInfo {
     pub window: Option<u64>,
     pub display: Option<String>,
     pub browser_tab: Option<BrowserTab>,
-    /// What tells the meeting apart from others of the same rule, as observed at start. Shown to the user only.
-    pub title: Option<String>,
+    /// What is known of the meeting, as its app tells: given at start and updated as more is learned (a Slack huddle
+    /// tells its conversation once its window is told apart). What was learned is kept when its source goes.
+    pub metadata: MeetingMetadata,
 }
 
 impl MeetingInfo {
@@ -50,6 +52,8 @@ pub struct Timing {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectorEvent {
     Started(MeetingInfo),
+    /// What is known of a meeting in progress changed.
+    Updated(MeetingInfo),
     Ended(MeetingInfo),
 }
 
@@ -129,7 +133,7 @@ impl MeetingDetector {
     }
 
     /// Advances every meeting by one observation. `windows_read` says whether the evidence carries the apps' windows;
-    /// without them, what is known of the windows stays as it was. Ends are reported before starts.
+    /// without them, what is known of the windows stays as it was. Ends and updates are reported before starts.
     pub fn update(&mut self, now: Instant, evidence: &[RuleEvidence], windows_read: bool) -> Vec<DetectorEvent> {
         if windows_read {
             self.see_windows(now, evidence);
@@ -157,7 +161,7 @@ impl MeetingDetector {
     }
 
     fn update_meetings(&mut self, now: Instant, evidence: &[RuleEvidence], windows_read: bool) -> Vec<DetectorEvent> {
-        let mut ended = Vec::new();
+        let mut events = Vec::new();
         let (apps, browser) = (self.apps, self.browser);
         let seen = &self.windows_seen;
         self.meetings.retain_mut(|tracked| {
@@ -168,17 +172,21 @@ impl MeetingDetector {
                     .iter()
                     .find(|e| e.key() == key)
                     .map_or(&[][..], |e| e.windows.as_slice());
-                // A closed window is let go; another that appears afterwards can take its place.
-                if tracked
+                // The window as read now, so that what it tells is current. A closed window is let go; another that
+                // appears afterwards can take its place.
+                tracked.window = tracked
                     .window
                     .as_ref()
-                    .is_some_and(|window| !windows.iter().any(|w| w.id == window.id))
-                {
-                    tracked.window = None;
-                }
+                    .and_then(|window| windows.iter().find(|w| w.id == window.id))
+                    .cloned();
                 if tracked.window.is_none() {
                     tracked.window = meeting_window_among(seen, windows, tracked.since).cloned();
                 }
+            }
+            let learned = learned_metadata(tracked.window.as_ref(), evidence.iter().find(|e| e.key() == key));
+            if let Some(learned) = learned.filter(|learned| **learned != tracked.info.metadata) {
+                tracked.info.metadata = learned.clone();
+                events.push(DetectorEvent::Updated(tracked.info.clone()));
             }
             if ongoing(tracked, evidence) {
                 tracked.absent_since = None;
@@ -188,10 +196,10 @@ impl MeetingDetector {
             if now.duration_since(absent_since) < end_grace {
                 return true;
             }
-            ended.push(DetectorEvent::Ended(tracked.info.clone()));
+            events.push(DetectorEvent::Ended(tracked.info.clone()));
             false
         });
-        ended
+        events
     }
 
     fn update_candidates(&mut self, now: Instant, evidence: &[RuleEvidence]) -> Vec<DetectorEvent> {
@@ -214,6 +222,9 @@ impl MeetingDetector {
                 continue;
             }
             let window = meeting_window_among(&self.windows_seen, &found.windows, since).cloned();
+            let metadata = learned_metadata(window.as_ref(), Some(found))
+                .cloned()
+                .unwrap_or_default();
             let meeting = MeetingInfo {
                 rule_name: found.rule_name.clone(),
                 capture_device_id: found.capture_device_id.clone(),
@@ -222,7 +233,7 @@ impl MeetingDetector {
                 window: window.as_ref().map(|w| w.id),
                 display: window.as_ref().and_then(|w| w.display.clone()),
                 browser_tab: found.browser_tab,
-                title: found.title.clone(),
+                metadata,
             };
             self.meetings.push(Tracked {
                 info: meeting.clone(),
@@ -253,6 +264,18 @@ fn meeting_window_among<'a>(
             WindowRole::Unknown => matches!(seen.get(&w.id), Some(Some(appeared)) if *appeared >= from),
         })
         .max_by_key(|w| w.area)
+}
+
+/// What can be learned of a meeting now: what its window tells, or else what its evidence carries (a browser meeting's).
+/// Nothing when neither tells anything, so that what was learned before stays.
+fn learned_metadata<'a>(
+    window: Option<&'a AppWindow>,
+    evidence: Option<&'a RuleEvidence>,
+) -> Option<&'a MeetingMetadata> {
+    window
+        .map(|window| &window.metadata)
+        .filter(|metadata| !metadata.is_empty())
+        .or_else(|| evidence.map(|e| &e.metadata).filter(|metadata| !metadata.is_empty()))
 }
 
 /// Whether a tracked meeting's condition holds.

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::io;
 
-use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab};
+use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab, MeetingMetadata};
 
 use super::protocol::{Incoming, Outgoing};
 
@@ -93,12 +93,9 @@ struct Link {
 
 struct ReportedMeeting {
     service: String,
-    /// What tells this meeting apart from others of the same service.
-    title: Option<String>,
+    /// What the extension tells of the meeting, kept by the same rules as any app's.
+    metadata: MeetingMetadata,
 }
-
-/// Longest title kept for a meeting, in characters. It is only shown; a longer one is cut.
-const MAX_TITLE_CHARS: usize = 120;
 
 #[derive(Default)]
 pub struct Hub {
@@ -150,7 +147,7 @@ impl Hub {
                 entry.meetings.iter().map(move |(&tab, meeting)| BrowserMeeting {
                     tab: BrowserTab { link, tab },
                     service: meeting.service.clone(),
-                    title: meeting.title.clone(),
+                    metadata: meeting.metadata.clone(),
                 })
             })
             .collect();
@@ -278,7 +275,7 @@ impl Hub {
                 tab,
                 active,
                 service,
-                title,
+                metadata,
             } => {
                 let Some(entry) = self.links.get_mut(&link) else { return };
                 if active {
@@ -287,9 +284,8 @@ impl Hub {
                     } else {
                         service
                     };
-                    let title = title.trim();
-                    let title = (!title.is_empty()).then(|| title.chars().take(MAX_TITLE_CHARS).collect());
-                    entry.meetings.insert(tab, ReportedMeeting { service, title });
+                    let metadata = MeetingMetadata::new(metadata);
+                    entry.meetings.insert(tab, ReportedMeeting { service, metadata });
                 } else {
                     entry.meetings.remove(&tab);
                 }
@@ -343,7 +339,7 @@ mod tests {
             tab,
             active,
             service: service.into(),
-            title: String::new(),
+            metadata: Vec::new(),
         }
     }
 
@@ -373,23 +369,34 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_title_that_tells_two_meetings_of_a_service_apart() {
+    fn keeps_what_the_extension_tells_of_a_meeting_by_the_rules_for_any_app() {
         let mut hub = Hub::default();
         let link = hub.connect(301);
-        let titled = |tab, title: &str| Incoming::Meeting {
+        let told = |tab, metadata: &[(&str, &str)]| Incoming::Meeting {
             tab,
             active: true,
             service: "GoogleMeet".into(),
-            title: title.into(),
+            metadata: metadata.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         };
-        hub.receive(link, titled(1, "abc-defg-hij"));
-        hub.receive(link, titled(2, "  "));
-        hub.receive(link, titled(3, &"x".repeat(500)));
+        hub.receive(
+            link,
+            told(
+                1,
+                &[("meeting_code", "abc-defg-hij"), ("page_title", "Meet - abc-defg-hij")],
+            ),
+        );
+        hub.receive(link, told(2, &[("page_title", "  ")]));
+        let long = "x".repeat(500);
+        hub.receive(link, told(3, &[("Bad Key", "dropped"), ("page_title", long.as_str())]));
 
-        let titles: Vec<_> = hub.snapshot().1.into_iter().map(|m| m.title).collect();
-        assert_eq!(titles[0].as_deref(), Some("abc-defg-hij"));
-        assert_eq!(titles[1], None, "a blank title is no title");
-        assert_eq!(titles[2].as_ref().map(|t| t.chars().count()), Some(MAX_TITLE_CHARS));
+        let meetings = hub.snapshot().1;
+        assert_eq!(meetings[0].metadata.label(), Some("abc-defg-hij"));
+        assert_eq!(meetings[0].metadata.entries().len(), 2);
+        assert!(meetings[1].metadata.is_empty(), "a blank value is dropped");
+        assert_eq!(
+            meetings[2].metadata.label().map(|label| label.chars().count()),
+            Some(meeting_assistant_core::MAX_VALUE_CHARS)
+        );
     }
 
     #[test]

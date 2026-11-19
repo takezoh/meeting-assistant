@@ -166,6 +166,8 @@ A tab recording does not pass through the capture pipeline. Its video and audio 
 
 The user's microphone does: `LinkedRecorder` starts the pipeline's microphone-only recording beside the tab's file (`<recording>.microphone.m4a`) before it asks the extension to start, keeps the moment the upload proved itself as the tab's time zero, and after the tab recording ends hands both to `MicrophoneMerge`. `recording::merge` decides where the microphone goes (the part before the tab's zero is dropped, the rest cut at the tab's end) and that the result replaces the tab's file only once it is complete. `recording::mp4` writes it by rewriting the tab's `moov` and appending fragments for the new track, copying the tab's own fragments byte for byte. Re-muxing through AVFoundation was tried and rejected: it reads the browser's fragment timing differently from the fragments' `tfdt` and shortened the video of a 13-minute recording by 9.6 seconds.
 
+After the merge the tab's file gets what is known of the meeting written into it, by the procedure every recording goes through ([ADR](../adr/adr-20261119-write-meeting-metadata-into-the-recording.md)); for a tab that is what the extension sent with the meeting (`meeting_code` and `page_title` for Google Meet, `page_title` otherwise), with the service and the recording's start.
+
 ## Invariants
 
 The fixed identifiers are checked by tests in `bundle.rs` (the host name in `background.js`, the presence of the manifest key) and in `install` (the native-host manifest names this extension only). A mismatch would make the browser refuse to start the relay.

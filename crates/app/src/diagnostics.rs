@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use meeting_assistant_core::{
-    AudioSession, Config, Recorder, RecordingRequest, RuleEvaluator, VideoTarget, full_snapshot,
+    AudioSession, Config, Recorder, RecordingMetadata, RecordingRequest, RuleEvaluator, VideoTarget, full_snapshot,
 };
 
 use crate::platform::{self, PlatformSignalSource};
@@ -96,7 +96,14 @@ pub fn probe(config: &Config) -> anyhow::Result<()> {
         let roles: Vec<String> = evidence
             .windows
             .iter()
-            .map(|w| format!("{:#x}:{:?}", w.id, w.role))
+            .map(|w| {
+                let told: Vec<String> = w.metadata.entries().iter().map(|(k, v)| format!("{k}={v:?}")).collect();
+                if told.is_empty() {
+                    format!("{:#x}:{:?}", w.id, w.role)
+                } else {
+                    format!("{:#x}:{:?}({})", w.id, w.role, told.join(","))
+                }
+            })
             .collect();
         let windows = format!(" windows=[{}]", roles.join(" "));
         println!(
@@ -121,6 +128,11 @@ pub fn self_test(config: &Config, keep: Option<PathBuf>, length: Duration) -> an
         audio_process_id: None,
         render_device_id: None,
         capture_device_id: None,
+        // A self-test records through the platform alone, which writes no metadata into the file.
+        metadata: RecordingMetadata {
+            app: "SelfTest".into(),
+            ..RecordingMetadata::default()
+        },
     };
 
     recorder.start(&request).context("cannot start recording")?;

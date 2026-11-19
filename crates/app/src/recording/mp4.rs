@@ -1,4 +1,5 @@
-//! Adding an audio track to a fragmented MP4 without decoding anything and without moving any of its timestamps.
+//! Rewriting a finished MP4 without decoding anything and without moving any of its timestamps: adding an audio track
+//! to a fragmented one, and writing metadata into any.
 //!
 //! A browser records a tab as a fragmented MP4: a `moov` that describes the tracks, then `moof`/`mdat` pairs, each
 //! fragment saying when its samples start (`tfdt`) and where its data is, relative to the fragment itself. Such a file
@@ -7,6 +8,8 @@
 //! written with.
 //!
 //! The added track comes from an ordinary MP4 (sample tables in its `moov`), as the app's own writer finishes it.
+//!
+//! It also writes metadata into a finished recording of any kind ([`with_metadata`]).
 //!
 //! This module reads through [`ReadAt`] and returns what to write as a list of [`Piece`]s; it touches no file.
 
@@ -105,6 +108,200 @@ pub fn add_audio_track(
         fragment(&mut pieces, chunk, track_id, next_sequence + index as u32);
     }
     Ok(merge_ranges(pieces))
+}
+
+/// The pieces of `recording` with `entries` written into its `moov` as QuickTime metadata: a `meta` box right in the
+/// `moov`, with an `mdta` handler, the entries' keys and their values as UTF-8, which ffmpeg and AVFoundation both read
+/// by key. A `meta` box with an `mdta` handler already in the `moov` is replaced.
+///
+/// Every other byte is copied. When the `moov` comes before media, the offsets that point past it move by as much as it
+/// grew: chunk offsets (`stco`, `co64`), a fragment's explicit base data offset (`tfhd`) and the fragment index
+/// (`tfra`). Fragments whose data is addressed from the fragment itself, as browsers and the platforms write them, need
+/// nothing; neither does a file whose `moov` comes last.
+pub fn with_metadata(recording: &dyn ReadAt, entries: &[(String, String)]) -> anyhow::Result<Vec<Piece>> {
+    let boxes = top_level(recording).context("cannot read the recording")?;
+    let mut movies = boxes.iter().filter(|b| &b.kind == b"moov");
+    let moov = movies.next().context("the recording has no movie header")?;
+    anyhow::ensure!(movies.next().is_none(), "the recording has more than one movie header");
+    let moov_body = read_body(recording, moov)?;
+
+    let mut body = Vec::with_capacity(moov_body.len() + 512);
+    for (kind, whole, child_body) in children(&moov_body)? {
+        if &kind == b"meta" && is_metadata_of_keys(child_body) {
+            continue;
+        }
+        match &kind {
+            // Rebuilt with the headers `make_box` writes, so that the size is final before any offset moves.
+            b"trak" => body.extend_from_slice(&make_box(
+                b"trak",
+                &with_chunk_offsets(child_body, &|offset| Ok(offset))?,
+            )),
+            _ => body.extend_from_slice(whole),
+        }
+    }
+    body.extend_from_slice(&metadata_box(entries));
+
+    let end = moov.start + moov.size;
+    let grown = i64::try_from(body.len() + 8)? - i64::try_from(moov.size)?;
+    let shift = |offset: u64| -> anyhow::Result<u64> {
+        if offset < end {
+            return Ok(offset);
+        }
+        offset
+            .checked_add_signed(grown)
+            .context("an offset in the recording is out of range")
+    };
+    let body = with_chunk_offsets(&body, &shift)?;
+
+    let mut pieces = Vec::with_capacity(boxes.len());
+    for b in &boxes {
+        let rewritten = match &b.kind {
+            b"moov" => Some(make_box(b"moov", &body)),
+            b"moof" if grown != 0 => {
+                with_base_offsets(&read_body(recording, b)?, &shift)?.map(|body| make_box(b"moof", &body))
+            }
+            b"mfra" if grown != 0 => Some(make_box(
+                b"mfra",
+                &with_fragment_index(&read_body(recording, b)?, &shift)?,
+            )),
+            _ => None,
+        };
+        pieces.push(rewritten.map_or(
+            Piece::Recording {
+                offset: b.start,
+                length: b.size,
+            },
+            Piece::Bytes,
+        ));
+    }
+    Ok(merge_ranges(pieces))
+}
+
+/// Whether a `meta` body holds QuickTime metadata keys: it has an `hdlr` of type `mdta`, with or without the version
+/// and flags an ISO `meta` box begins with.
+fn is_metadata_of_keys(meta: &[u8]) -> bool {
+    [meta, meta.get(4..).unwrap_or_default()].into_iter().any(|body| {
+        children(body).is_ok_and(|found| {
+            found
+                .iter()
+                .any(|(kind, _, hdlr)| kind == b"hdlr" && hdlr.get(8..12) == Some(b"mdta".as_slice()))
+        })
+    })
+}
+
+/// A `meta` box of QuickTime metadata keys holding `entries`. It has no version and flags, as QuickTime has it;
+/// AVFoundation reads nothing from one that does.
+fn metadata_box(entries: &[(String, String)]) -> Vec<u8> {
+    // pre_defined, the handler type, three reserved words and an empty name.
+    let hdlr = [&0u32.to_be_bytes()[..], b"mdta", &[0; 13]].concat();
+    let mut keys = (entries.len() as u32).to_be_bytes().to_vec();
+    let mut items = Vec::new();
+    for (index, (key, value)) in entries.iter().enumerate() {
+        keys.extend_from_slice(&make_box(b"mdta", key.as_bytes()));
+        // Type 1 (UTF-8), then the default locale.
+        let data = [&1u32.to_be_bytes()[..], &0u32.to_be_bytes(), value.as_bytes()].concat();
+        items.extend_from_slice(&make_box(&(index as u32 + 1).to_be_bytes(), &make_box(b"data", &data)));
+    }
+    let body = [
+        full_box(b"hdlr", 0, 0, &hdlr),
+        full_box(b"keys", 0, 0, &keys),
+        make_box(b"ilst", &items),
+    ]
+    .concat();
+    make_box(b"meta", &body)
+}
+
+/// `container` with every chunk offset in its tracks passed through `shift`.
+fn with_chunk_offsets(container: &[u8], shift: &dyn Fn(u64) -> anyhow::Result<u64>) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(container.len());
+    for (kind, whole, body) in children(container)? {
+        match &kind {
+            b"trak" | b"mdia" | b"minf" | b"stbl" => {
+                out.extend_from_slice(&make_box(&kind, &with_chunk_offsets(body, shift)?));
+            }
+            b"stco" | b"co64" => {
+                let wide = &kind == b"co64";
+                let width = if wide { 8 } else { 4 };
+                let mut patched = body.to_vec();
+                let count = u32_at(&patched, 4)? as usize;
+                for index in 0..count {
+                    let at = 8 + index * width;
+                    let offset = if wide {
+                        shift(u64_at(&patched, at)?)?
+                    } else {
+                        shift(u64::from(u32_at(&patched, at)?))?
+                    };
+                    if wide {
+                        patched[at..at + 8].copy_from_slice(&offset.to_be_bytes());
+                    } else {
+                        let offset = u32::try_from(offset).context("a chunk offset no longer fits in 32 bits")?;
+                        patched[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+                    }
+                }
+                out.extend_from_slice(&make_box(&kind, &patched));
+            }
+            _ => out.extend_from_slice(whole),
+        }
+    }
+    Ok(out)
+}
+
+/// A `moof` body with each explicit base data offset passed through `shift`, or `None` if it has none.
+fn with_base_offsets(moof: &[u8], shift: &dyn Fn(u64) -> anyhow::Result<u64>) -> anyhow::Result<Option<Vec<u8>>> {
+    let mut changed = false;
+    let mut out = Vec::with_capacity(moof.len());
+    for (kind, whole, traf) in children(moof)? {
+        if &kind != b"traf" {
+            out.extend_from_slice(whole);
+            continue;
+        }
+        let mut body = Vec::with_capacity(traf.len());
+        for (kind, whole, tfhd) in children(traf)? {
+            // base-data-offset-present: the offset follows the version, flags and track ID.
+            if &kind == b"tfhd" && u32_at(tfhd, 0)? & 1 != 0 {
+                let mut patched = tfhd.to_vec();
+                let offset = shift(u64_at(&patched, 8)?)?;
+                patched[8..16].copy_from_slice(&offset.to_be_bytes());
+                body.extend_from_slice(&make_box(b"tfhd", &patched));
+                changed = true;
+            } else {
+                body.extend_from_slice(whole);
+            }
+        }
+        out.extend_from_slice(&make_box(b"traf", &body));
+    }
+    Ok(changed.then_some(out))
+}
+
+/// An `mfra` body with the fragment offsets in each `tfra` passed through `shift`.
+fn with_fragment_index(mfra: &[u8], shift: &dyn Fn(u64) -> anyhow::Result<u64>) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(mfra.len());
+    for (kind, whole, tfra) in children(mfra)? {
+        if &kind != b"tfra" {
+            out.extend_from_slice(whole);
+            continue;
+        }
+        let mut patched = tfra.to_vec();
+        let wide = patched.first() == Some(&1);
+        let lengths = u32_at(&patched, 8)?;
+        // The sizes of traf_number, trun_number and sample_number, each one byte more than its two bits say.
+        let numbers: usize = [4, 2, 0].iter().map(|bits| ((lengths >> bits) & 3) as usize + 1).sum();
+        let count = u32_at(&patched, 12)? as usize;
+        let entry = if wide { 16 } else { 8 } + numbers;
+        for index in 0..count {
+            let at = 16 + index * entry + if wide { 8 } else { 4 };
+            if wide {
+                let offset = shift(u64_at(&patched, at)?)?;
+                patched[at..at + 8].copy_from_slice(&offset.to_be_bytes());
+            } else {
+                let offset = u32::try_from(shift(u64::from(u32_at(&patched, at)?))?)
+                    .context("a fragment offset no longer fits in 32 bits")?;
+                patched[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+            }
+        }
+        out.extend_from_slice(&make_box(b"tfra", &patched));
+    }
+    Ok(out)
 }
 
 /// A box in a file: its type, where it starts, the size of its header and its whole size.
@@ -911,5 +1108,176 @@ mod tests {
         let recording = recording();
         let cut = recording[..recording.len() - 3].to_vec();
         assert!(add_audio_track(&cut, &microphone(), NOWHERE).is_err());
+    }
+
+    fn entries(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    fn with_written_metadata(file: &Vec<u8>, pairs: &[(&str, &str)]) -> Vec<u8> {
+        let pieces = with_metadata(file, &entries(pairs)).unwrap();
+        let mut out = Vec::new();
+        write_pieces(&pieces, file, &Vec::new(), &mut out).unwrap();
+        out
+    }
+
+    /// The (key, value) pairs of the QuickTime metadata right in the `moov`, and how many such `meta` boxes there are.
+    fn metadata_of(file: &[u8]) -> (Vec<(String, String)>, usize) {
+        let moov = child(file, b"moov").unwrap();
+        let metas: Vec<_> = children(moov)
+            .unwrap()
+            .into_iter()
+            .filter(|(kind, _, _)| kind == b"meta")
+            .collect();
+        let Some((_, _, meta)) = metas.first() else {
+            return (Vec::new(), 0);
+        };
+        assert_eq!(&child(meta, b"hdlr").unwrap()[8..12], b"mdta");
+        let keys = child(meta, b"keys").unwrap();
+        let names: Vec<String> = children(&keys[8..])
+            .unwrap()
+            .into_iter()
+            .map(|(kind, _, name)| {
+                assert_eq!(&kind, b"mdta");
+                String::from_utf8(name.to_vec()).unwrap()
+            })
+            .collect();
+        assert_eq!(u32_at(keys, 4).unwrap() as usize, names.len());
+        let values: Vec<String> = children(child(meta, b"ilst").unwrap())
+            .unwrap()
+            .into_iter()
+            .enumerate()
+            .map(|(index, (kind, _, item))| {
+                assert_eq!(u32::from_be_bytes(kind), index as u32 + 1);
+                let data = child(item, b"data").unwrap();
+                assert_eq!(u32_at(data, 0).unwrap(), 1, "UTF-8");
+                String::from_utf8(data[8..].to_vec()).unwrap()
+            })
+            .collect();
+        (names.into_iter().zip(values).collect(), metas.len())
+    }
+
+    #[test]
+    fn metadata_goes_into_the_movie_header_and_every_fragment_is_copied_as_it_was() {
+        let original = recording();
+        let written = with_written_metadata(&original, &[("com.meeting-assistant.app", "GoogleMeet")]);
+
+        assert_eq!(
+            metadata_of(&written),
+            (entries(&[("com.meeting-assistant.app", "GoogleMeet")]), 1)
+        );
+        let moov_end = |file: &[u8]| {
+            let boxes = children(file).unwrap();
+            let index = boxes.iter().position(|(kind, _, _)| kind == b"moov").unwrap();
+            file.len()
+                - boxes[index + 1..]
+                    .iter()
+                    .map(|(_, whole, _)| whole.len())
+                    .sum::<usize>()
+        };
+        assert_eq!(
+            written[moov_end(&written)..],
+            original[moov_end(&original)..],
+            "fragments address their data from themselves"
+        );
+        assert_eq!(fragments(&written), fragments(&original));
+    }
+
+    /// An ordinary file of one track with its four bytes of data in one chunk: `moov` before or after `mdat`.
+    fn ordinary(moov_first: bool) -> Vec<u8> {
+        let ftyp = make_box(b"ftyp", b"mp42\0\0\0\0");
+        let data = *b"DATA";
+        let build = |offset: u32| {
+            let stbl = make_box(b"stbl", &full_box(b"stco", 0, 0, &u32s(&[1, offset])));
+            let mdia = make_box(b"mdia", &make_box(b"minf", &stbl));
+            make_box(b"moov", &make_box(b"trak", &mdia))
+        };
+        if moov_first {
+            let size = build(0).len();
+            let offset = (ftyp.len() + size + 8) as u32;
+            [ftyp, build(offset), make_box(b"mdat", &data)].concat()
+        } else {
+            let offset = (ftyp.len() + 8) as u32;
+            [ftyp, make_box(b"mdat", &data), build(offset)].concat()
+        }
+    }
+
+    fn chunk_offset(file: &[u8]) -> usize {
+        let moov = child(file, b"moov").unwrap();
+        let stbl = child(
+            child(child(child(moov, b"trak").unwrap(), b"mdia").unwrap(), b"minf").unwrap(),
+            b"stbl",
+        )
+        .unwrap();
+        u32_at(child(stbl, b"stco").unwrap(), 8).unwrap() as usize
+    }
+
+    #[test]
+    fn chunk_offsets_past_the_movie_header_move_with_it_and_others_stay() {
+        for moov_first in [true, false] {
+            let original = ordinary(moov_first);
+            let written = with_written_metadata(&original, &[("com.meeting-assistant.app", "Slack")]);
+            let offset = chunk_offset(&written);
+            assert_eq!(&written[offset..offset + 4], b"DATA", "moov first: {moov_first}");
+            if !moov_first {
+                assert_eq!(offset, chunk_offset(&original), "a moov written last moves nothing");
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_fragment_offsets_and_the_fragment_index_move_with_the_movie_header() {
+        let ftyp = make_box(b"ftyp", b"iso5\0\0\0\0");
+        let moov = make_box(b"moov", &full_box(b"mvhd", 0, 0, &[0; 96]));
+        let moof_at = (ftyp.len() + moov.len()) as u64;
+        let moof_for = |base: u64| {
+            let tfhd = full_box(b"tfhd", 0, 1, &[u32s(&[1]), base.to_be_bytes().to_vec()].concat());
+            make_box(b"moof", &make_box(b"traf", &tfhd))
+        };
+        let data_at = moof_at + moof_for(0).len() as u64 + 8;
+        let tfra = full_box(
+            b"tfra",
+            1,
+            0,
+            &[
+                u32s(&[1, 0, 1]),
+                0u64.to_be_bytes().to_vec(),
+                moof_at.to_be_bytes().to_vec(),
+                vec![1, 1, 1],
+            ]
+            .concat(),
+        );
+        let original = [
+            ftyp,
+            moov,
+            moof_for(data_at),
+            make_box(b"mdat", b"DATA"),
+            make_box(b"mfra", &tfra),
+        ]
+        .concat();
+
+        let written = with_written_metadata(&original, &[("com.meeting-assistant.app", "Teams")]);
+
+        let moof = child(&written, b"moof").unwrap();
+        let base = u64_at(child(child(moof, b"traf").unwrap(), b"tfhd").unwrap(), 8).unwrap() as usize;
+        assert_eq!(&written[base..base + 4], b"DATA");
+        let indexed = u64_at(child(child(&written, b"mfra").unwrap(), b"tfra").unwrap(), 24).unwrap() as usize;
+        assert_eq!(&written[indexed + 4..indexed + 8], b"moof");
+    }
+
+    #[test]
+    fn metadata_written_again_replaces_what_was_written() {
+        let once = with_written_metadata(&recording(), &[("com.meeting-assistant.app", "Zoom")]);
+        let twice = with_written_metadata(
+            &once,
+            &[
+                ("com.meeting-assistant.app", "Zoom"),
+                ("com.meeting-assistant.started_at", "2026-11-19T19:01:56+09:00"),
+            ],
+        );
+        let (pairs, boxes) = metadata_of(&twice);
+        assert_eq!(boxes, 1);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(fragments(&twice), fragments(&recording()));
     }
 }

@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::apps::{MeetingApp, WindowRole};
+use crate::metadata::{MeetingMetadata, RecordingMetadata};
 use crate::ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
 use crate::recording::{Recorder, RecordingRequest};
 use crate::signals::{
@@ -27,6 +28,7 @@ pub const FIXED_TIME: LocalDateTime = LocalDateTime {
     hour: 10,
     minute: 0,
     second: 0,
+    utc_offset_minutes: 540,
 };
 
 #[derive(Default)]
@@ -40,6 +42,8 @@ pub struct RecorderState {
     pub failure: Option<String>,
     pub retargets: Vec<u64>,
     pub retarget_fails: bool,
+    /// What the recording was told to write into its file after it started, in order.
+    pub described: Vec<RecordingMetadata>,
     /// While `Some`, started recordings report a file with this extension, as a tab recorded as WebM does.
     pub written_extension: Option<String>,
 }
@@ -88,6 +92,13 @@ impl Recorder for FakeRecorder {
         anyhow::ensure!(!state.retarget_fails, "window is gone");
         state.retargets.push(window);
         Ok(())
+    }
+
+    fn describe(&mut self, metadata: &RecordingMetadata) {
+        let mut state = self.state();
+        if state.recording {
+            state.described.push(metadata.clone());
+        }
     }
 
     fn take_failure(&mut self) -> Option<String> {
@@ -311,7 +322,8 @@ pub fn zoom_in_meeting() -> SignalSnapshot {
 }
 
 /// A meeting app adapter for the app run as `process_name`: a window whose title starts with "main:" is its main
-/// window, one whose title starts with "meeting:" a meeting's, and nothing is told of the others.
+/// window, one whose title starts with "meeting:" a meeting's, and nothing is told of the others. A meeting's window
+/// tells the rest of its title as the meeting's `conversation`.
 #[derive(Debug)]
 pub struct FakeMeetingApp {
     pub process_name: &'static str,
@@ -335,5 +347,11 @@ impl MeetingApp for FakeMeetingApp {
                 }
             })
             .collect()
+    }
+    fn meeting_metadata(&self, title: &str) -> MeetingMetadata {
+        title
+            .strip_prefix("meeting:")
+            .map(|rest| MeetingMetadata::new([("conversation", rest)]))
+            .unwrap_or_default()
     }
 }

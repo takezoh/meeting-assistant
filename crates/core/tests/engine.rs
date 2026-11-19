@@ -256,7 +256,7 @@ fn lists_every_meeting_in_progress_and_records_one_at_a_time() {
     both.browser_meetings = vec![BrowserMeeting {
         tab,
         service: "GoogleMeet".into(),
-        title: None,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }];
     f.signals.set(both.clone());
     f.run(10);
@@ -289,7 +289,7 @@ fn records_a_meeting_reported_by_the_extension_in_its_tab_from_start_to_end() {
     in_meeting.browser_meetings = vec![BrowserMeeting {
         tab,
         service: "GoogleMeet".into(),
-        title: None,
+        metadata: meeting_assistant_core::MeetingMetadata::default(),
     }];
     f.signals.set(in_meeting.clone());
     f.run(10);
@@ -397,6 +397,11 @@ fn records_the_window_an_apps_adapter_tells_is_a_meetings_when_it_was_open_at_th
         f.recorder.state().started[0].video,
         VideoTarget::Window(2),
         "the huddle window, not the larger main window"
+    );
+    assert_eq!(
+        f.recorder.state().started[0].metadata.meeting.label(),
+        Some("general - team"),
+        "what the huddle window tells of the meeting"
     );
 
     // Leaving closes the huddle window and lets go of the microphone.

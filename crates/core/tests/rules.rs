@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use meeting_assistant_core::fakes::{FakeMeetingApp, MIC, process, snapshot, window, window_id, zoom_in_meeting};
 use meeting_assistant_core::{
-    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ConfigError, MeetingApp, MeetingRule, RuleEvaluator,
-    RuleEvidence, SignalSnapshot, WindowRole, default_rules,
+    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ConfigError, MeetingApp, MeetingMetadata, MeetingRule,
+    RuleEvaluator, RuleEvidence, SignalSnapshot, WindowRole, default_rules,
 };
 
 fn evaluate(snapshot: &SignalSnapshot) -> Vec<RuleEvidence> {
@@ -221,7 +221,7 @@ fn linked(mut snapshot: SignalSnapshot, meeting: bool) -> SignalSnapshot {
         snapshot.browser_meetings = vec![BrowserMeeting {
             tab: BrowserTab { link: 1, tab: 42 },
             service: "GoogleMeet".into(),
-            title: None,
+            metadata: meeting_assistant_core::MeetingMetadata::default(),
         }];
     }
     snapshot
@@ -235,17 +235,41 @@ fn a_meeting_reported_by_the_extension_is_active_by_itself() {
     assert_eq!(e.browser_tab, Some(BrowserTab { link: 1, tab: 42 }));
     // It sorts before the rules (because whichever is found first is adopted).
     assert_eq!(evaluate(&s)[0].rule_name, "GoogleMeet");
-    assert_eq!(e.title, None);
+    assert!(e.metadata.is_empty());
 }
 
 #[test]
-fn the_title_the_extension_reports_stays_with_its_meeting() {
+fn the_metadata_the_extension_reports_stays_with_its_meeting() {
     let mut s = linked(snapshot(&[], &[], &[], &[]), true);
-    s.browser_meetings[0].title = Some("abc-defg-hij".into());
+    let reported = MeetingMetadata::new([("meeting_code", "abc-defg-hij")]);
+    s.browser_meetings[0].metadata = reported.clone();
 
-    assert_eq!(evidence(&s, "GoogleMeet").title.as_deref(), Some("abc-defg-hij"));
-    // Rules detected from the microphone have no title.
-    assert_eq!(evidence(&s, "Zoom").title, None);
+    assert_eq!(evidence(&s, "GoogleMeet").metadata, reported);
+    // A desktop app's meeting is told about by its window, not its evidence.
+    assert!(evidence(&s, "Zoom").metadata.is_empty());
+}
+
+#[test]
+fn a_window_that_is_not_the_main_one_tells_what_its_adapter_reads_from_its_title() {
+    let apps: [Arc<dyn MeetingApp>; 1] = [Arc::new(FakeMeetingApp { process_name: "zoom" })];
+    let s = snapshot(
+        &[process(100, 1, "Zoom.exe")],
+        &[100],
+        &[],
+        &[
+            window(100, "main: Zoom", "DISPLAY1", 9000),
+            window(100, "meeting: standup", "DISPLAY1", 5000),
+        ],
+    );
+    let e = RuleEvaluator::new(&default_rules())
+        .unwrap()
+        .with_apps(&apps)
+        .evaluate(&s)
+        .into_iter()
+        .find(|e| e.rule_name == "Zoom")
+        .unwrap();
+    let told: Vec<_> = e.windows.iter().map(|w| w.metadata.label()).collect();
+    assert_eq!(told, [None, Some("standup")]);
 }
 
 #[test]
