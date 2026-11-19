@@ -21,6 +21,7 @@ relations:
 - {type: references, target: adr-20261119-end-a-desktop-meeting-on-the-microphone}
 - {type: references, target: note-20261119-slack-huddle-window-after-the-merge}
 - {type: references, target: note-20261119-macos-idle-resources-after-the-merge}
+- {type: references, target: note-20261119-windows-checks-after-the-macos-merge}
 source_paths:
 - crates/app/src/platform/win/recorder/writer.rs
 - crates/app/src/platform/win/recorder/mod.rs
@@ -45,6 +46,10 @@ A Windows session worked on its own at the same time: NV12 encoding up to 1080p 
 
 ## Notes
 
+### Done on Windows, 2026-11-19
+
+Recorded in [Windows checks after the macOS merge](note-20261119-windows-checks-after-the-macos-merge.md): step 1; step 2, with the issue below fixed; step 3 without a microphone, since the PC had no default one; and step 7. The sink writer accepts two AAC streams and a file without video in fragmented MP4, and a window smaller than the canvas is drawn in its middle at its own size. Steps 3 with a microphone, 4, 5 and 6 remain.
+
 ### Goal
 
 The Windows build records what the macOS build was shown to record on 2026-11-19: two audio tracks (the other side first, the microphone second) in desktop, screen and browser tab recordings; the meeting's own window, never the app's main window, black until that window is found; recordings that end about 3 seconds after the app lets go of the microphone; and a picture of `video.width` by `video.height` (1920x1080 by default) whatever the window does.
@@ -65,7 +70,7 @@ The Windows build records what the macOS build was shown to record on 2026-11-19
 
 ### Expected to fail
 
-- **The microphone will not be added to tab recordings.** The Windows writer produces fragmented MP4, and `recording::mp4` reads a source's samples from its `moov` tables only. See [the issue](../issue/issue-20261119-tab-recordings-on-windows-will-keep-the-.md). Fix this first; it can be developed and unit-tested on any OS.
+- **The microphone will not be added to tab recordings.** The Windows writer produces fragmented MP4, and `recording::mp4` reads a source's samples from its `moov` tables only. See [the issue](../issue/issue-20261119-tab-recordings-on-windows-will-keep-the-.md). Fixed on 2026-11-19.
 
 ### Open questions only Windows can answer
 

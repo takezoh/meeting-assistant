@@ -4,15 +4,19 @@
 //! A browser records a tab as a fragmented MP4: a `moov` that describes the tracks, then `moof`/`mdat` pairs, each
 //! fragment saying when its samples start (`tfdt`) and where its data is, relative to the fragment itself. Such a file
 //! takes another track by rewriting only the `moov` (one more `trak`, one more `trex`) and appending fragments for the
-//! new track; every byte after the `moov` is copied as it is, so the recording keeps exactly the timing it was
-//! written with.
+//! new track; every sample and timestamp after the `moov` is copied as it is, so the recording keeps exactly the timing
+//! it was written with. Only offsets counted from the start of the file, which some writers use instead, move with the
+//! `moov`.
 //!
-//! The added track comes from an ordinary MP4 (sample tables in its `moov`), as the app's own writer finishes it.
+//! The added track comes from the app's own microphone recording: an ordinary MP4 (sample tables in its `moov`), as
+//! AVAssetWriter finishes it on macOS, or a fragmented one, as Media Foundation writes it on Windows. Media Foundation's
+//! fragments do not say when they start (no `tfdt`) and address their data from the start of the file.
 //!
 //! It also writes metadata into a finished recording of any kind ([`with_metadata`]).
 //!
 //! This module reads through [`ReadAt`] and returns what to write as a list of [`Piece`]s; it touches no file.
 
+use std::collections::HashMap;
 use std::io;
 use std::time::Duration;
 
@@ -63,25 +67,30 @@ const SAMPLES_PER_FRAGMENT: usize = 94;
 
 /// The pieces of `recording` with the audio track of `microphone` added as its last track, placed by `placement` and cut
 /// at the end of `recording`.
+///
+/// The added track's fragments follow the recording's, before a fragment index at the end, which stays last. When the
+/// recording's fragments address their data from the start of the file, their offsets and the index move by as much as
+/// the `moov` grew, as in [`with_metadata`].
 pub fn add_audio_track(
     recording: &dyn ReadAt,
     microphone: &dyn ReadAt,
     placement: Placement,
 ) -> anyhow::Result<Vec<Piece>> {
     let recording_boxes = top_level(recording).context("cannot read the recording")?;
-    let moov = recording_boxes
-        .iter()
-        .find(|b| &b.kind == b"moov")
-        .context("the recording has no movie header")?;
+    let moov = only_movie(&recording_boxes)?;
     let moov_bytes = read_body(recording, moov)?;
     let movie = Movie::parse(&moov_bytes)?;
-    let fragments = recording_boxes.iter().filter(|b| &b.kind == b"moof");
     let mut end = Duration::ZERO;
     let mut next_sequence = 1;
-    for moof in fragments {
-        let fragment = Fragment::parse(&read_body(recording, moof)?, &movie)?;
-        end = end.max(fragment.end);
-        next_sequence = next_sequence.max(fragment.sequence + 1);
+    let mut next_time = HashMap::new();
+    for moof in recording_boxes.iter().filter(|b| &b.kind == b"moof") {
+        let body = read_body(recording, moof)?;
+        next_sequence = next_sequence.max(u32_at(child(&body, b"mfhd")?, 4)? + 1);
+        for (track, sample) in fragment_samples(moof.start, &body, &movie.defaults, &mut next_time)? {
+            let ticks = u128::from(sample.time + u64::from(sample.duration));
+            let timescale = u128::from(movie.timescale(track)?);
+            end = end.max(Duration::from_nanos(u64::try_from(ticks * 1_000_000_000 / timescale)?));
+        }
     }
     anyhow::ensure!(end > Duration::ZERO, "the recording has no samples");
 
@@ -93,21 +102,78 @@ pub fn add_audio_track(
         "the microphone recording does not overlap the recording"
     );
 
-    let mut pieces = Vec::new();
-    for b in &recording_boxes {
-        if &b.kind == b"moov" {
-            pieces.push(Piece::Bytes(movie.with_track(&moov_bytes, &source, track_id)?));
-        } else {
-            pieces.push(Piece::Recording {
+    let new_moov = movie.with_track(&moov_bytes, &source, track_id)?;
+    let grown = i64::try_from(new_moov.len())? - i64::try_from(moov.size)?;
+    let shift = moved_past(moov.start + moov.size, grown);
+    let mut pieces = pieces_with_movie(recording, &recording_boxes, new_moov, grown, &shift)?;
+    let mut added = Vec::new();
+    for (index, chunk) in samples.chunks(SAMPLES_PER_FRAGMENT).enumerate() {
+        fragment(&mut added, chunk, track_id, next_sequence + index as u32);
+    }
+    // Readers find a fragment index from the end of the file.
+    let at = if recording_boxes.last().is_some_and(|b| &b.kind == b"mfra") {
+        pieces.len() - 1
+    } else {
+        pieces.len()
+    };
+    pieces.splice(at..at, added);
+    Ok(merge_ranges(pieces))
+}
+
+/// The one `moov` among `boxes`.
+fn only_movie(boxes: &[BoxRef]) -> anyhow::Result<&BoxRef> {
+    let mut movies = boxes.iter().filter(|b| &b.kind == b"moov");
+    let moov = movies.next().context("the recording has no movie header")?;
+    anyhow::ensure!(movies.next().is_none(), "the recording has more than one movie header");
+    Ok(moov)
+}
+
+/// Where an offset in a file goes when its `moov`, which ended at `end`, grows by `grown` bytes: an offset past it moves
+/// with it.
+fn moved_past(end: u64, grown: i64) -> impl Fn(u64) -> anyhow::Result<u64> {
+    move |offset| {
+        if offset < end {
+            return Ok(offset);
+        }
+        offset
+            .checked_add_signed(grown)
+            .context("an offset in the recording is out of range")
+    }
+}
+
+/// One piece for each of the `boxes` of `recording`, whose `moov` becomes `moov` (a whole box), `grown` bytes larger.
+/// Fragments' explicit base data offsets (`tfhd`) and the fragment index (`tfra`) go through `shift`; every other box
+/// is copied as it is.
+fn pieces_with_movie(
+    recording: &dyn ReadAt,
+    boxes: &[BoxRef],
+    moov: Vec<u8>,
+    grown: i64,
+    shift: &dyn Fn(u64) -> anyhow::Result<u64>,
+) -> anyhow::Result<Vec<Piece>> {
+    let mut moov = Some(moov);
+    let mut pieces = Vec::with_capacity(boxes.len());
+    for b in boxes {
+        let rewritten = match &b.kind {
+            b"moov" => moov.take(),
+            b"moof" if grown != 0 => {
+                with_base_offsets(&read_body(recording, b)?, shift)?.map(|body| make_box(b"moof", &body))
+            }
+            b"mfra" if grown != 0 => Some(make_box(
+                b"mfra",
+                &with_fragment_index(&read_body(recording, b)?, shift)?,
+            )),
+            _ => None,
+        };
+        pieces.push(rewritten.map_or(
+            Piece::Recording {
                 offset: b.start,
                 length: b.size,
-            });
-        }
+            },
+            Piece::Bytes,
+        ));
     }
-    for (index, chunk) in samples.chunks(SAMPLES_PER_FRAGMENT).enumerate() {
-        fragment(&mut pieces, chunk, track_id, next_sequence + index as u32);
-    }
-    Ok(merge_ranges(pieces))
+    Ok(pieces)
 }
 
 /// The pieces of `recording` with `entries` written into its `moov` as QuickTime metadata: a `meta` box right in the
@@ -120,9 +186,7 @@ pub fn add_audio_track(
 /// nothing; neither does a file whose `moov` comes last.
 pub fn with_metadata(recording: &dyn ReadAt, entries: &[(String, String)]) -> anyhow::Result<Vec<Piece>> {
     let boxes = top_level(recording).context("cannot read the recording")?;
-    let mut movies = boxes.iter().filter(|b| &b.kind == b"moov");
-    let moov = movies.next().context("the recording has no movie header")?;
-    anyhow::ensure!(movies.next().is_none(), "the recording has more than one movie header");
+    let moov = only_movie(&boxes)?;
     let moov_body = read_body(recording, moov)?;
 
     let mut body = Vec::with_capacity(moov_body.len() + 512);
@@ -141,39 +205,10 @@ pub fn with_metadata(recording: &dyn ReadAt, entries: &[(String, String)]) -> an
     }
     body.extend_from_slice(&metadata_box(entries));
 
-    let end = moov.start + moov.size;
     let grown = i64::try_from(body.len() + 8)? - i64::try_from(moov.size)?;
-    let shift = |offset: u64| -> anyhow::Result<u64> {
-        if offset < end {
-            return Ok(offset);
-        }
-        offset
-            .checked_add_signed(grown)
-            .context("an offset in the recording is out of range")
-    };
+    let shift = moved_past(moov.start + moov.size, grown);
     let body = with_chunk_offsets(&body, &shift)?;
-
-    let mut pieces = Vec::with_capacity(boxes.len());
-    for b in &boxes {
-        let rewritten = match &b.kind {
-            b"moov" => Some(make_box(b"moov", &body)),
-            b"moof" if grown != 0 => {
-                with_base_offsets(&read_body(recording, b)?, &shift)?.map(|body| make_box(b"moof", &body))
-            }
-            b"mfra" if grown != 0 => Some(make_box(
-                b"mfra",
-                &with_fragment_index(&read_body(recording, b)?, &shift)?,
-            )),
-            _ => None,
-        };
-        pieces.push(rewritten.map_or(
-            Piece::Recording {
-                offset: b.start,
-                length: b.size,
-            },
-            Piece::Bytes,
-        ));
-    }
+    let pieces = pieces_with_movie(recording, &boxes, make_box(b"moov", &body), grown, &shift)?;
     Ok(merge_ranges(pieces))
 }
 
@@ -432,8 +467,8 @@ fn timescale(mdhd: &[u8]) -> anyhow::Result<u32> {
 struct Movie {
     /// (track ID, timescale) of each track.
     tracks: Vec<(u32, u32)>,
-    /// (track ID, default sample duration) from `trex`.
-    defaults: Vec<(u32, u32)>,
+    /// What each track's samples in fragments are when a fragment does not say.
+    defaults: Vec<(u32, Defaults)>,
 }
 
 impl Movie {
@@ -452,11 +487,7 @@ impl Movie {
             tracks.push((track_id(child(trak, b"tkhd")?)?, timescale(child(mdia, b"mdhd")?)?));
         }
         let mvex = child(moov, b"mvex").context("the recording is not a fragmented MP4")?;
-        let defaults = children(mvex)?
-            .into_iter()
-            .filter(|(kind, _, _)| kind == b"trex")
-            .map(|(_, _, trex)| Ok((u32_at(trex, 4)?, u32_at(trex, 12)?)))
-            .collect::<anyhow::Result<_>>()?;
+        let defaults = Defaults::of_tracks(mvex)?;
         anyhow::ensure!(!tracks.is_empty(), "the recording has no tracks");
         Ok(Self { tracks, defaults })
     }
@@ -506,89 +537,132 @@ impl Movie {
             .map(|(_, timescale)| *timescale)
             .context("a fragment names an unknown track")
     }
+}
 
-    fn default_duration(&self, track: u32) -> u32 {
-        self.defaults
+/// What a track's samples in fragments are when neither the fragment nor its run says: its `trex`.
+#[derive(Debug, Clone, Copy, Default)]
+struct Defaults {
+    duration: u32,
+    size: u32,
+}
+
+impl Defaults {
+    /// (track ID, defaults) of each `trex` in `mvex`.
+    fn of_tracks(mvex: &[u8]) -> anyhow::Result<Vec<(u32, Self)>> {
+        children(mvex)?
+            .into_iter()
+            .filter(|(kind, _, _)| kind == b"trex")
+            .map(|(_, _, trex)| {
+                let defaults = Self {
+                    duration: u32_at(trex, 12)?,
+                    size: u32_at(trex, 16)?,
+                };
+                Ok((u32_at(trex, 4)?, defaults))
+            })
+            .collect()
+    }
+}
+
+/// Every sample in the `moof` that starts at `moof_start`, as (track ID, sample), with its place in the file and its
+/// decode time in its track's timescale.
+///
+/// A track fragment starts at its `tfdt`, or else where the track's last fragment ended, which `next_time` keeps by
+/// track ID (from 0). Its data starts at its explicit base offset, at the `moof` when it says so or is the first track
+/// fragment, or else where the data of the track fragment before it ended; a run without an offset follows the run
+/// before it.
+fn fragment_samples(
+    moof_start: u64,
+    moof: &[u8],
+    defaults: &[(u32, Defaults)],
+    next_time: &mut HashMap<u32, u64>,
+) -> anyhow::Result<Vec<(u32, Sample)>> {
+    let mut samples = Vec::new();
+    let mut data_end = moof_start;
+    for (kind, _, traf) in children(moof)? {
+        if &kind != b"traf" {
+            continue;
+        }
+        let tfhd = child(traf, b"tfhd")?;
+        let flags = u32_at(tfhd, 0)? & 0xff_ffff;
+        let track = u32_at(tfhd, 4)?;
+        let track_defaults = defaults
             .iter()
             .find(|(id, _)| *id == track)
-            .map_or(0, |(_, duration)| *duration)
-    }
-}
+            .map_or_else(Defaults::default, |(_, defaults)| *defaults);
+        // Optional fields follow the track ID in this order.
+        let mut at = 8;
+        let mut field = |flag: u32, size: usize| -> anyhow::Result<Option<u64>> {
+            if flags & flag == 0 {
+                return Ok(None);
+            }
+            let value = if size == 8 {
+                u64_at(tfhd, at)?
+            } else {
+                u64::from(u32_at(tfhd, at)?)
+            };
+            at += size;
+            Ok(Some(value))
+        };
+        let explicit_base = field(0x01, 8)?;
+        field(0x02, 4)?;
+        let default_duration = field(0x08, 4)?.map_or(track_defaults.duration, |value| value as u32);
+        let default_size = field(0x10, 4)?.map_or(track_defaults.size, |value| value as u32);
+        let base = explicit_base.unwrap_or(if flags & 0x02_0000 != 0 { moof_start } else { data_end });
 
-/// What a recording's `moof` says that the merge needs.
-struct Fragment {
-    sequence: u32,
-    /// When the last of its samples ends.
-    end: Duration,
-}
-
-impl Fragment {
-    fn parse(moof: &[u8], movie: &Movie) -> anyhow::Result<Self> {
-        let sequence = u32_at(child(moof, b"mfhd")?, 4)?;
-        let mut end = Duration::ZERO;
-        for (kind, _, traf) in children(moof)? {
-            if &kind != b"traf" {
+        let mut time = match child(traf, b"tfdt") {
+            Ok(tfdt) if tfdt.first() == Some(&1) => u64_at(tfdt, 4)?,
+            Ok(tfdt) => u64::from(u32_at(tfdt, 4)?),
+            Err(_) => next_time.get(&track).copied().unwrap_or(0),
+        };
+        let mut position = base;
+        for (kind, _, trun) in children(traf)? {
+            if &kind != b"trun" {
                 continue;
             }
-            let tfhd = child(traf, b"tfhd")?;
-            let flags = u32_at(tfhd, 0)? & 0xff_ffff;
-            let track = u32_at(tfhd, 4)?;
-            // Optional fields follow the track ID in this order.
+            let run_flags = u32_at(trun, 0)? & 0xff_ffff;
+            let count = u32_at(trun, 4)? as usize;
             let mut at = 8;
-            for (flag, size) in [(0x01, 8), (0x02, 4)] {
-                if flags & flag != 0 {
-                    at += size;
-                }
+            if run_flags & 0x01 != 0 {
+                let offset = i64::from(u32_at(trun, at)? as i32);
+                position = base
+                    .checked_add_signed(offset)
+                    .context("a fragment's data lies before the file")?;
+                at += 4;
             }
-            let default_duration = if flags & 0x08 != 0 {
-                u32_at(tfhd, at)?
-            } else {
-                movie.default_duration(track)
-            };
-            let tfdt = child(traf, b"tfdt").context("a fragment does not say when it starts")?;
-            let start = if tfdt.first() == Some(&1) {
-                u64_at(tfdt, 4)?
-            } else {
-                u64::from(u32_at(tfdt, 4)?)
-            };
-            let mut ticks = start;
-            for (kind, _, trun) in children(traf)? {
-                if &kind == b"trun" {
-                    ticks += trun_duration(trun, default_duration)?;
-                }
+            if run_flags & 0x04 != 0 {
+                at += 4;
             }
-            let timescale = u64::from(movie.timescale(track)?);
-            end = end.max(Duration::from_nanos(u64::try_from(
-                u128::from(ticks) * 1_000_000_000 / u128::from(timescale),
-            )?));
+            for _ in 0..count {
+                let mut per_sample = |flag: u32, default: u32| -> anyhow::Result<u32> {
+                    if run_flags & flag == 0 {
+                        return Ok(default);
+                    }
+                    let value = u32_at(trun, at)?;
+                    at += 4;
+                    Ok(value)
+                };
+                let duration = per_sample(0x100, default_duration)?;
+                let size = per_sample(0x200, default_size)?;
+                // Flags and composition offsets are not needed.
+                per_sample(0x400, 0)?;
+                per_sample(0x800, 0)?;
+                samples.push((
+                    track,
+                    Sample {
+                        offset: position,
+                        size,
+                        duration,
+                        time,
+                    },
+                ));
+                position += u64::from(size);
+                time += u64::from(duration);
+            }
         }
-        Ok(Self { sequence, end })
+        data_end = position;
+        next_time.insert(track, time);
     }
-}
-
-/// The total duration of a `trun`'s samples, in its track's timescale.
-fn trun_duration(trun: &[u8], default_duration: u32) -> anyhow::Result<u64> {
-    let flags = u32_at(trun, 0)? & 0xff_ffff;
-    let count = u32_at(trun, 4)? as usize;
-    if flags & 0x100 == 0 {
-        return Ok(count as u64 * u64::from(default_duration));
-    }
-    let mut at = 8;
-    for (flag, size) in [(0x01, 4), (0x04, 4)] {
-        if flags & flag != 0 {
-            at += size;
-        }
-    }
-    let per_sample: usize = [0x100, 0x200, 0x400, 0x800]
-        .iter()
-        .filter(|flag| flags & **flag != 0)
-        .count()
-        * 4;
-    let mut total = 0u64;
-    for index in 0..count {
-        total += u64::from(u32_at(trun, at + index * per_sample)?);
-    }
-    Ok(total)
+    Ok(samples)
 }
 
 /// One sample of the added track, placed on the recording's timeline.
@@ -601,7 +675,7 @@ struct Sample {
     time: u64,
 }
 
-/// The audio track of an ordinary MP4.
+/// The audio track of an MP4, ordinary or fragmented.
 struct Source {
     tkhd: Vec<u8>,
     mdhd: Vec<u8>,
@@ -647,6 +721,30 @@ impl Source {
             Ok(elst) => first_media_time(elst)?,
             Err(_) => 0,
         };
+        // Samples described in the sample table come first; a fragmented file's follow in its fragments.
+        let track = track_id(child(trak, b"tkhd")?)?;
+        let mut samples = sample_table(stbl)?;
+        if let Ok(mvex) = child(&moov, b"mvex") {
+            let defaults = Defaults::of_tracks(mvex)?;
+            let start = samples.last().map_or(0, |last| last.time + u64::from(last.duration));
+            let mut next_time = HashMap::from([(track, start)]);
+            for moof in boxes.iter().filter(|b| &b.kind == b"moof") {
+                let found = fragment_samples(moof.start, &read_body(file, moof)?, &defaults, &mut next_time)?;
+                samples.extend(
+                    found
+                        .into_iter()
+                        .filter(|(id, _)| *id == track)
+                        .map(|(_, sample)| sample),
+                );
+            }
+        }
+        let length = file.len()?;
+        anyhow::ensure!(
+            samples
+                .iter()
+                .all(|sample| sample.offset.saturating_add(u64::from(sample.size)) <= length),
+            "a sample lies past the end of the file"
+        );
         Ok(Self {
             tkhd: child(trak, b"tkhd")?.to_vec(),
             mdhd: child(mdia, b"mdhd")?.to_vec(),
@@ -656,7 +754,7 @@ impl Source {
             stsd: whole(stbl, b"stsd")?,
             timescale: timescale(child(mdia, b"mdhd")?)?,
             media_start,
-            samples: sample_table(stbl)?,
+            samples,
         })
     }
 
@@ -910,6 +1008,11 @@ mod tests {
     /// A minimal fragmented recording: one audio track (ID 1, timescale 48000) in two fragments of two 1024-sample
     /// frames, starting at 0 and at 2048, each frame's data four bytes of its fragment's number.
     fn recording() -> Vec<u8> {
+        recording_saying_when_fragments_start(true)
+    }
+
+    /// The same, with or without a `tfdt` in each fragment.
+    fn recording_saying_when_fragments_start(with_tfdt: bool) -> Vec<u8> {
         let tkhd = full_box(b"tkhd", 0, 3, &[u32s(&[0, 0, 1, 0, 0]), vec![0; 60]].concat());
         let mdhd = full_box(b"mdhd", 0, 0, &u32s(&[0, 0, 48_000, 0, 0]));
         let hdlr = full_box(b"hdlr", 0, 0, &[u32s(&[0]), b"soun".to_vec(), vec![0; 13]].concat());
@@ -924,7 +1027,11 @@ mod tests {
         for (sequence, start) in [(1u32, 0u32), (2, 2048)] {
             let mfhd = full_box(b"mfhd", 0, 0, &u32s(&[sequence]));
             let tfhd = full_box(b"tfhd", 0, 0x02_0000, &u32s(&[1]));
-            let tfdt = full_box(b"tfdt", 0, 0, &u32s(&[start]));
+            let tfdt = if with_tfdt {
+                full_box(b"tfdt", 0, 0, &u32s(&[start]))
+            } else {
+                Vec::new()
+            };
             let trun = full_box(b"trun", 0, 0x301, &u32s(&[2, 0, 1024, 4, 1024, 4]));
             let moof = make_box(
                 b"moof",
@@ -960,11 +1067,96 @@ mod tests {
         [mdat, make_box(b"moov", &trak)].concat()
     }
 
+    /// A microphone recording in fragments: ten 1024-sample frames of two bytes (the frame's index twice), three to a
+    /// fragment, in track 2 and without an edit list.
+    ///
+    /// With `start`, as a browser writes fragments: each says when it starts (`tfdt`, the first at `start`) and
+    /// addresses its data from itself. Without, as Media Foundation writes them: no `tfdt`, and the data addressed by
+    /// an explicit offset from the start of the file, with a fragment index at the end.
+    fn fragmented_microphone(start: Option<u32>) -> Vec<u8> {
+        let tkhd = full_box(b"tkhd", 0, 1, &[u32s(&[0, 0, 2, 0, 0]), vec![0; 60]].concat());
+        let mdhd = full_box(b"mdhd", 0, 0, &u32s(&[0, 0, 48_000, 0, 0]));
+        let hdlr = full_box(b"hdlr", 0, 0, &[u32s(&[0]), b"soun".to_vec(), vec![0; 13]].concat());
+        let stsd = full_box(b"stsd", 0, 0, &[u32s(&[1]), make_box(b"mp4a", &[0; 28])].concat());
+        let empty = |kind: &[u8; 4], fields: usize| full_box(kind, 0, 0, &vec![0u8; fields]);
+        let stbl = make_box(
+            b"stbl",
+            &[
+                stsd,
+                empty(b"stts", 4),
+                empty(b"stsc", 4),
+                empty(b"stsz", 8),
+                empty(b"stco", 4),
+            ]
+            .concat(),
+        );
+        let minf = make_box(
+            b"minf",
+            &[full_box(b"smhd", 0, 0, &[0; 4]), make_box(b"dinf", &[]), stbl].concat(),
+        );
+        let mdia = make_box(b"mdia", &[mdhd, hdlr, minf].concat());
+        let trak = make_box(b"trak", &[tkhd, mdia].concat());
+        let mvhd = full_box(b"mvhd", 0, 0, &[vec![0; 92], u32s(&[3])].concat());
+        let mvex = make_box(b"mvex", &full_box(b"trex", 0, 0, &u32s(&[2, 1, 0, 0, 0x1_0000])));
+        let mut file = [
+            make_box(b"ftyp", b"iso5\0\0\0\0"),
+            make_box(b"moov", &[mvhd, trak, mvex].concat()),
+        ]
+        .concat();
+
+        let frames: Vec<u8> = (0..10u8).collect();
+        for (index, chunk) in frames.chunks(3).enumerate() {
+            let mfhd = full_box(b"mfhd", 0, 0, &u32s(&[index as u32 + 1]));
+            let sizes: Vec<u32> = chunk.iter().flat_map(|_| [1024, 2]).collect();
+            let moof = |data_at: u64| {
+                let (tfhd, tfdt, data_offset) = match start {
+                    Some(start) => (
+                        full_box(b"tfhd", 0, 0x02_0000, &u32s(&[2])),
+                        full_box(b"tfdt", 0, 0, &u32s(&[start + index as u32 * 3 * 1024])),
+                        data_at as u32,
+                    ),
+                    None => (
+                        full_box(b"tfhd", 0, 0x01, &[u32s(&[2]), data_at.to_be_bytes().to_vec()].concat()),
+                        Vec::new(),
+                        0,
+                    ),
+                };
+                let trun = full_box(
+                    b"trun",
+                    0,
+                    0x301,
+                    &[u32s(&[chunk.len() as u32, data_offset]), u32s(&sizes)].concat(),
+                );
+                make_box(
+                    b"moof",
+                    &[mfhd.clone(), make_box(b"traf", &[tfhd, tfdt, trun].concat())].concat(),
+                )
+            };
+            // The data follows the moof and the mdat's header: from the moof, or from the start of the file.
+            let size = moof(0).len() as u64;
+            let data_at = if start.is_some() {
+                size + 8
+            } else {
+                file.len() as u64 + size + 8
+            };
+            file.extend(moof(data_at));
+            let data: Vec<u8> = chunk.iter().flat_map(|&frame| [frame, frame]).collect();
+            file.extend(make_box(b"mdat", &data));
+        }
+        if start.is_none() {
+            file.extend(make_box(b"mfra", &[]));
+        }
+        file
+    }
+
     fn written(placement: Placement) -> anyhow::Result<Vec<u8>> {
-        let (recording, microphone) = (recording(), microphone());
-        let pieces = add_audio_track(&recording, &microphone, placement)?;
+        merged(&recording(), &microphone(), placement)
+    }
+
+    fn merged(recording: &Vec<u8>, microphone: &Vec<u8>, placement: Placement) -> anyhow::Result<Vec<u8>> {
+        let pieces = add_audio_track(recording, microphone, placement)?;
         let mut out = Vec::new();
-        write_pieces(&pieces, &recording, &microphone, &mut out)?;
+        write_pieces(&pieces, recording, microphone, &mut out)?;
         Ok(out)
     }
 
@@ -985,11 +1177,11 @@ mod tests {
                 continue;
             }
             let traf = child(moof, b"traf").unwrap();
-            let tfdt = child(traf, b"tfdt").unwrap();
-            let time = if tfdt[0] == 1 {
-                u64_at(tfdt, 4).unwrap()
-            } else {
-                u64::from(u32_at(tfdt, 4).unwrap())
+            let time = match child(traf, b"tfdt") {
+                Ok(tfdt) if tfdt[0] == 1 => u64_at(tfdt, 4).unwrap(),
+                Ok(tfdt) => u64::from(u32_at(tfdt, 4).unwrap()),
+                // A fragment that does not say.
+                Err(_) => u64::MAX,
             };
             let trun = child(traf, b"trun").unwrap();
             let count = u32_at(trun, 4).unwrap() as usize;
@@ -1084,6 +1276,82 @@ mod tests {
             added[0].3.len(),
             3,
             "the frame that would start at 5032 is past the end"
+        );
+    }
+
+    /// The fragments of the track added to the recording (track 2).
+    fn added(out: &[u8]) -> Vec<Summary> {
+        fragments(out).into_iter().filter(|f| f.1 == 2).collect()
+    }
+
+    #[test]
+    fn a_microphone_in_fragments_as_media_foundation_writes_them_is_added_like_an_ordinary_one() {
+        let (recording, microphone) = (recording(), fragmented_microphone(None));
+
+        // No priming: frames 0 to 3 start at 0, 1024, 2048 and 3072 of the 4096 samples the recording lasts. Frame 3
+        // is the first of the microphone's second fragment.
+        let all = added(&merged(&recording, &microphone, NOWHERE).unwrap());
+        assert_eq!(all.len(), 1);
+        let (_, _, time, sizes, data) = &all[0];
+        assert_eq!(*time, 0);
+        assert_eq!(sizes, &[2, 2, 2, 2]);
+        assert_eq!(data, &[0, 0, 1, 1, 2, 2, 3, 3]);
+
+        let skipped = Placement {
+            skip: Duration::from_nanos(1024 * 1_000_000_000 / 48_000),
+            delay: Duration::ZERO,
+        };
+        let all = added(&merged(&recording, &microphone, skipped).unwrap());
+        assert_eq!(all[0].2, 0);
+        assert_eq!(all[0].4, [1, 1, 2, 2, 3, 3, 4, 4]);
+    }
+
+    #[test]
+    fn a_microphone_in_fragments_that_say_when_they_start_keeps_those_times() {
+        let all = added(&merged(&recording(), &fragmented_microphone(Some(1024)), NOWHERE).unwrap());
+
+        // Frames start at 1024, 2048 and 3072; the fourth, at 4096, is past the end of the recording.
+        assert_eq!(all[0].2, 1024);
+        assert_eq!(all[0].4, [0, 0, 1, 1, 2, 2]);
+    }
+
+    #[test]
+    fn a_recording_whose_fragments_do_not_say_when_they_start_lasts_as_long_as_its_samples() {
+        let recording = recording_saying_when_fragments_start(false);
+
+        // Its second fragment follows the first, so it lasts 4096 samples, as with a tfdt in each: the microphone's
+        // frames 3 to 6 start before then (see the test with priming).
+        let all = added(&merged(&recording, &microphone(), NOWHERE).unwrap());
+        assert_eq!(all[0].2, 3 * 1024 - 2112);
+        assert_eq!(all[0].3.len(), 4);
+    }
+
+    #[test]
+    fn a_recording_addressed_from_the_start_of_the_file_finds_its_data_where_its_offsets_say() {
+        // As Media Foundation writes one: its fragments' data at explicit offsets, and a fragment index at the end.
+        let out = merged(&fragmented_microphone(None), &microphone(), NOWHERE).unwrap();
+
+        assert_eq!(tracks(&out), [2, 3]);
+        let boxes = children(&out).unwrap();
+        assert_eq!(boxes.last().unwrap().0, *b"mfra", "the fragment index stays last");
+        let mut data = Vec::new();
+        for (kind, _, moof) in &boxes {
+            let Some(traf) = (kind == b"moof").then(|| child(moof, b"traf").unwrap()) else {
+                continue;
+            };
+            let tfhd = child(traf, b"tfhd").unwrap();
+            if u32_at(tfhd, 4).unwrap() == 2 {
+                let base = u64_at(tfhd, 8).unwrap() as usize;
+                let count = u32_at(child(traf, b"trun").unwrap(), 4).unwrap() as usize;
+                data.extend_from_slice(&out[base..base + count * 2]);
+            }
+        }
+        let frames: Vec<u8> = (0..10u8).flat_map(|frame| [frame, frame]).collect();
+        assert_eq!(data, frames);
+        assert_eq!(
+            fragments(&out).into_iter().filter(|f| f.1 == 3).count(),
+            1,
+            "the microphone follows"
         );
     }
 

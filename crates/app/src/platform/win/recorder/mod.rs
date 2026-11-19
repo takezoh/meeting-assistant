@@ -165,9 +165,10 @@ mod tests {
     };
     use windows::Win32::Graphics::Gdi::{BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, PAINTSTRUCT};
     use windows::Win32::Media::MediaFoundation::{
-        IMF2DBuffer, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-        MF_SOURCE_READERF_ENDOFSTREAM, MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Video,
-        MFVideoFormat_NV12,
+        IMF2DBuffer, MF_MT_AUDIO_BITS_PER_SAMPLE, MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND,
+        MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READER_ALL_STREAMS,
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_ENDOFSTREAM, MFAudioFormat_PCM, MFCreateMediaType,
+        MFCreateSourceReaderFromURL, MFMediaType_Audio, MFMediaType_Video, MFVideoFormat_NV12,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext};
@@ -181,6 +182,9 @@ mod tests {
     use super::scale::PictureFormat;
     use super::video::Frame;
     use super::*;
+    use crate::recording::merge::Placement;
+    use crate::recording::mp4;
+    use crate::recording::plan::Track;
 
     fn video_config() -> VideoConfig {
         VideoConfig {
@@ -451,6 +455,195 @@ mod tests {
             writer.finalize().unwrap();
             assert!(std::fs::metadata(&path).unwrap().len() > 0);
         }
+    }
+
+    /// A tone of `hz` on one channel from `onset` (in audio frames at 48 kHz) and silence before, as 16-bit stereo:
+    /// `frames` frames from frame `from`.
+    fn tone_from(onset: usize, hz: f64, left: bool, from: usize, frames: usize) -> Vec<i16> {
+        let mut pcm = Vec::with_capacity(frames * 2);
+        for index in from..from + frames {
+            let value = if index < onset {
+                0
+            } else {
+                let seconds = (index - onset) as f64 / 48_000.0;
+                ((seconds * hz * std::f64::consts::TAU).sin() * 8000.0) as i16
+            };
+            pcm.extend_from_slice(&if left { [value, 0] } else { [0, value] });
+        }
+        pcm
+    }
+
+    /// The sound of each audio stream of the file at `path`, as Media Foundation decodes it to 48 kHz stereo 16-bit:
+    /// when its first sample plays, in 100 ns units, and the samples. They come in Media Foundation's order, which is
+    /// the reverse of the file's.
+    fn decoded_sounds(path: &Path) -> Vec<(i64, Vec<i16>)> {
+        unsafe {
+            let open = || MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None).unwrap();
+            let reader = open();
+            let audio: Vec<u32> = (0..)
+                .map_while(|index| Some((index, reader.GetNativeMediaType(index, 0).ok()?)))
+                .filter(|(_, media_type)| media_type.GetGUID(&MF_MT_MAJOR_TYPE).unwrap() == MFMediaType_Audio)
+                .map(|(index, _)| index)
+                .collect();
+            let mut sounds = Vec::new();
+            for stream in audio {
+                let reader = open();
+                reader
+                    .SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false)
+                    .unwrap();
+                reader.SetStreamSelection(stream, true).unwrap();
+                let wanted = MFCreateMediaType().unwrap();
+                wanted.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).unwrap();
+                wanted.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM).unwrap();
+                wanted.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16).unwrap();
+                wanted.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, 48_000).unwrap();
+                wanted.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).unwrap();
+                reader.SetCurrentMediaType(stream, None, &wanted).unwrap();
+                let mut first = None;
+                let mut pcm = Vec::new();
+                loop {
+                    let mut flags = 0u32;
+                    let mut time = 0i64;
+                    let mut sample = None;
+                    reader
+                        .ReadSample(stream, 0, None, Some(&mut flags), Some(&mut time), Some(&mut sample))
+                        .unwrap();
+                    if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                        break;
+                    }
+                    let Some(sample) = sample else { continue };
+                    first.get_or_insert(time);
+                    let buffer = sample.ConvertToContiguousBuffer().unwrap();
+                    let mut data = std::ptr::null_mut();
+                    let mut length = 0u32;
+                    buffer.Lock(&mut data, None, Some(&mut length)).unwrap();
+                    pcm.extend_from_slice(std::slice::from_raw_parts(data.cast::<i16>(), length as usize / 2));
+                    buffer.Unlock().unwrap();
+                }
+                sounds.push((first.expect("a stream has no sound"), pcm));
+            }
+            sounds
+        }
+    }
+
+    /// The loudest sample on one channel of `pcm`.
+    fn peak(pcm: &[i16], left: bool) -> u16 {
+        let channel = usize::from(!left);
+        pcm.chunks(2)
+            .map(|frame| frame[channel].unsigned_abs())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// When the sound on one channel first gets loud, in milliseconds, from when the stream's first sample plays.
+    fn onset_milliseconds(first: i64, pcm: &[i16], left: bool) -> f64 {
+        let channel = usize::from(!left);
+        let frame = pcm
+            .chunks(2)
+            .position(|frame| frame[channel].unsigned_abs() > 2000)
+            .expect("the channel stays quiet");
+        first as f64 / 10_000.0 + frame as f64 * 1000.0 / 48_000.0
+    }
+
+    /// Needs Media Foundation's H.264 and AAC encoders and its decoders:
+    /// `cargo test -p meeting-assistant a_microphone_recorded_here -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "uses the system's encoders and decoders"]
+    fn a_microphone_recorded_here_is_added_to_a_recording_where_it_was_heard() {
+        let backend = WindowsBackend::create(&video_config()).unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let (recording, microphone, merged) = (
+            folder.path().join("recording.mp4"),
+            folder.path().join("recording.microphone.m4a"),
+            folder.path().join("merged.mp4"),
+        );
+        // The recording's other side sounds on the left from 1.5 s. The microphone, started 0.5 s after the
+        // recording, sounds on the right from 1.0 s of its own, which is the same moment.
+        let mut scaler = Scaler::new(&backend.graphics, 640, 360);
+        let black = scaler.black().unwrap();
+        for (path, has_video, track, onset, hz, left) in [
+            (&recording, true, Track::OtherSide, 72_000, 440.0, true),
+            (&microphone, false, Track::Microphone, 48_000, 880.0, false),
+        ] {
+            let format = MediaFormat {
+                width: 640,
+                height: 360,
+                framerate: 30,
+                quality: 70,
+                fallback_bitrate: 2_000_000,
+                has_video,
+                audio_tracks: vec![track],
+            };
+            let writer = Mp4Writer::create(path, &backend.graphics.device, &format, PictureFormat::Nv12).unwrap();
+            // Three seconds, a frame (and 1600 frames of sound) at a time.
+            for step in 0..90usize {
+                let time = step as i64 * 333_333;
+                writer.write_video(&black, time, 333_333).unwrap();
+                let pcm = tone_from(onset, hz, left, step * 1600, 1600);
+                writer.write_audio(0, &pcm, time, 333_333).unwrap();
+            }
+            writer.finalize().unwrap();
+        }
+
+        let (recording_bytes, microphone_bytes) =
+            (std::fs::read(&recording).unwrap(), std::fs::read(&microphone).unwrap());
+        let placement = Placement {
+            skip: Duration::ZERO,
+            delay: Duration::from_millis(500),
+        };
+        let pieces = mp4::add_audio_track(&recording_bytes, &microphone_bytes, placement).unwrap();
+        let mut out = std::fs::File::create(&merged).unwrap();
+        mp4::write_pieces(&pieces, &recording_bytes, &microphone_bytes, &mut out).unwrap();
+        drop(out);
+
+        let sounds = decoded_sounds(&merged);
+        assert_eq!(sounds.len(), 2);
+        let track = |left: bool| {
+            sounds
+                .iter()
+                .find(|(_, pcm)| peak(pcm, left) > 4000)
+                .expect("a track with that channel")
+        };
+        let (other_side, voice) = (track(true), track(false));
+        assert!(
+            peak(&other_side.1, false) < 500 && peak(&voice.1, true) < 500,
+            "each track has only its own sound"
+        );
+        let heard = onset_milliseconds(other_side.0, &other_side.1, true);
+        let spoken = onset_milliseconds(voice.0, &voice.1, false);
+        println!(
+            "other side from {} ms, loud at {heard:.1} ms; microphone from {} ms, loud at {spoken:.1} ms",
+            other_side.0 / 10_000,
+            voice.0 / 10_000
+        );
+        assert!((voice.0 - 5_000_000).abs() <= 10_000, "the microphone starts 0.5 s in");
+        assert!((heard - spoken).abs() <= 3.0, "{heard} ms against {spoken} ms");
+        assert!((heard - 1500.0).abs() <= 50.0, "{heard} ms");
+    }
+
+    /// Needs a graphics adapter: `cargo test -p meeting-assistant a_picture_smaller -- --ignored`.
+    #[test]
+    #[ignore = "uses the graphics adapter"]
+    fn a_picture_smaller_than_the_canvas_is_drawn_in_its_middle_at_its_own_size() {
+        let backend = WindowsBackend::create(&video_config()).unwrap();
+        let mut scaler = Scaler::new(&backend.graphics, 640, 360);
+
+        // 320x180 in the middle of 640x360 covers columns 160 to 479 and rows 90 to 269.
+        let red = scaler
+            .fit(&solid_frame(&backend.graphics, 320, 180, [0, 0, 255, 255]))
+            .unwrap();
+        let inside = luma(
+            &backend.graphics,
+            red.texture(),
+            &[(160, 90), (479, 90), (160, 269), (479, 269), (320, 180)],
+        );
+        let outside = luma(
+            &backend.graphics,
+            red.texture(),
+            &[(159, 180), (480, 180), (320, 89), (320, 270), (0, 0), (639, 359)],
+        );
+        assert!(inside.iter().all(|&value| close_to(value, RED)), "{inside:?}");
+        assert!(outside.iter().all(|&value| close_to(value, BLACK)), "{outside:?}");
     }
 
     /// The luma in the middle of each picture of the video at `path`, as decoded by Media Foundation.
