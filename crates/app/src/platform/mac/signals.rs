@@ -8,7 +8,7 @@ use std::mem::size_of;
 use std::ptr::{NonNull, null, null_mut};
 
 use anyhow::Context;
-use meeting_assistant_core::{AudioSession, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry};
+use meeting_assistant_core::{AudioSession, ProcessEntry, SignalSource, WindowEntry};
 use objc2_core_audio::{
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID, AudioObjectPropertyAddress,
     AudioObjectPropertyScope, AudioObjectPropertySelector, kAudioDevicePropertyDeviceUID, kAudioDevicePropertyStreams,
@@ -36,28 +36,33 @@ impl MacSignalSource {
 }
 
 impl SignalSource for MacSignalSource {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot> {
-        let mut snapshot = SignalSnapshot {
-            processes: processes(),
-            windows: windows(),
-            ..Default::default()
-        };
-        for process in audio_processes().context("cannot read which processes use audio")? {
-            if let Some(device_id) = process.input {
-                snapshot.capture_sessions.push(AudioSession {
-                    process_id: process.process_id,
-                    device_id,
-                });
-            }
-            if let Some(device_id) = process.output {
-                snapshot.render_sessions.push(AudioSession {
-                    process_id: process.process_id,
-                    device_id,
-                });
-            }
-        }
-        Ok(snapshot)
+    fn capture_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        Ok(audio_sessions(|process| process.input)?)
     }
+
+    fn render_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        Ok(audio_sessions(|process| process.output)?)
+    }
+
+    fn processes(&mut self) -> anyhow::Result<Vec<ProcessEntry>> {
+        Ok(processes())
+    }
+
+    fn windows(&mut self) -> anyhow::Result<Vec<WindowEntry>> {
+        Ok(windows())
+    }
+}
+
+/// The processes doing audio in one direction, with the device of that direction (`device` picks it).
+fn audio_sessions(device: impl Fn(AudioProcess) -> Option<String>) -> anyhow::Result<Vec<AudioSession>> {
+    Ok(audio_processes()
+        .context("cannot read which processes use audio")?
+        .into_iter()
+        .filter_map(|process| {
+            let process_id = process.process_id;
+            device(process).map(|device_id| AudioSession { process_id, device_id })
+        })
+        .collect())
 }
 
 /// A process doing audio I/O, with the device it records from and the one it plays to (Core Audio device UIDs;

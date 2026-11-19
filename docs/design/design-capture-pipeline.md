@@ -18,8 +18,9 @@ responsibilities:
   statement: Decide where a captured picture of another size goes on the canvas.
 invariants:
 - id: INV-001
-  statement: The output size is fixed when the recording opens, is even in both dimensions
-    and is at least the encoder minimum.
+  statement: The output size is fixed when the recording opens, is even in both dimensions,
+    is at least the encoder minimum and at most 1920 by 1080 in the orientation of the
+    target.
   enforcement: test
 - id: INV-002
   statement: Video and audio timestamps derive from the same elapsed time.
@@ -131,7 +132,7 @@ INV-004 and INV-005 implement the product's scope rule on this side: degraded in
 
 ## Collaboration
 
-`RecordingCoordinator` drives `ThreadedRecorder` through `Recorder`. `platform::recorder` supplies the backend constructor. On Windows the backend uses Windows.Graphics.Capture, the Direct3D 11 video processor, WASAPI process loopback and capture, and the Media Foundation sink writer producing fragmented MP4.
+`RecordingCoordinator` drives `ThreadedRecorder` through `Recorder`. `platform::recorder` supplies the backend constructor. On Windows the backend uses Windows.Graphics.Capture, the Direct3D 11 video processor, WASAPI process loopback and capture, and the Media Foundation sink writer producing fragmented MP4. The video processor turns each new picture into NV12 (BT.709, limited range) at the canvas size in one pass, and the sink writer chooses the H.264 encoder: the GPU's hardware encoder of whichever vendor, or the software encoder. A GPU whose video processor cannot write NV12 hands over BGRA, which the sink writer converts. Capture is asked for no more pictures than are written (Windows 11 24H2 and later honor it). The pictures are drawn into a few textures; one is drawn into again only once nothing holds the picture in it, neither the pipeline, which writes it again until a new one arrives, nor the encoder, which reads it after it was handed over and lets go of it through a tracked sample. Each audio input's thread sleeps until WASAPI signals that sound arrived. On macOS ScreenCaptureKit is likewise asked for no more pictures than are written.
 
 ## Failure Responsibility
 
@@ -143,7 +144,7 @@ A backend may choose any capture API, scaler and encoder that satisfies the port
 
 ## Conformance
 
-Unit tests in `recording/{plan,fit,timeline,mixer,pipeline,session}.rs` use `pipeline::fakes::FakeBackend` or no port at all. They do not exercise the Windows backend. `meeting-assistant --self-test` does, on the machine where it runs, for a display; an ignored test in `platform/win/recorder/mod.rs` captures a real window of odd size, resizes it and writes both pictures, and is run by hand with `cargo test -p meeting-assistant window_pictures -- --ignored`.
+Unit tests in `recording/{plan,fit,timeline,mixer,pipeline,session}.rs` use `pipeline::fakes::FakeBackend` or no port at all. They do not exercise the Windows backend. `meeting-assistant --self-test` does, on the machine where it runs, for a display; ignored tests in `platform/win/recorder/{mod,audio}.rs` capture a real window of odd size, resize it and write both pictures; encode NV12 pictures with the GPU's encoder and with the software encoder; decode a file to show that no texture was drawn into while the encoder held it; count the pictures a capture sends at two update intervals; and capture a tone from the output device and from the process playing it. They are run by hand with `cargo test -p meeting-assistant -- --ignored`.
 
 ## Related Decisions
 

@@ -35,4 +35,5 @@ pub use recording::{Recorder, RecordingRequest, VideoTarget};
 pub use rules::{MeetingRule, RuleEvaluator, RuleEvidence, default_rules};
 pub use signals::{
     AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry,
+    full_snapshot,
 };

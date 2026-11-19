@@ -22,6 +22,7 @@
 //! - `notify`: shows a notification
 //! - `panel_window` / `style_panel`: give the status panel's window the platform's look (transparency, material,
 //!   rounded corners, accent color)
+//! - `panel_shown`: lets the web view hold less memory while the panel is hidden
 //! - `tray_look` / `set_tray_icon`: how the tray icon follows the menu bar or taskbar, and where the running time goes
 //! - `prepare_event_loop`: what the platform needs before the tray's event loop runs
 //! - `SCREEN_CAPTURE`: whether the whole screen can be recorded, so that the UI offers it only where it works
@@ -41,6 +42,6 @@ compile_error!("This OS is not supported yet. Add an implementation under crates
 
 pub use self::imp::{
     PlatformInstaller, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource, SCREEN_CAPTURE, SingleInstance,
-    has_output, notify, panel_window, prepare_event_loop, recorder, request_quit, set_tray_icon, show_error, show_info,
-    style_panel, tray_look, watch_exit_requests,
+    has_output, notify, panel_shown, panel_window, prepare_event_loop, recorder, request_quit, set_tray_icon,
+    show_error, show_info, style_panel, tray_look, watch_exit_requests,
 };

@@ -57,12 +57,12 @@ pub struct ThreadedRecorder<B> {
     video: VideoConfig,
     audio: AudioConfig,
     /// Called inside the recording thread to create the actual capture and writing.
-    create_backend: fn() -> anyhow::Result<B>,
+    create_backend: fn(&VideoConfig) -> anyhow::Result<B>,
     session: Option<Session>,
 }
 
 impl<B> ThreadedRecorder<B> {
-    pub fn new(video: VideoConfig, audio: AudioConfig, create_backend: fn() -> anyhow::Result<B>) -> Self {
+    pub fn new(video: VideoConfig, audio: AudioConfig, create_backend: fn(&VideoConfig) -> anyhow::Result<B>) -> Self {
         Self {
             video,
             audio,
@@ -158,7 +158,7 @@ impl<B> Drop for ThreadedRecorder<B> {
 /// Body of the recording thread. Reports whether preparation succeeded via `ready`, then writes until told to stop.
 /// The return value is the result after preparation (a preparation failure is reported via `ready`, so it is `Ok`).
 fn record<B: CaptureBackend>(
-    create_backend: fn() -> anyhow::Result<B>,
+    create_backend: fn(&VideoConfig) -> anyhow::Result<B>,
     request: &RecordingRequest,
     video: &VideoConfig,
     audio: &AudioConfig,
@@ -166,7 +166,7 @@ fn record<B: CaptureBackend>(
     ready: mpsc::Sender<anyhow::Result<()>>,
 ) -> anyhow::Result<()> {
     let mut pacer = RealPacer(Instant::now());
-    let opened = create_backend().and_then(|backend| Pipeline::open(backend, request, video, audio, &mut pacer));
+    let opened = create_backend(video).and_then(|backend| Pipeline::open(backend, request, video, audio, &mut pacer));
     let pipeline = match opened {
         Ok(pipeline) => {
             let _ = ready.send(Ok(()));
@@ -197,7 +197,7 @@ mod tests {
     macro_rules! shared_backend {
         () => {{
             static SHARED: OnceLock<Mutex<Option<FakeBackend>>> = OnceLock::new();
-            fn create() -> anyhow::Result<FakeBackend> {
+            fn create(_: &VideoConfig) -> anyhow::Result<FakeBackend> {
                 SHARED
                     .get()
                     .and_then(|slot| slot.lock().unwrap().clone())
@@ -207,7 +207,7 @@ mod tests {
             // Put it in a state where the display's first picture has already arrived.
             backend.state().pictures.push_back(Some("first".into()));
             *SHARED.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(backend.clone());
-            (backend, create as fn() -> anyhow::Result<FakeBackend>)
+            (backend, create as fn(&VideoConfig) -> anyhow::Result<FakeBackend>)
         }};
     }
 
@@ -221,7 +221,7 @@ mod tests {
         }
     }
 
-    fn recorder(create: fn() -> anyhow::Result<FakeBackend>) -> ThreadedRecorder<FakeBackend> {
+    fn recorder(create: fn(&VideoConfig) -> anyhow::Result<FakeBackend>) -> ThreadedRecorder<FakeBackend> {
         let video = VideoConfig {
             framerate: 60,
             quality: 70,

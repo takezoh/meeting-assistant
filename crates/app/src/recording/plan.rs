@@ -8,6 +8,9 @@ pub const CHANNELS: usize = 2;
 
 /// Minimum video size, so the picture never goes below what the encoder can handle.
 const MIN_SIZE: (u32, u32) = (320, 240);
+/// Largest video size: 1080p, laid the way the target is (1080 by 1920 for a tall window). A meeting needs no more,
+/// and every hardware H.264 encoder takes it.
+const MAX_SIZE: (u32, u32) = (1920, 1080);
 /// Size of a recording started without a video target. If a window is specified later, it is fitted into this size.
 const BLANK_SIZE: (u32, u32) = (1280, 720);
 
@@ -92,10 +95,25 @@ pub fn audio_sources(request: &RecordingRequest, config: &AudioConfig) -> Vec<Au
 
 /// Size of the video to write. `source` is the size of the capture target, `None` when starting without a target.
 ///
+/// A target larger than 1080p is scaled down to fit it with its aspect ratio kept; a smaller one is not scaled up.
 /// H.264 requires even dimensions, so odd sizes are trimmed by one pixel.
 /// From then on, video is written at this size (it cannot change midway).
 pub fn canvas_size(source: Option<(u32, u32)>) -> (u32, u32) {
     let (width, height) = source.unwrap_or(BLANK_SIZE);
+    let (max_width, max_height) = if width >= height {
+        MAX_SIZE
+    } else {
+        (MAX_SIZE.1, MAX_SIZE.0)
+    };
+    let scale = f64::min(
+        1.0,
+        f64::min(
+            f64::from(max_width) / f64::from(width.max(1)),
+            f64::from(max_height) / f64::from(height.max(1)),
+        ),
+    );
+    let fitted = |side: u32| ((f64::from(side) * scale).round() as u32).max(1);
+    let (width, height) = (fitted(width), fitted(height));
     ((width & !1).max(MIN_SIZE.0), (height & !1).max(MIN_SIZE.1))
 }
 
@@ -189,6 +207,27 @@ mod tests {
     fn output_size_is_made_even() {
         assert_eq!(canvas_size(Some((1584, 992))), (1584, 992));
         assert_eq!(canvas_size(Some((1585, 993))), (1584, 992));
+    }
+
+    #[test]
+    fn a_target_larger_than_1080p_is_written_at_1080p_with_its_aspect_ratio() {
+        assert_eq!(canvas_size(Some((3840, 2160))), (1920, 1080));
+        assert_eq!(canvas_size(Some((2560, 1440))), (1920, 1080));
+        assert_eq!(canvas_size(Some((3440, 1440))), (1920, 804), "ultrawide");
+        assert_eq!(
+            canvas_size(Some((2160, 3840))),
+            (1080, 1920),
+            "a tall target keeps its orientation"
+        );
+        assert_eq!(canvas_size(Some((1200, 1900))), (1080, 1710));
+        assert_eq!(canvas_size(Some((1920, 1200))), (1728, 1080));
+    }
+
+    #[test]
+    fn a_target_within_1080p_is_not_scaled_up() {
+        assert_eq!(canvas_size(Some((1920, 1080))), (1920, 1080));
+        assert_eq!(canvas_size(Some((1280, 720))), (1280, 720));
+        assert_eq!(canvas_size(Some((1080, 1920))), (1080, 1920));
     }
 
     #[test]

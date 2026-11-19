@@ -1,33 +1,41 @@
 //! Captures audio with WASAPI. The mixing calculations are in `crate::recording::mixer`.
 //! All inputs are handled as 48 kHz, stereo, 16-bit (conversion is left to Windows).
+//!
+//! Each input has a thread that sleeps until Windows signals that sound has arrived, so the sound reaches the mixer
+//! as soon as Windows has it, and an input that receives nothing (an app or a device playing nothing) wakes its
+//! thread only once a second.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::Context;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, AUDIOCLIENT_ACTIVATION_PARAMS,
-    AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
-    ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation, IActivateAudioInterfaceCompletionHandler,
-    IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
-    MMDeviceEnumerator, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
-    WAVE_FORMAT_PCM, WAVEFORMATEX, eCapture, eConsole, eRender,
+    AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+    AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+    AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
+    IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient,
+    IAudioClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
+    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVE_FORMAT_PCM,
+    WAVEFORMATEX, eCapture, eConsole, eRender,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects};
 use windows::Win32::System::Variant::VT_BLOB;
-use windows::core::{HRESULT, HSTRING, Interface, Ref, implement};
+use windows::core::{HRESULT, HSTRING, Interface, PCWSTR, Ref, implement};
 
 use super::super::com::ComApartment;
 use crate::recording::mixer::{BufferPolicy, SourceBuffer};
 use crate::recording::plan::{AudioSource, CHANNELS, SAMPLE_RATE};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// How long an input waits for sound before looking anyway, which notices a device that is gone.
+const IDLE_CHECK_MILLISECONDS: u32 = 1000;
 /// Length of the Windows-side buffer (in 100 ns units).
 const DEVICE_BUFFER_DURATION: i64 = 2_000_000;
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -39,13 +47,47 @@ struct Stats {
     peak: AtomicU32,
 }
 
+/// A Windows event, closed when dropped.
+struct Event(HANDLE);
+
+// SAFETY: an event can be set and waited for from any thread.
+unsafe impl Send for Event {}
+unsafe impl Sync for Event {}
+
+impl Event {
+    /// An event that resets itself once a wait has seen it.
+    fn new() -> anyhow::Result<Self> {
+        let handle = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }.context("cannot create an event")?;
+        Ok(Self(handle))
+    }
+
+    fn set(&self) {
+        let _ = unsafe { SetEvent(self.0) };
+    }
+}
+
+impl Drop for Event {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// An input opened and capturing. Fields are dropped in declaration order: the client goes before the event it
+/// signals.
+struct Opened {
+    client: IAudioClient,
+    capture: IAudioCaptureClient,
+    /// Signaled by Windows each time sound has arrived.
+    arrived: Event,
+}
+
 /// Capture from one input source. Runs on a dedicated thread and stops when dropped.
 pub struct AudioCapture {
     label: String,
     /// The capture thread puts sound in, and the writing side takes it out.
     buffer: Arc<Mutex<SourceBuffer>>,
     stats: Arc<Stats>,
-    stop: Arc<AtomicBool>,
+    stop: Arc<Event>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -57,7 +99,7 @@ impl AudioCapture {
             CHANNELS,
         ))));
         let stats = Arc::new(Stats::default());
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(Event::new()?);
         let (ready_sender, ready_receiver) = mpsc::channel();
 
         let thread = std::thread::Builder::new().name("audio".into()).spawn({
@@ -65,14 +107,14 @@ impl AudioCapture {
             move || {
                 let opened = ComApartment::enter().and_then(|com| Ok((com, open_client(&spec)?)));
                 match opened {
-                    Ok((_com, (client, capture))) => {
+                    Ok((_com, opened)) => {
                         let _ = ready_sender.send(Ok(()));
-                        if let Err(error) = pump(&capture, &buffer, &stats, &stop) {
+                        if let Err(error) = pump(&opened, &stop, &buffer, &stats) {
                             // Recording is not stopped. From now on this input is silent.
                             log::warn!("audio capture stopped ({label}): {error:#}");
                         }
                         unsafe {
-                            let _ = client.Stop();
+                            let _ = opened.client.Stop();
                         }
                     }
                     Err(error) => {
@@ -103,11 +145,20 @@ impl AudioCapture {
     pub fn mix_into(&mut self, out: &mut [i16]) {
         self.buffer.lock().unwrap().mix_into(out);
     }
+
+    /// How many samples have been captured, and the loudest of them.
+    #[cfg(test)]
+    fn captured(&self) -> (u64, u32) {
+        (
+            self.stats.samples.load(Ordering::Relaxed),
+            self.stats.peak.load(Ordering::Relaxed),
+        )
+    }
 }
 
 impl Drop for AudioCapture {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.set();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -142,7 +193,7 @@ fn milliseconds(samples: usize) -> f64 {
     samples as f64 * 1000.0 / (SAMPLE_RATE as f64 * CHANNELS as f64)
 }
 
-fn open_client(spec: &AudioSource) -> anyhow::Result<(IAudioClient, IAudioCaptureClient)> {
+fn open_client(spec: &AudioSource) -> anyhow::Result<Opened> {
     let format = WAVEFORMATEX {
         wFormatTag: WAVE_FORMAT_PCM as u16,
         nChannels: CHANNELS as u16,
@@ -171,16 +222,27 @@ fn open_client(spec: &AudioSource) -> anyhow::Result<(IAudioClient, IAudioCaptur
         client
             .Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
-                loopback | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                loopback
+                    | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                 DEVICE_BUFFER_DURATION,
                 0,
                 &format,
                 None,
             )
             .context("cannot initialize audio capture")?;
+        let arrived = Event::new()?;
+        client
+            .SetEventHandle(arrived.0)
+            .context("cannot be told when sound arrives")?;
         let capture: IAudioCaptureClient = client.GetService()?;
         client.Start().context("cannot start audio capture")?;
-        Ok((client, capture))
+        Ok(Opened {
+            client,
+            capture,
+            arrived,
+        })
     }
 }
 
@@ -276,15 +338,19 @@ unsafe fn activate_process_loopback(process_id: u32) -> anyhow::Result<IAudioCli
     }
 }
 
-/// Keeps moving arriving sound into the buffer until told to stop.
-fn pump(
-    capture: &IAudioCaptureClient,
-    buffer: &Mutex<SourceBuffer>,
-    stats: &Stats,
-    stop: &AtomicBool,
-) -> windows::core::Result<()> {
-    while !stop.load(Ordering::Relaxed) {
-        std::thread::sleep(POLL_INTERVAL);
+/// Moves sound into the buffer each time it arrives, until `stop` is set.
+fn pump(opened: &Opened, stop: &Event, buffer: &Mutex<SourceBuffer>, stats: &Stats) -> windows::core::Result<()> {
+    let capture = &opened.capture;
+    // When both are set, the first one wins: stopping goes before more sound.
+    let events = [stop.0, opened.arrived.0];
+    loop {
+        let woken = unsafe { WaitForMultipleObjects(&events, false, IDLE_CHECK_MILLISECONDS) };
+        if woken == WAIT_OBJECT_0 {
+            return Ok(());
+        }
+        if woken == WAIT_FAILED {
+            return Err(windows::core::Error::from_thread());
+        }
         unsafe {
             while capture.GetNextPacketSize()? > 0 {
                 let mut data = std::ptr::null_mut();
@@ -308,5 +374,66 @@ fn pump(
             }
         }
     }
-    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_LOOP, SND_MEMORY, SND_PURGE};
+
+    use super::*;
+
+    /// A 440 Hz tone in the format captured, as a WAV file of one second.
+    fn tone() -> Vec<u8> {
+        let samples: Vec<i16> = (0..SAMPLE_RATE)
+            .flat_map(|index| {
+                let value = (f64::from(index) * 440.0 / f64::from(SAMPLE_RATE) * std::f64::consts::TAU).sin();
+                [(value * 8000.0) as i16; CHANNELS]
+            })
+            .collect();
+        let data_length = (samples.len() * 2) as u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_length).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&(CHANNELS as u16).to_le_bytes());
+        wav.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        wav.extend_from_slice(&(SAMPLE_RATE * CHANNELS as u32 * 2).to_le_bytes());
+        wav.extend_from_slice(&(CHANNELS as u16 * 2).to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_length.to_le_bytes());
+        wav.extend(samples.iter().flat_map(|sample| sample.to_le_bytes()));
+        wav
+    }
+
+    /// Plays a tone through the default output device, so it needs one:
+    /// `cargo test -p meeting-assistant sound_played -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "plays sound through the default output device"]
+    fn sound_played_is_captured_from_the_output_device_and_from_the_process_that_plays_it() {
+        let _com = ComApartment::enter().unwrap();
+        let wav = tone();
+        let playing = unsafe { PlaySoundW(PCWSTR(wav.as_ptr().cast()), None, SND_MEMORY | SND_ASYNC | SND_LOOP) };
+        assert!(playing.as_bool(), "cannot play the tone");
+        let sources = [
+            AudioSource::DeviceAudio(None),
+            AudioSource::ProcessAudio(std::process::id()),
+        ];
+        let captures: Vec<AudioCapture> = sources
+            .into_iter()
+            .map(|source| AudioCapture::open(source).unwrap())
+            .collect();
+        std::thread::sleep(Duration::from_secs(2));
+        let captured: Vec<(u64, u32)> = captures.iter().map(AudioCapture::captured).collect();
+        drop(captures);
+        let _ = unsafe { PlaySoundW(PCWSTR::null(), None, SND_PURGE) };
+        println!("captured from the device and from the process (samples, peak): {captured:?}");
+        for (samples, peak) in captured {
+            // At least one of the two seconds, at about the volume played.
+            assert!(samples >= u64::from(SAMPLE_RATE) * CHANNELS as u64, "{samples} samples");
+            assert!(peak > 4000, "peak {peak}");
+        }
+    }
 }

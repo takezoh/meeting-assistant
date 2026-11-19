@@ -10,7 +10,7 @@ Windows is supported. On macOS desktop apps and manual recording are implemented
 
 ## Join a meeting; the file appears when it ends
 
-Join a call in Zoom, Microsoft Teams, Webex or Slack, or open Google Meet in Chrome or Edge. A few seconds after the call is live the tray icon turns red. When you leave, the recording is finalized as an MP4 (H.264 video, AAC audio) in `Videos\MeetingAssistant`, named after the start time and the rule that matched, for example `2026-11-17_14-00-05_Zoom.mp4`.
+Join a call in Zoom, Microsoft Teams, Webex or Slack, or open Google Meet in Chrome or Edge. A few seconds after the call is live the tray icon turns red. When you leave, the recording is finalized as an MP4 (H.264 video up to 1080p, AAC audio) in `Videos\MeetingAssistant`, named after the start time and the rule that matched, for example `2026-11-17_14-00-05_Zoom.mp4`.
 
 The tray icon shows the state: a ring while idle, amber when a meeting is detected but not being recorded, red while recording. Click it to see every detected meeting and the recording's running time, and to record or stop each meeting, in a panel that looks like the system's own: a popover on macOS, a Windows 11 flyout on Windows.
 

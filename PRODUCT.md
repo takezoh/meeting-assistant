@@ -34,7 +34,7 @@ It is a personal tool for one logged-in user on one computer. It has no accounts
 
 ## How a meeting is detected
 
-Desktop meeting apps are detected from their use of the microphone; browser meetings are detected by the browser extension, and only by it. Once per `poll_interval_milliseconds` the app reads which processes hold an active microphone session and which windows exist, and evaluates the rules.
+Desktop meeting apps are detected from their use of the microphone; browser meetings are detected by the browser extension, and only by it. Once per `poll_interval_milliseconds` the app reads which processes hold an active microphone session and evaluates the rules; it looks at the windows only while an app uses the microphone or one is being recorded.
 
 - **Start.** A rule's process, or one of its descendants, uses the microphone continuously for `start_debounce_seconds` (3 by default).
 - **Continue.** The meeting lasts while that process keeps using the microphone.
@@ -56,7 +56,9 @@ With the default `capture_scope = "app"`:
 | Other side's audio | Audio played by the app's top-level process and its descendants | Audio of the tab |
 | Your audio | The microphone | The microphone |
 
+- The picture is at most 1920 by 1080 (1080 by 1920 for a tall window). A larger window or display is scaled down to fit with its aspect ratio kept; a smaller one is recorded at its own size.
 - The picture size is fixed when the recording starts. If the window is resized, the picture is scaled to fit with its aspect ratio kept and the rest filled with black.
+- Video is encoded by the GPU's H.264 encoder, whichever vendor made the GPU, and by Windows' software encoder where there is none.
 - If the recorded window closes, recording moves to another window of the same app. If there is none, the last picture stays and audio continues.
 - If no window of the app is found at the start, the recording starts black and moves to the window when it appears. The app does not substitute the whole display.
 - If the app's audio cannot be captured, the recording continues without it. The app does not substitute all output audio.

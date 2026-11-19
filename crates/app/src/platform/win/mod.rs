@@ -104,6 +104,20 @@ pub fn style_panel(window: &tao::window::Window) -> Surface {
     }
 }
 
+/// Asks the WebView2 runtime to hold as little memory as it can for the panel's page while the panel is hidden,
+/// and to return to normal when it is shown.
+pub fn panel_shown(webview: &wry::WebView, shown: bool) {
+    use wry::{MemoryUsageLevel, WebViewExtWindows};
+    let level = if shown {
+        MemoryUsageLevel::Normal
+    } else {
+        MemoryUsageLevel::Low
+    };
+    if let Err(error) = webview.set_memory_usage_level(level) {
+        log::info!("Cannot set the panel's memory use: {error}");
+    }
+}
+
 /// The user's accent color in the shades Windows uses for controls on a light and on a dark background.
 fn accent() -> Option<Accent> {
     use windows::UI::ViewManagement::{UIColorType, UISettings};

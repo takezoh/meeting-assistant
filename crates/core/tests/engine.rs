@@ -259,3 +259,58 @@ fn records_a_meeting_reported_by_the_extension_in_its_tab_from_start_to_end() {
     assert!(!f.recording());
     assert_eq!(f.recorder.state().stop_count, 1);
 }
+
+#[test]
+fn reads_only_the_microphone_sessions_while_no_app_uses_the_microphone() {
+    let mut f = fixture();
+    f.signals.set(snapshot(
+        &[process(100, 1, "Zoom.exe")],
+        &[],
+        &[100],
+        &[window(100, "Zoom", "DISPLAY1", 1000)],
+    ));
+
+    f.run(3);
+
+    assert_eq!(f.signals.take_reads(), ["capture_sessions"; 3]);
+}
+
+#[test]
+fn reads_the_processes_windows_and_playback_once_an_app_uses_the_microphone() {
+    let mut f = fixture();
+    f.signals.set(zoom_in_meeting());
+
+    f.run(1);
+
+    assert_eq!(
+        f.signals.take_reads(),
+        ["capture_sessions", "render_sessions", "processes", "windows"]
+    );
+}
+
+#[test]
+fn keeps_reading_the_windows_while_an_apps_meeting_is_recorded_without_the_microphone() {
+    let mut f = fixture();
+    f.signals.set(snapshot(
+        &[process(100, 1, "Zoom.exe")],
+        &[100],
+        &[],
+        &[window(100, "Zoom Meeting", "DISPLAY1", 1000)],
+    ));
+    f.run(10);
+    assert!(f.recording());
+
+    // The app lets the microphone go for a moment, within the end grace, and its window closes meanwhile.
+    let other_window = window(100, "Zoom Workplace", "DISPLAY1", 800);
+    f.signals
+        .set(snapshot(&[process(100, 1, "Zoom.exe")], &[], &[], &[other_window]));
+    f.signals.take_reads();
+    f.run(1);
+
+    assert_eq!(f.signals.take_reads(), ["capture_sessions", "processes", "windows"]);
+    assert_eq!(
+        f.recorder.state().retargets,
+        [window_id("Zoom Workplace")],
+        "the recording follows the app's other window"
+    );
+}

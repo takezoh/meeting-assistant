@@ -1,14 +1,20 @@
 //! Writes H.264/AAC fragmented MP4 with the Media Foundation SinkWriter.
 //! A fragmented MP4 is written to disk fragment by fragment,
 //! so if the process dies mid-recording the part already written survives.
+//!
+//! The sink writer picks the H.264 encoder: a hardware encoder of the GPU when there is one, of whichever vendor,
+//! otherwise Windows' software encoder. Nothing here is specific to a vendor.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use anyhow::Context;
+use windows::Win32::Foundation::E_NOTIMPL;
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows::Win32::Media::MediaFoundation::*;
-use windows::core::{GUID, HSTRING, Interface};
+use windows::core::{GUID, HSTRING, Interface, Ref, implement};
 
+use super::scale::{Holder, Picture, PictureFormat};
 use crate::recording::plan::{CHANNELS, MediaFormat, SAMPLE_RATE};
 
 const AAC_BYTES_PER_SECOND: u32 = 16_000; // 128 kbps
@@ -19,13 +25,45 @@ pub struct Mp4Writer {
     writer: IMFSinkWriter,
     video_stream: u32,
     audio_stream: Option<u32>,
+    /// The transforms that encode the video, as the log names them.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "read by the tests that check which encoder was chosen")
+    )]
+    encoder: String,
     // Manager for the D3D device the SinkWriter references. It must be kept alive while writing.
     _device_manager: IMFDXGIDeviceManager,
 }
 
 impl Mp4Writer {
-    /// `device` must be the same device that created the textures passed in.
-    pub fn create(path: &Path, device: &ID3D11Device, format: &MediaFormat) -> anyhow::Result<Self> {
+    /// `device` must be the same device that created the pictures passed in, which are in `pictures` format.
+    pub fn create(
+        path: &Path,
+        device: &ID3D11Device,
+        format: &MediaFormat,
+        pictures: PictureFormat,
+    ) -> anyhow::Result<Self> {
+        Self::open(path, device, format, pictures, true)
+    }
+
+    /// The same, with the hardware encoders left out, as on a PC that has none.
+    #[cfg(test)]
+    pub fn create_in_software(
+        path: &Path,
+        device: &ID3D11Device,
+        format: &MediaFormat,
+        pictures: PictureFormat,
+    ) -> anyhow::Result<Self> {
+        Self::open(path, device, format, pictures, false)
+    }
+
+    fn open(
+        path: &Path,
+        device: &ID3D11Device,
+        format: &MediaFormat,
+        pictures: PictureFormat,
+        hardware: bool,
+    ) -> anyhow::Result<Self> {
         unsafe {
             let mut reset_token = 0u32;
             let mut device_manager = None;
@@ -36,38 +74,51 @@ impl Mp4Writer {
             let mut attributes = None;
             MFCreateAttributes(&mut attributes, 4)?;
             let attributes: IMFAttributes = attributes.context("cannot create attributes")?;
-            attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+            attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, u32::from(hardware))?;
             attributes.SetUnknown(&MF_SINK_WRITER_D3D_MANAGER, &device_manager)?;
             attributes.SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_FMPEG4)?;
             attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
             let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attributes)
                 .with_context(|| format!("cannot create the output file: {}", path.display()))?;
 
-            let video_stream = add_video_stream(&writer, format).context("cannot configure the video encoder")?;
+            let video_stream =
+                add_video_stream(&writer, format, pictures).context("cannot configure the video encoder")?;
             let audio_stream = if format.has_audio {
                 Some(add_audio_stream(&writer).context("cannot configure the audio encoder")?)
             } else {
                 None
             };
             writer.BeginWriting().context("cannot begin writing")?;
-            log::info!("video is encoded by: {}", describe_transforms(&writer, video_stream));
+            let encoder = describe_transforms(&writer, video_stream);
+            log::info!("video is encoded by: {encoder}");
 
             Ok(Self {
                 writer,
                 video_stream,
                 audio_stream,
+                encoder,
                 _device_manager: device_manager,
             })
         }
     }
 
-    /// `time` and `duration` are in 100 ns units. Do not modify the texture until writing has finished.
-    pub fn write_video(&self, texture: &ID3D11Texture2D, time: i64, duration: i64) -> anyhow::Result<()> {
+    /// The transforms that encode the video: what each is, whether it runs on the GPU and what it takes in.
+    #[cfg(test)]
+    pub fn encoder(&self) -> &str {
+        &self.encoder
+    }
+
+    /// `time` and `duration` are in 100 ns units. The picture stays held until the encoder lets go of it.
+    pub fn write_video(&self, picture: &Picture, time: i64, duration: i64) -> anyhow::Result<()> {
         unsafe {
-            let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, texture, 0, false)?;
+            let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, picture.texture(), 0, false)?;
             let length = buffer.cast::<IMF2DBuffer>()?.GetContiguousLength()?;
             buffer.SetCurrentLength(length)?;
-            self.write(self.video_stream, &buffer, time, duration)
+            // A tracked sample calls back once nothing refers to it any more: the encoder is done with the texture.
+            let sample = MFCreateTrackedSample()?;
+            let release: IMFAsyncCallback = LetGo(Mutex::new(Some(picture.hold()))).into();
+            sample.SetAllocator(&release, None)?;
+            self.write(self.video_stream, &sample.cast()?, &buffer, time, duration)
         }
     }
 
@@ -85,7 +136,7 @@ impl Mp4Writer {
             std::ptr::copy_nonoverlapping(pcm.as_ptr().cast::<u8>(), data, byte_length as usize);
             buffer.Unlock()?;
             buffer.SetCurrentLength(byte_length)?;
-            self.write(stream, &buffer, time, duration)
+            self.write(stream, &MFCreateSample()?, &buffer, time, duration)
         }
     }
 
@@ -116,19 +167,46 @@ impl Mp4Writer {
         }
     }
 
-    unsafe fn write(&self, stream: u32, buffer: &IMFMediaBuffer, time: i64, duration: i64) -> anyhow::Result<()> {
+    unsafe fn write(
+        &self,
+        stream: u32,
+        sample: &IMFSample,
+        buffer: &IMFMediaBuffer,
+        time: i64,
+        duration: i64,
+    ) -> anyhow::Result<()> {
         unsafe {
-            let sample = MFCreateSample()?;
             sample.AddBuffer(buffer)?;
             sample.SetSampleTime(time)?;
             sample.SetSampleDuration(duration)?;
-            self.writer.WriteSample(stream, &sample)?;
+            self.writer.WriteSample(stream, sample)?;
             Ok(())
         }
     }
 }
 
-unsafe fn add_video_stream(writer: &IMFSinkWriter, video: &MediaFormat) -> windows::core::Result<u32> {
+/// Lets go of a picture once the sample made from it is released. Called on a Media Foundation work queue thread;
+/// if it is never called, dropping it lets go all the same.
+#[implement(IMFAsyncCallback)]
+struct LetGo(Mutex<Option<Holder>>);
+
+impl IMFAsyncCallback_Impl for LetGo_Impl {
+    fn GetParameters(&self, _flags: *mut u32, _queue: *mut u32) -> windows::core::Result<()> {
+        // The default work queue.
+        Err(E_NOTIMPL.into())
+    }
+
+    fn Invoke(&self, _result: Ref<IMFAsyncResult>) -> windows::core::Result<()> {
+        self.0.lock().unwrap().take();
+        Ok(())
+    }
+}
+
+unsafe fn add_video_stream(
+    writer: &IMFSinkWriter,
+    video: &MediaFormat,
+    pictures: PictureFormat,
+) -> windows::core::Result<u32> {
     unsafe {
         let describe = |subtype: &GUID| -> windows::core::Result<IMFMediaType> {
             let media_type = MFCreateMediaType()?;
@@ -138,6 +216,11 @@ unsafe fn add_video_stream(writer: &IMFSinkWriter, video: &MediaFormat) -> windo
             media_type.SetUINT64(&MF_MT_FRAME_SIZE, pack(video.width, video.height))?;
             media_type.SetUINT64(&MF_MT_FRAME_RATE, pack(video.framerate, 1))?;
             media_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
+            // The colors the pictures are converted to, so that players read them back the same way.
+            media_type.SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32)?;
+            media_type.SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235.0 as u32)?;
+            media_type.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32)?;
+            media_type.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709.0 as u32)?;
             Ok(media_type)
         };
 
@@ -147,7 +230,10 @@ unsafe fn add_video_stream(writer: &IMFSinkWriter, video: &MediaFormat) -> windo
         // Keyframes are large, so space them out. The file gets smaller at the cost of seek granularity.
         output.SetUINT32(&MF_MT_MAX_KEYFRAME_SPACING, video.framerate * KEYFRAME_INTERVAL_SECONDS)?;
         let stream = writer.AddStream(&output)?;
-        let input = describe(&MFVideoFormat_ARGB32)?;
+        let input = describe(match pictures {
+            PictureFormat::Nv12 => &MFVideoFormat_NV12,
+            PictureFormat::Bgra => &MFVideoFormat_ARGB32,
+        })?;
 
         // Using a quality target makes files much smaller for displays with little motion.
         let mut quality = None;

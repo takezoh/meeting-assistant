@@ -6,7 +6,7 @@ use crate::coordinator::{CoordinatorStatus, ManualTarget, Notice, NoticeLevel, R
 use crate::detector::{MeetingDetector, Timing};
 use crate::recording::Recorder;
 use crate::rules::{RuleEvaluator, RuleEvidence};
-use crate::signals::SignalSource;
+use crate::signals::{SignalSnapshot, SignalSource};
 
 /// Ties together signal acquisition, rule evaluation, start/end detection, and recording coordination.
 /// Call [`Engine::tick`] periodically. Use it from a single thread.
@@ -51,15 +51,17 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
     pub fn tick(&mut self, now: Instant) {
         self.coordinator.poll_recorder();
 
-        // Hold the list of current windows only when signals were acquired.
+        // Hold the list of current windows only when they were read.
         let mut windows: Option<HashSet<u64>> = None;
-        let evidence = match self.source.capture() {
-            Ok(snapshot) => {
+        let evidence = match self.read_signals() {
+            Ok((snapshot, windows_read)) => {
                 if self.failing_since.take().is_some() {
                     log::info!("Signal acquisition recovered.");
                 }
                 self.outage_reported = false;
-                windows = Some(snapshot.windows.iter().map(|w| w.id).collect());
+                if windows_read {
+                    windows = Some(snapshot.windows.iter().map(|w| w.id).collect());
+                }
                 self.evaluator.evaluate(&snapshot)
             }
             Err(error) => {
@@ -88,6 +90,37 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
         if let Some(windows) = windows {
             self.follow_window(&windows, &evidence);
         }
+    }
+
+    /// Reads what this tick needs, and whether the windows were among it.
+    ///
+    /// The microphone sessions and the extension's reports are read on every tick. A rule can only be satisfied by
+    /// an app that uses the microphone, so the processes (to find each session's app), the windows (to choose the
+    /// one to record) and the playback sessions (to find the app's output device) are read only when some process
+    /// uses the microphone. While an app's meeting is recorded, the processes and windows are read anyway, to follow
+    /// its window when it closes.
+    fn read_signals(&mut self) -> anyhow::Result<(SignalSnapshot, bool)> {
+        let (browser_links, browser_meetings) = self.source.browser();
+        let mut snapshot = SignalSnapshot {
+            capture_sessions: self.source.capture_sessions()?,
+            browser_links,
+            browser_meetings,
+            ..Default::default()
+        };
+        let microphone_in_use = !snapshot.capture_sessions.is_empty();
+        let recording_an_app = self
+            .coordinator
+            .recorded_meeting()
+            .is_some_and(|meeting| meeting.browser_tab.is_none());
+        if microphone_in_use {
+            snapshot.render_sessions = self.source.render_sessions()?;
+        }
+        let windows_read = microphone_in_use || recording_an_app;
+        if windows_read {
+            snapshot.processes = self.source.processes()?;
+            snapshot.windows = self.source.windows()?;
+        }
+        Ok((snapshot, windows_read))
     }
 
     /// If the window being recorded was closed (or has not been decided yet),

@@ -4,7 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use meeting_assistant_core::{
-    BrowserLink, BrowserMeeting, BrowserTab, Recorder, RecordingRequest, SignalSnapshot, SignalSource, VideoTarget,
+    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ProcessEntry, Recorder, RecordingRequest, SignalSource,
+    VideoTarget, WindowEntry,
 };
 
 /// Port to the browser extension.
@@ -33,12 +34,26 @@ impl<S, B> LinkedSignalSource<S, B> {
 }
 
 impl<S: SignalSource, B: BrowserPort> SignalSource for LinkedSignalSource<S, B> {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot> {
-        let mut snapshot = self.platform.capture()?;
-        if let Some(browser) = &self.browser {
-            (snapshot.browser_links, snapshot.browser_meetings) = browser.snapshot();
-        }
-        Ok(snapshot)
+    fn capture_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        self.platform.capture_sessions()
+    }
+
+    fn render_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        self.platform.render_sessions()
+    }
+
+    fn processes(&mut self) -> anyhow::Result<Vec<ProcessEntry>> {
+        self.platform.processes()
+    }
+
+    fn windows(&mut self) -> anyhow::Result<Vec<WindowEntry>> {
+        self.platform.windows()
+    }
+
+    fn browser(&mut self) -> (Vec<BrowserLink>, Vec<BrowserMeeting>) {
+        self.browser
+            .as_ref()
+            .map_or_else(|| (Vec::new(), Vec::new()), BrowserPort::snapshot)
     }
 }
 
@@ -118,6 +133,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use meeting_assistant_core::fakes::{FakeRecorder, ScriptedSignals, zoom_in_meeting};
+    use meeting_assistant_core::full_snapshot;
 
     use super::*;
 
@@ -286,7 +302,7 @@ mod tests {
             title: None,
         }];
 
-        let snapshot = LinkedSignalSource::new(signals, Some(browser)).capture().unwrap();
+        let snapshot = full_snapshot(&mut LinkedSignalSource::new(signals, Some(browser))).unwrap();
 
         assert_eq!(
             snapshot.capture_sessions.len(),
@@ -302,9 +318,7 @@ mod tests {
         let signals = ScriptedSignals::default();
         signals.set(zoom_in_meeting());
 
-        let snapshot = LinkedSignalSource::<_, FakeBrowser>::new(signals, None)
-            .capture()
-            .unwrap();
+        let snapshot = full_snapshot(&mut LinkedSignalSource::<_, FakeBrowser>::new(signals, None)).unwrap();
 
         assert!(snapshot.browser_links.is_empty() && snapshot.browser_meetings.is_empty());
     }
@@ -314,10 +328,6 @@ mod tests {
         let signals = ScriptedSignals::default();
         signals.set_failure(Some("audio service gone"));
 
-        assert!(
-            LinkedSignalSource::new(signals, Some(FakeBrowser::default()))
-                .capture()
-                .is_err()
-        );
+        assert!(full_snapshot(&mut LinkedSignalSource::new(signals, Some(FakeBrowser::default()))).is_err());
     }
 }

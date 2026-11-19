@@ -1,10 +1,11 @@
 //! Captures one window or one display with Windows.Graphics.Capture.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context;
-use windows::Foundation::TypedEventHandler;
+use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Graphics::Capture::{
     Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
 };
@@ -28,7 +29,10 @@ use windows::core::{BOOL, Interface, Ref};
 use super::super::signals::display_name;
 
 const PIXEL_FORMAT: DirectXPixelFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;
-const POOL_BUFFERS: i32 = 3;
+/// The buffers the capture draws into. One holds the latest picture until it is taken, the other receives the next.
+/// Each is as large as the target (33 MB for a 4K display), so no more are kept.
+pub const CAPTURE_BUFFERS: usize = 2;
+const POOL_BUFFERS: i32 = CAPTURE_BUFFERS as i32;
 
 /// The Direct3D device shared by capture, scaling and encoding.
 pub struct GraphicsDevice {
@@ -116,6 +120,9 @@ pub struct ScreenCapture {
     frame_arrived: i64,
     item_closed: i64,
     latest: Arc<Mutex<Option<Direct3D11CaptureFrame>>>,
+    /// Pictures the system sent, and pictures taken from them, for the log.
+    arrived: Arc<AtomicU64>,
+    taken: u64,
     closed: Arc<AtomicBool>,
     pool_size: SizeInt32,
     initial_size: (u32, u32),
@@ -123,7 +130,9 @@ pub struct ScreenCapture {
 }
 
 impl ScreenCapture {
-    pub fn start(graphics: &GraphicsDevice, target: CaptureTarget) -> anyhow::Result<Self> {
+    /// Starts capturing `target`, asking for at most one picture per `interval`: the system copies every picture it
+    /// sends, and more than are written would be copied for nothing.
+    pub fn start(graphics: &GraphicsDevice, target: CaptureTarget, interval: Duration) -> anyhow::Result<Self> {
         unsafe {
             let dxgi_device: IDXGIDevice = graphics.device.cast()?;
             let winrt_device: IDirect3DDevice = CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)?.cast()?;
@@ -148,11 +157,14 @@ impl ScreenCapture {
 
             let latest = Arc::new(Mutex::new(None::<Direct3D11CaptureFrame>));
             let handler_latest = latest.clone();
+            let arrived = Arc::new(AtomicU64::new(0));
+            let handler_arrived = arrived.clone();
             let frame_arrived = pool.FrameArrived(&TypedEventHandler::new(
                 move |pool: Ref<Direct3D11CaptureFramePool>, _| {
                     if let Some(pool) = pool.as_ref() {
                         // Closing the old picture returns its buffer to the pool.
                         let previous = handler_latest.lock().unwrap().replace(pool.TryGetNextFrame()?);
+                        handler_arrived.fetch_add(1, Ordering::Relaxed);
                         if let Some(previous) = previous {
                             let _ = previous.Close();
                         }
@@ -169,6 +181,13 @@ impl ScreenCapture {
             }))?;
 
             let session = pool.CreateCaptureSession(&item)?;
+            // Windows 11 24H2 and later; earlier versions send a picture for every change of the screen.
+            let limit = TimeSpan {
+                Duration: (interval.as_nanos() / 100) as i64,
+            };
+            if let Err(error) = session.SetMinUpdateInterval(limit) {
+                log::info!("Capture cannot be limited to the frame rate: {error}");
+            }
             session.StartCapture().context("cannot start capture")?;
 
             Ok(Self {
@@ -179,12 +198,20 @@ impl ScreenCapture {
                 frame_arrived,
                 item_closed,
                 latest,
+                arrived,
+                taken: 0,
                 closed,
                 pool_size,
                 initial_size: (pool_size.Width as u32, pool_size.Height as u32),
                 is_window: matches!(target, CaptureTarget::Window(_)),
             })
         }
+    }
+
+    /// How many pictures the system has sent so far.
+    #[cfg(test)]
+    pub fn arrived(&self) -> u64 {
+        self.arrived.load(Ordering::Relaxed)
     }
 
     /// Size of the target at the moment capture started.
@@ -207,6 +234,7 @@ impl ScreenCapture {
         let Some(frame) = self.latest.lock().unwrap().take() else {
             return Ok(None);
         };
+        self.taken += 1;
         let handled = self.handle_frame(&frame, handle);
         // Return the buffer to the pool right away.
         let _ = frame.Close();
@@ -242,6 +270,11 @@ impl ScreenCapture {
 
 impl Drop for ScreenCapture {
     fn drop(&mut self) {
+        log::info!(
+            "capture: {} pictures arrived, {} taken",
+            self.arrived.load(Ordering::Relaxed),
+            self.taken
+        );
         // If handlers or a held picture remain, the graphics device as a whole is never released.
         let _ = self.pool.RemoveFrameArrived(self.frame_arrived);
         let _ = self.item.RemoveClosed(self.item_closed);

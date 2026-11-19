@@ -2,7 +2,7 @@
 id: issue-20261118-the-recording-canvas-has-no-upper-bound
 kind: issue
 title: The recording canvas has no upper bound
-status: open
+status: done
 created: '2026-11-18'
 issue_type: plan
 tags: []
@@ -13,6 +13,8 @@ subject_paths:
 - crates/app/src/recording/plan.rs
 summary: A display or window is encoded at its full size; widths over 4096 exceed
   many hardware H.264 encoders. Whether to bound the long side is a product decision.
+disposition_target: note-20261119-windows-encoder-and-1080p
+updated: '2026-11-19'
 ---
 
 ## Opportunity
@@ -27,3 +29,8 @@ A recording is encoded at the size of its display or window, however large. `can
 ## Context for follow-up
 
 Whether to bound the long side, and at what size, is the user's decision: a smaller canvas keeps shared slides readable only down to a point. The canvas size is fixed when a recording opens ([capture pipeline design](../design/design-capture-pipeline.md), INV-001), and pictures of another size are scaled into it by `recording::fit`.
+
+
+{% transition from="open" to="done" date="2026-11-19" %}
+The user decided on 2026-11-19 that 1080p is enough: the canvas is at most 1920 by 1080 in the target's orientation.
+{% /transition %}

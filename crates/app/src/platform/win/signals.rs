@@ -1,14 +1,17 @@
 //! Gathers detection signals from Windows.
-//! Audio sessions are read from WASAPI, processes from Toolhelp and windows from EnumWindows.
+//! Audio sessions are read from WASAPI, processes from Toolhelp and windows from EnumWindows. Each is read only when
+//! detection asks for it.
+
+use std::collections::HashMap;
 
 use anyhow::Context;
-use meeting_assistant_core::{AudioSession, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry};
+use meeting_assistant_core::{AudioSession, ProcessEntry, SignalSource, WindowEntry};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, S_OK};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFOEXW, MonitorFromRect,
 };
 use windows::Win32::Media::Audio::{
-    AudioSessionStateActive, DEVICE_STATE_ACTIVE, EDataFlow, IAudioSessionControl2, IAudioSessionManager2, IMMDevice,
+    AudioSessionStateActive, DEVICE_STATE_ACTIVE, EDataFlow, IAudioSessionControl2, IAudioSessionManager2,
     IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eRender,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree};
@@ -26,6 +29,10 @@ use super::com::ComApartment;
 /// Must keep being used on the thread that created it (COM initialization is bound to the thread).
 pub struct WindowsSignalSource {
     enumerator: IMMDeviceEnumerator,
+    /// The session manager of each input and each output device, by device ID, kept between reads: activating one
+    /// is the costly part of reading the sessions, which happens every second.
+    input_managers: HashMap<String, IAudioSessionManager2>,
+    output_managers: HashMap<String, IAudioSessionManager2>,
     _com: ComApartment,
 }
 
@@ -34,45 +41,79 @@ impl WindowsSignalSource {
         let com = ComApartment::enter()?;
         let enumerator = unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
             .context("Cannot start enumerating audio devices")?;
-        Ok(Self { enumerator, _com: com })
+        Ok(Self {
+            enumerator,
+            input_managers: HashMap::new(),
+            output_managers: HashMap::new(),
+            _com: com,
+        })
     }
 
-    fn active_sessions(&self, flow: EDataFlow) -> anyhow::Result<Vec<AudioSession>> {
+    fn active_sessions(&mut self, flow: EDataFlow) -> anyhow::Result<Vec<AudioSession>> {
+        let managers = if flow == eCapture {
+            &mut self.input_managers
+        } else {
+            &mut self.output_managers
+        };
         let mut result = Vec::new();
+        let mut present = Vec::new();
         unsafe {
             let devices = self.enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
             for index in 0..devices.GetCount()? {
-                // If a device is removed during enumeration, treat it as having no sessions.
-                if let Ok(device) = devices.Item(index)
-                    && let Ok(sessions) = device_sessions(&device)
-                {
-                    result.extend(sessions);
+                // A device removed during enumeration has no sessions.
+                let Ok(device) = devices.Item(index) else { continue };
+                let Ok(device_id) = device.GetId().map(|id| take_string(id)) else {
+                    continue;
+                };
+                let manager = match managers.get(&device_id) {
+                    Some(manager) => manager.clone(),
+                    None => match device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) {
+                        Ok(manager) => {
+                            managers.insert(device_id.clone(), manager.clone());
+                            manager
+                        }
+                        Err(_) => continue,
+                    },
+                };
+                match device_sessions(&manager, &device_id) {
+                    Ok(sessions) => result.extend(sessions),
+                    // A manager that stopped answering (the audio service restarted) is made again next time.
+                    Err(_) => {
+                        managers.remove(&device_id);
+                    }
                 }
+                present.push(device_id);
             }
         }
+        managers.retain(|device_id, _| present.contains(device_id));
         Ok(result)
     }
 }
 
 impl SignalSource for WindowsSignalSource {
-    fn capture(&mut self) -> anyhow::Result<SignalSnapshot> {
-        Ok(SignalSnapshot {
-            capture_sessions: self.active_sessions(eCapture).context("Cannot get microphone usage")?,
-            render_sessions: self
-                .active_sessions(eRender)
-                .context("Cannot get audio playback status")?,
-            processes: processes().context("Cannot list processes")?,
-            windows: windows().context("Cannot list windows")?,
-            // Browser extension information is added by the caller through a separate path.
-            ..Default::default()
-        })
+    fn capture_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        self.active_sessions(eCapture).context("Cannot get microphone usage")
+    }
+
+    fn render_sessions(&mut self) -> anyhow::Result<Vec<AudioSession>> {
+        self.active_sessions(eRender)
+            .context("Cannot get audio playback status")
+    }
+
+    fn processes(&mut self) -> anyhow::Result<Vec<ProcessEntry>> {
+        processes().context("Cannot list processes")
+    }
+
+    fn windows(&mut self) -> anyhow::Result<Vec<WindowEntry>> {
+        windows().context("Cannot list windows")
     }
 }
 
-unsafe fn device_sessions(device: &IMMDevice) -> windows::core::Result<Vec<AudioSession>> {
+unsafe fn device_sessions(
+    manager: &IAudioSessionManager2,
+    device_id: &str,
+) -> windows::core::Result<Vec<AudioSession>> {
     unsafe {
-        let device_id = take_string(device.GetId()?);
-        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
         let sessions = manager.GetSessionEnumerator()?;
 
         let mut result = Vec::new();
@@ -83,7 +124,7 @@ unsafe fn device_sessions(device: &IMMDevice) -> windows::core::Result<Vec<Audio
             }
             result.push(AudioSession {
                 process_id: control.GetProcessId()?,
-                device_id: device_id.clone(),
+                device_id: device_id.to_owned(),
             });
         }
         Ok(result)

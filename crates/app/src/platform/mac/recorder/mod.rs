@@ -35,10 +35,6 @@ use crate::recording::pipeline::CaptureBackend;
 use crate::recording::plan::{self, AudioSource, MediaFormat, VideoSource};
 use crate::recording::session::ThreadedRecorder;
 
-/// The most pictures per second asked of ScreenCaptureKit. It sends a picture only when something changed, and the
-/// pipeline takes them at the configured frame rate.
-const MAX_FRAMERATE: u32 = 60;
-
 pub type PlatformRecorder = ThreadedRecorder<MacBackend>;
 
 /// Creates the recorder.
@@ -51,13 +47,17 @@ pub struct MacBackend {
     /// The size pictures are written at, once the output is open; later captures are fitted into it.
     canvas: Option<(u32, u32)>,
     black: Option<Picture>,
+    /// The pictures per second written. ScreenCaptureKit is asked for no more: it sends a picture only when
+    /// something changed, and one more than is written is a copy for nothing.
+    framerate: u32,
 }
 
 impl MacBackend {
-    pub fn create() -> anyhow::Result<Self> {
+    pub fn create(video: &VideoConfig) -> anyhow::Result<Self> {
         Ok(Self {
             canvas: None,
             black: None,
+            framerate: video.framerate,
         })
     }
 }
@@ -92,7 +92,7 @@ impl CaptureBackend for MacBackend {
             &filter,
             &Kind::Pictures {
                 size,
-                framerate: MAX_FRAMERATE,
+                framerate: self.framerate,
             },
         )?;
         Ok((
@@ -229,7 +229,12 @@ mod tests {
     fn the_writer_finishes_an_mp4_with_video_and_audio() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("written.mp4");
-        let mut backend = MacBackend::create().unwrap();
+        let mut backend = MacBackend::create(&VideoConfig {
+            framerate: 30,
+            quality: 70,
+            fallback_bitrate_kbps: 2000,
+        })
+        .unwrap();
         let format = MediaFormat {
             width: 640,
             height: 360,

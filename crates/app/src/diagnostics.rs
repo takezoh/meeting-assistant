@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use anyhow::Context;
 use meeting_assistant_core::{
-    AudioSession, Config, Recorder, RecordingRequest, RuleEvaluator, SignalSource, VideoTarget,
+    AudioSession, Config, Recorder, RecordingRequest, RuleEvaluator, VideoTarget, full_snapshot,
 };
 
 use crate::platform::{self, PlatformSignalSource};
 
 /// Shows the current signals and the verdict of each rule. Used for tuning rules.
 pub fn probe(config: &Config) -> anyhow::Result<()> {
-    let snapshot = PlatformSignalSource::new()?.capture()?;
+    let snapshot = full_snapshot(&mut PlatformSignalSource::new()?)?;
     let names: HashMap<u32, &str> = snapshot
         .processes
         .iter()

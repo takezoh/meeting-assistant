@@ -49,7 +49,7 @@ boundaries:
     statement: "Commands to start a recording of a chosen detected meeting or of the screen, to stop the recording, and to pause automatic recording; a status listing the detected meetings and the recording."
   consumes:
   - id: CONS-001
-    statement: "SignalSource: microphone-using processes, the process tree, windows, device state, extension links and extension-reported meetings."
+    statement: "SignalSource, each read on its own: the audio sessions of capture devices and of playback devices, the process tree, the windows, and the extension's links and reported meetings."
   - id: CONS-002
     statement: "Recorder: start, stop, retarget and take_failure."
   - id: CONS-003
@@ -96,7 +96,7 @@ Decide, from what can be observed about the machine, when the user is in a meeti
 
 ## Responsibilities
 
-`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and the largest window of that app. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after its microphone use has been absent for the grace period. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick.
+`RuleEvaluator` maps a `SignalSnapshot` to the satisfied rule, with the process that uses the microphone resolved to its top-level owner in the process tree and the largest window of that app. `MeetingDetector` follows each meeting (`MeetingKey`: the rule, plus the tab for an extension-reported meeting) on its own and turns the evaluations into a start, after its condition has held for the debounce, and an end, after its microphone use has been absent for the grace period. Ends are reported before starts in the same tick. `RecordingCoordinator` keeps the detected meetings in start order and owns the single recording: when automatic recording is on it records a meeting that starts while nothing is recorded, and passes the recording to a waiting meeting when the recorded one ends; it builds the `RecordingRequest`, starts and stops the recorder, moves the video to another window of the app when the recorded one disappears, and restarts after a failure. A manual start names a detected meeting, recorded as its automatic recording would be, or the screen. `Engine` runs these in order once per tick. It reads the microphone's sessions and the extension's state on every tick, the playback sessions only while some process uses the microphone, and the process tree and the windows while some process uses the microphone or an app's meeting is recorded, whose window it follows. Nothing else uses them, so an idle machine is not searched.
 
 ## Boundaries
 

@@ -303,6 +303,19 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
             }
             *control_flow = ControlFlow::WaitUntil(state.next_tick.unwrap_or(now));
         }
+
+        // Let the panel's page go once the panel has stayed closed long enough, and wake up for it.
+        if let Some(panel) = &mut panel
+            && matches!(*control_flow, ControlFlow::Wait | ControlFlow::WaitUntil(_))
+        {
+            panel.release_if_due(Instant::now());
+            if let Some(due) = panel.release_due() {
+                *control_flow = match *control_flow {
+                    ControlFlow::WaitUntil(next) => ControlFlow::WaitUntil(next.min(due)),
+                    _ => ControlFlow::WaitUntil(due),
+                };
+            }
+        }
     })
 }
 

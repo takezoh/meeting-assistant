@@ -197,6 +197,9 @@ pub fn style_panel(window: &tao::window::Window) -> Surface {
     }
 }
 
+/// WKWebView has no memory setting; hiding the web view is all there is to do, and the panel does that itself.
+pub fn panel_shown(_webview: &wry::WebView, _shown: bool) {}
+
 /// The idle icon is a template that the system tints like the rest of the menu bar, and the menu bar shows the
 /// recording's running time next to the icon.
 pub fn tray_look() -> TrayLook {
