@@ -130,12 +130,21 @@ chrome.tabs.onRemoved.addListener((tab) => {
 
 // ---- Recording
 
-/** Records `tab`; the recording page sends the recording to `upload` itself, presenting `token`. */
+/**
+ * Records `tab`; the recording page sends the recording to `upload` itself, presenting `token`.
+ *
+ * Asking for a stream ID registers a capture of the tab in the browser, which refuses another capture of it while that
+ * one is pending or running. So everything that can fail on its own comes first, the stream ID is used as soon as it is
+ * given, and whatever started is stopped on failure (offscreen.js stops its tracks; this closes the page).
+ */
 async function startRecording(tab, upload, token) {
+  // Refused before anything is touched: the recording under way must not be cleaned up as a failed start.
+  if (recordingTab !== null) {
+    post({ type: "error", tab, message: "Another tab is already being recorded" });
+    return;
+  }
+  recordingTab = tab;
   try {
-    if (recordingTab !== null) throw new Error("Another tab is already being recorded");
-    recordingTab = tab;
-    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab });
     if (!(await chrome.offscreen.hasDocument())) {
       await chrome.offscreen.createDocument({
         url: "offscreen.html",
@@ -147,6 +156,7 @@ async function startRecording(tab, upload, token) {
     const { width, height } = await chrome.tabs.get(tab);
     const ratio = pixelRatios.get(tab) ?? 1;
     const size = width && height ? { width: Math.round(width * ratio), height: Math.round(height * ratio) } : null;
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab });
     const result = await chrome.runtime.sendMessage({
       target: "offscreen",
       type: "start",
@@ -159,16 +169,30 @@ async function startRecording(tab, upload, token) {
     if (result?.error) throw new Error(result.error);
   } catch (error) {
     recordingTab = null;
-    let message = String(error?.message ?? error);
-    if (message.includes("has not been invoked")) {
-      message =
-        "The browser does not allow recording a tab without a user gesture. Start the browser with --allowlisted-extension-id=" +
-        chrome.runtime.id +
-        " added.";
-    }
-    post({ type: "error", tab, message });
-    closeOffscreen();
+    post({ type: "error", tab, message: startFailure(error) });
+    await closeOffscreen();
   }
+}
+
+/** What the app is told when recording a tab cannot start: the browser's reason, explained where it says too little. */
+function startFailure(error) {
+  const message = String(error?.message ?? error);
+  if (message.includes("has not been invoked")) {
+    return (
+      "The browser does not allow recording a tab without a user gesture. Start the browser with --allowlisted-extension-id=" +
+      chrome.runtime.id +
+      " added."
+    );
+  }
+  if (message.includes("active stream")) {
+    // The browser keeps a capture it considers pending or running until it ends or the tab closes; nothing here can
+    // release it. This extension holds none at this point, so it is an earlier attempt's, another extension's or a cast.
+    return (
+      "The browser is still capturing this tab elsewhere, or still holds a capture from an attempt that did not start, " +
+      "and lets it go only when that capture ends or the tab is closed. Close the tab and open the meeting again to record it."
+    );
+  }
+  return message;
 }
 
 function stopRecording() {

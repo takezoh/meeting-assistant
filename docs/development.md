@@ -24,9 +24,10 @@ cargo fmt --all
 cargo clippy --workspace --all-targets
 cargo clippy --workspace --target aarch64-apple-darwin
 cargo test --workspace
+node --test "extension/test/*.test.mjs"
 ```
 
-On macOS, `cargo clippy --workspace --target aarch64-apple-darwin` is the native lint and `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc` type-checks the Windows code. `cargo test` runs the unit tests and the architecture tests. It needs no meeting app, browser, microphone or display. The [testing reference](technical/testing.md) describes each suite and what it does not cover.
+The last line runs the extension's tests with Node's own test runner (Node 22 or later, no packages); on the development Mac Node comes through mise. On macOS, `cargo clippy --workspace --target aarch64-apple-darwin` is the native lint and `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc` type-checks the Windows code. `cargo test` runs the unit tests and the architecture tests. It needs no meeting app, browser, microphone or display. The [testing reference](technical/testing.md) describes each suite and what it does not cover.
 
 To check the real capture path on the current machine:
 

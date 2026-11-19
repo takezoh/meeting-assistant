@@ -108,6 +108,12 @@ failure_responsibilities:
 - id: FAIL-002
   statement: When the extension link cannot be started, the app runs without it and
     the operating system path keeps working.
+- id: FAIL-004
+  statement: A tab recording that fails to start leaves no capture of the tab that this
+    extension could release, and a start refused because one is already recording leaves
+    that recording as it is. The stream ID is asked for only once the recording page exists
+    and is used at once; any track captured is stopped on failure and the page closed. A
+    capture the browser still holds from elsewhere is reported as such, with what releases it.
 - id: FAIL-003
   statement: A microphone that cannot be started leaves the tab recorded with its own
     audio only; a tab recorded as WebM, or a failed merge, leaves the microphone file
@@ -179,6 +185,8 @@ The fixed identifiers are checked by tests in `bundle.rs` (the host name in `bac
 ## Failure Responsibility
 
 Without the switch, `tabCapture` refuses and the extension sends an error that names the switch. A lost connection fails the recording; the coordinator may then start again if the meeting is still reported. If the listener cannot start, the app logs it and continues without tab recording.
+
+Asking for a stream ID registers a capture of the tab in the browser, and Chromium refuses another capture of that tab while the registered one is pending or running ("Cannot capture a tab with an active stream"). Reading Chromium's `tab_capture_registry.cc` on 2026-11-19, such a capture leaves that state only through the media request reporting an end, stop or error, the tab being closed, or the extension being unloaded; there is no timeout, and nothing an extension calls releases it. So the extension orders a start to leave nothing running when it fails (FAIL-004): the recording page is made and the tab's size read before the stream ID is asked for, the ID is used at once, and the page stops every captured track and is closed on failure. A capture left pending by the browser itself, as `--use-fake-ui-for-media-stream` did on 2026-11-18, cannot be released this way; the extension then says so and that closing the tab releases it. Reloading the extension would also release it, but would cut the meeting tab off from the extension until the page is loaded again.
 
 ## Variability
 

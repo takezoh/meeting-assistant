@@ -56,15 +56,17 @@ async function start({ streamId, tab, size, upload, token }) {
       mandatory: { ...source, maxFrameRate: 30, ...(size ? { maxWidth: size.width, maxHeight: size.height } : {}) },
     },
   });
-  const audio = new AudioContext();
+  let audio = null;
   let socket = null;
+  // Stopping the tracks ends the browser's capture of the tab; one left running would refuse every later attempt.
   const release = () => {
     for (const track of tabStream.getTracks()) track.stop();
-    audio.close();
+    audio?.close();
   };
 
   try {
     // Capturing a tab silences it for the user, so play it back so it stays audible.
+    audio = new AudioContext();
     audio.createMediaStreamSource(tabStream).connect(audio.destination);
 
     const recorder = new MediaRecorder(tabStream, {
