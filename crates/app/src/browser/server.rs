@@ -30,10 +30,10 @@ use super::endpoint::Endpoint;
 use super::hub::{CaptureId, ChunkSink, Finished, Hub, Phase, Upload};
 use super::peer::{self, LoopbackPeers, UserId};
 use super::protocol::{
-    Incoming, MAX_FRAME, MAX_HELLO_FRAME, Outgoing, UploadWarning, accept_upload_hello, is_extension_origin,
-    read_frame, read_frame_within, tokens_match, upload_close_outcome, write_frame,
+    Incoming, MAX_FRAME, MAX_HELLO_FRAME, Outgoing, accept_upload_hello, is_extension_origin, read_frame,
+    read_frame_within, tokens_match, upload_close_outcome, write_frame,
 };
-use crate::linked::BrowserPort;
+use crate::linked::{BrowserPort, TabCapture};
 
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -98,6 +98,9 @@ struct State {
     hub: Hub,
     /// Per-connection destination for commands.
     streams: HashMap<u64, TcpStream>,
+    /// When the current recording's upload proved itself. The extension opens it as it starts recording, so this is
+    /// the recording's time zero, give or take the accept loop's poll interval.
+    upload_started: Option<Instant>,
 }
 
 impl State {
@@ -212,7 +215,7 @@ impl BrowserPort for BrowserLinkServer {
     }
 
     /// Writes incoming data to `path`, renamed to the extension of the container the browser records in.
-    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf> {
+    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<TabCapture> {
         // The recording page connects here and nowhere else; the listener lives only until it has.
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .context("Cannot listen for the recording from the extension")?;
@@ -223,6 +226,7 @@ impl BrowserPort for BrowserLinkServer {
         let token = upload.token.clone();
 
         let mut state = self.0.lock();
+        state.upload_started = None;
         let file = File::create(path).with_context(|| format!("Cannot create the output file: {}", path.display()))?;
         let started = state
             .hub
@@ -246,15 +250,17 @@ impl BrowserPort for BrowserLinkServer {
             s.hub.capture_phase() == Some(&Phase::Starting)
         });
         if state.hub.capture_phase() == Some(&Phase::Recording) {
+            let started = state.upload_started.take().unwrap_or_else(Instant::now);
             // The container is known now. Name the file after it before anyone is told where the recording is.
             let extension = state.hub.capture_extension().unwrap_or(naming::RECORDING_EXTENSION);
-            return Ok(match name_for_container(path, extension) {
+            let path = match name_for_container(path, extension) {
                 Ok(written) => written,
                 Err(error) => {
                     log::warn!("Cannot give the recording the .{extension} extension; it keeps its name: {error}");
                     path.to_owned()
                 }
-            });
+            };
+            return Ok(TabCapture { path, started });
         }
 
         // Could not start. Tell the extension to stop in case it is partway into starting, and leave no empty file.
@@ -335,10 +341,7 @@ fn receive_upload(shared: &Shared, listener: &TcpListener, id: CaptureId, token:
         }
         match message {
             Ok(Message::Binary(bytes)) => state.hub.upload_data(id, &bytes),
-            Ok(Message::Text(text)) => match serde_json::from_str::<UploadWarning>(&text) {
-                Ok(warning) => log::warn!("Warning from the extension: {}", warning.warning),
-                Err(_) => log::warn!("Ignored an unexpected text message in the recording upload."),
-            },
+            Ok(Message::Text(_)) => log::warn!("Ignored an unexpected text message in the recording upload."),
             Ok(Message::Close(frame)) => {
                 break Some(upload_close_outcome(
                     frame
@@ -411,7 +414,10 @@ fn accept_upload(shared: &Shared, listener: &TcpListener, id: CaptureId, token: 
             }
             match advance_upload_handshake(connection, token) {
                 Ok(Progress::Proven(socket, mime)) => {
-                    shared.lock().hub.upload_opened(id, mime);
+                    let mut state = shared.lock();
+                    state.upload_started = Some(Instant::now());
+                    state.hub.upload_opened(id, mime);
+                    drop(state);
                     shared.changed.notify_all();
                     return Some(socket);
                 }
@@ -663,8 +669,10 @@ mod tests {
     fn the_recording_page_streams_binary_data_into_the_file_and_closes_it() {
         let upload = upload();
         let mut page = connect(upload.port, &extension_web_origin()).unwrap();
+        let before_hello = Instant::now();
         page.send(hello(TOKEN)).unwrap();
-        page.send(Message::text(r#"{"warning":"no microphone"}"#)).unwrap();
+        // Text after the hello is not part of the recording.
+        page.send(Message::text(r#"{"note":"ignored"}"#)).unwrap();
         page.send(Message::binary(b"\x1a\x45\xdf\xa3".to_vec())).unwrap();
         page.send(Message::binary(vec![7u8; 300_000])).unwrap();
         page.close(None).unwrap();
@@ -674,6 +682,15 @@ mod tests {
 
         assert_eq!(phase(&upload.shared), Some(Phase::Stopped));
         assert_eq!(upload.shared.lock().hub.capture_extension(), Some("webm"));
+        let started = upload
+            .shared
+            .lock()
+            .upload_started
+            .expect("the hello's arrival is kept");
+        assert!(
+            started >= before_hello,
+            "the recording's time zero is when the hello arrived"
+        );
         let written = upload.sink.0.lock().unwrap();
         assert_eq!(written.len(), 4 + 300_000);
         assert_eq!(&written[..4], b"\x1a\x45\xdf\xa3");

@@ -48,7 +48,7 @@ Then join a test call in a desktop meeting app. The tray icon should turn red a 
 Browser meetings are detected and recorded only through the extension. The meeting tab alone is recorded, and a call is detected when it connects rather than when the microphone is used.
 
 1. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, choose **Load unpacked** and select `%LOCALAPPDATA%\Programs\MeetingAssistant\extension`.
-2. The extension's options page opens. Allow the microphone there, so that your own voice is recorded. If the browser refuses without asking, the page says so: choose **Open microphone settings** and set Microphone to **Allow**.
+2. The extension's options page opens and shows the launch option the browser needs. The extension does not use the microphone: the app records your voice itself and adds it to the tab's recording.
 3. Quit the browser completely, including background processes, and start it from the shortcut the installer created (`Google Chrome (Meeting Assistant)` or `Microsoft Edge (Meeting Assistant)`). Keep using that shortcut.
 
 The shortcut starts the browser with:
@@ -114,7 +114,7 @@ Recording a desktop app or the screen needs two permissions, which macOS asks fo
 | Permission | Where | Without it |
 | --- | --- | --- |
 | Screen & System Audio Recording | System Settings > Privacy & Security. Turn on **Meeting Assistant**, then quit and start it again | Recordings of desktop apps and of the screen fail to start; browser tabs are recorded by the extension and are not affected |
-| Microphone | System Settings > Privacy & Security > Microphone | Recordings have no microphone |
+| Microphone | System Settings > Privacy & Security > Microphone | The microphone track of every recording, browser tabs included, is silent |
 
 The app is signed ad hoc, so after an update macOS may treat it as a new app and ask again, or list it twice; turn the new entry on.
 

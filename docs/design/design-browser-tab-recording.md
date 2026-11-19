@@ -10,7 +10,7 @@ responsibilities:
   statement: Detect in the browser that a page on a supported meeting site holds a
     connected call and report it to the app.
 - id: RESP-002
-  statement: Record one tab and the microphone inside the browser on the app's command
+  statement: Record one tab's video and audio inside the browser on the app's command
     and deliver the data to the app.
 - id: RESP-003
   statement: Track extension connections, reported meetings and the single tab recording,
@@ -18,6 +18,9 @@ responsibilities:
 - id: RESP-004
   statement: Present the extension path and the operating system path as one signal
     source and one recorder.
+- id: RESP-005
+  statement: Record the user's microphone in the app beside a tab recording, and add
+    it to the tab's file as its second audio track when the tab recording ends.
 invariants:
 - id: INV-001
   statement: The app holds at most one tab recording across all connections.
@@ -46,11 +49,22 @@ invariants:
   statement: The extension ID, the host name and the message types are identical in
     the app and in the extension.
   enforcement: test
+- id: INV-007
+  statement: The microphone recording starts before the extension is asked to start,
+    so that it covers the whole tab recording, and is stopped and added after the tab
+    recording has ended or failed. A tab that cannot start leaves no microphone file.
+  enforcement: test
+- id: INV-008
+  statement: Adding the microphone copies every byte of the tab recording's fragments
+    and places the microphone on its timeline, whose zero is when the upload proved
+    itself. When adding fails, the tab's file is as the browser wrote it and the microphone
+    file stays beside it.
+  enforcement: test
 boundaries:
   provides:
   - id: PROV-001
-    statement: 'BrowserPort: snapshot of links and meetings, start_capture, stop_capture,
-      take_failure.'
+    statement: 'BrowserPort: snapshot of links and meetings, start_capture (the file
+      and the recording''s time zero), stop_capture, take_failure.'
   - id: PROV-002
     statement: The wire protocol in docs/technical/browser-link.md.
   consumes:
@@ -63,6 +77,10 @@ boundaries:
   - id: CONS-003
     statement: 'LoopbackPeers: the user that owns the other end of a loopback connection,
       and the user the app runs as.'
+  - id: CONS-004
+    statement: 'MicrophoneRecorder: the capture pipeline on its microphone-only plan.
+      MicrophoneMerge: recording::merge, with recording::mp4 behind its Remuxer and
+      the file system behind RecordingFiles.'
   forbidden:
   - id: FORB-001
     statement: Socket or file access from browser/hub or browser/protocol.
@@ -90,6 +108,10 @@ failure_responsibilities:
 - id: FAIL-002
   statement: When the extension link cannot be started, the app runs without it and
     the operating system path keeps working.
+- id: FAIL-003
+  statement: A microphone that cannot be started leaves the tab recorded with its own
+    audio only; a tab recorded as WebM, or a failed merge, leaves the microphone file
+    beside the recording. Each is logged, and none fails the recording.
 trust_boundaries:
 - id: TRUST-001
   statement: The browser starts the relay only for the extension ID in the native-host
@@ -122,6 +144,8 @@ source_paths:
 - docs/technical/browser-link.md
 - crates/app/src/platform/mac/peers.rs
 - crates/app/src/platform/win/peers.rs
+- crates/app/src/recording/merge.rs
+- crates/app/src/recording/mp4.rs
 summary: Contract between the extension, the relay and the app for detecting browser
   calls and recording a single tab.
 ---
@@ -132,13 +156,15 @@ Record a browser meeting as its tab rather than its window, and detect it from t
 
 ## Responsibilities
 
-In the browser, `hook.js` observes `RTCPeerConnection` in the page, `bridge.js` forwards the state, `background.js` reports meetings and executes start and stop, and `offscreen.js` records with `MediaRecorder`. The relay is the same executable started by the browser as a native-messaging host; it only copies frames. In the app, `protocol` defines messages and framing, `hub` is the state machine, `server` owns the socket, the threads and the file, and `linked` routes a `VideoTarget::BrowserTab` request to the extension and everything else to the platform recorder.
+In the browser, `hook.js` observes `RTCPeerConnection` in the page, `bridge.js` forwards the state, `background.js` reports meetings and executes start and stop, and `offscreen.js` records the tab's video and audio with `MediaRecorder`. It does not record the microphone: Chrome 157 refuses it to the offscreen document even with the permission granted ([the issue](../issue/issue-20261118-the-extension-cannot-capture-the-microph.md)), so the app records it. The relay is the same executable started by the browser as a native-messaging host; it only copies frames. In the app, `protocol` defines messages and framing, `hub` is the state machine, `server` owns the socket, the threads and the file, and `linked` routes a `VideoTarget::BrowserTab` request to the extension and everything else to the platform recorder.
 
 ## Boundaries
 
 The hub decides and the server acts: the hub receives parsed control messages and the upload's events, and returns the commands to send; it writes recording bytes only to a `ChunkSink`. The recording goes from the offscreen document to the app over its own WebSocket rather than through native messaging, which carries only JSON, so the data is never base64-encoded or copied through the service worker and the relay. See [ADR: binary upload](../adr/adr-20261118-send-tab-recordings-to-the-app-over-a-we.md). The extension holds no policy. It reports what it sees and records when told, so that the rules for when to record stay in `crates/core`.
 
 A tab recording does not pass through the capture pipeline. Its video and audio settings are the extension's, not `config.toml`'s.
+
+The user's microphone does: `LinkedRecorder` starts the pipeline's microphone-only recording beside the tab's file (`<recording>.microphone.m4a`) before it asks the extension to start, keeps the moment the upload proved itself as the tab's time zero, and after the tab recording ends hands both to `MicrophoneMerge`. `recording::merge` decides where the microphone goes (the part before the tab's zero is dropped, the rest cut at the tab's end) and that the result replaces the tab's file only once it is complete. `recording::mp4` writes it by rewriting the tab's `moov` and appending fragments for the new track, copying the tab's own fragments byte for byte. Re-muxing through AVFoundation was tried and rejected: it reads the browser's fragment timing differently from the fragments' `tfdt` and shortened the video of a 13-minute recording by 9.6 seconds.
 
 ## Invariants
 
@@ -158,7 +184,7 @@ Detection inside the page is a heuristic and may be replaced per site. The conta
 
 ## Conformance
 
-`browser/{protocol,hub}.rs`, `linked.rs` and `bundle.rs` carry the unit tests. The real path through a browser was checked by hand in Chrome and Edge and is recorded in the verification note; it is not covered by automated tests.
+`browser/{protocol,hub}.rs`, `linked.rs`, `recording/{merge,mp4}.rs` and `bundle.rs` carry the unit tests; `linked.rs` checks the order of starting, stopping and merging and what each failure leaves. The real path through a browser was checked by hand in Chrome and Edge and is recorded in the verification note; it is not covered by automated tests.
 
 ## Related Decisions
 

@@ -10,10 +10,11 @@ use std::time::Duration;
 
 use meeting_assistant_core::{Config, Engine, Notice, NoticeLevel, RecordingCoordinator};
 
-use crate::adapters::real_ports;
+use crate::adapters::{DiskFiles, Mp4Remuxer, real_ports};
 use crate::browser::BrowserLinkServer;
 use crate::linked::{LinkedRecorder, LinkedSignalSource};
 use crate::platform::{self, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource};
+use crate::recording::merge::Merger;
 use crate::worker::{self, Command, Update};
 
 /// Starts the thread that runs detection and recording.
@@ -45,7 +46,7 @@ pub fn spawn_engine(
 
 type AppEngine = Engine<
     LinkedSignalSource<PlatformSignalSource, BrowserLinkServer>,
-    LinkedRecorder<PlatformRecorder, BrowserLinkServer>,
+    LinkedRecorder<PlatformRecorder, BrowserLinkServer, PlatformRecorder, Merger<Mp4Remuxer, DiskFiles>>,
 >;
 
 fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<AppEngine> {
@@ -57,6 +58,9 @@ fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<Ap
     let recorder = LinkedRecorder::new(
         platform::recorder(config.video.clone(), config.audio.clone()),
         browser.clone(),
+        // A second recorder records the microphone beside a browser tab recording.
+        platform::recorder(config.video.clone(), config.audio.clone()),
+        Merger::new(Mp4Remuxer, DiskFiles),
     );
     let coordinator =
         RecordingCoordinator::new(recorder, real_ports(output_directory)).with_capture_scope(config.capture_scope);

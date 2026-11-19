@@ -1,14 +1,15 @@
 //! How one recording proceeds. It touches the OS only through a port ([`CaptureBackend`]).
 //!
-//! At a fixed interval, writes the latest picture and the audio for that interval. While the picture does not change,
-//! the same picture keeps being written, so video and audio times always advance together.
+//! At a fixed interval, writes the latest picture and, for each audio track, the sound of that interval. While the
+//! picture does not change, the same picture keeps being written, so video and audio times always advance together.
+//! Each audio track has its own source and is written on its own; a track without a source is written as silence.
 
 use std::path::Path;
 use std::time::Duration;
 
-use meeting_assistant_core::{AudioConfig, RecordingRequest, VideoConfig};
+use meeting_assistant_core::VideoConfig;
 
-use super::plan::{self, AudioSource, CHANNELS, MediaFormat, SAMPLE_RATE, VideoSource};
+use super::plan::{self, AudioSource, CHANNELS, CapturePlan, MediaFormat, SAMPLE_RATE, VideoPlan, VideoSource};
 use super::timeline::Timeline;
 
 /// Upper limit on waiting for the first picture after capture starts.
@@ -52,7 +53,15 @@ pub trait CaptureBackend {
         time: i64,
         duration: i64,
     ) -> anyhow::Result<()>;
-    fn write_audio(&mut self, writer: &mut Self::Writer, pcm: &[i16], time: i64, duration: i64) -> anyhow::Result<()>;
+    /// Writes sound to the audio track at `track`, an index into [`MediaFormat::audio_tracks`].
+    fn write_audio(
+        &mut self,
+        writer: &mut Self::Writer,
+        track: usize,
+        pcm: &[i16],
+        time: i64,
+        duration: i64,
+    ) -> anyhow::Result<()>;
     /// Writes out the rest and finalizes the file.
     fn finalize(&mut self, writer: Self::Writer) -> anyhow::Result<()>;
 }
@@ -74,71 +83,84 @@ pub trait Control {
 pub struct Pipeline<B: CaptureBackend> {
     // Release the capture and output first, then do the OS-side cleanup (fields are dropped in declaration order).
     video: Option<B::Video>,
-    audio: Vec<B::Audio>,
+    /// One entry per audio track, in the file's order; `None` for a track written as silence.
+    audio: Vec<Option<B::Audio>>,
     writer: B::Writer,
-    picture: B::Picture,
+    /// The picture being written; `None` when the file has no video track.
+    picture: Option<B::Picture>,
     backend: B,
     framerate: u32,
-    mix: Vec<i16>,
+    block: Vec<i16>,
 }
 
 impl<B: CaptureBackend> Pipeline<B> {
-    /// Prepares capture and writing. Returns once recording is ready.
+    /// Prepares capture and writing to `output_path`. Returns once recording is ready.
     pub fn open(
         mut backend: B,
-        request: &RecordingRequest,
+        plan: &CapturePlan,
+        output_path: &Path,
         video_config: &VideoConfig,
-        audio_config: &AudioConfig,
         pacer: &mut dyn Pacer,
     ) -> anyhow::Result<Self> {
-        let source = plan::video_source(&request.video)?;
         let mut video = None;
         let mut source_size = None;
-        if let Some(source) = &source {
+        if let VideoPlan::Capture(source) = &plan.video {
             let (opened, size) = backend.open_video(source)?;
             video = Some(opened);
             source_size = Some(size);
         }
         let (width, height) = plan::canvas_size(source_size);
 
-        // Even if an audio input is unavailable, keep recording with the rest.
+        // A source that cannot be opened leaves its track silent; nothing else takes its place.
         let mut audio = Vec::new();
         let mut labels = Vec::new();
-        for audio_source in plan::audio_sources(request, audio_config) {
-            match backend.open_audio(&audio_source) {
-                Ok(opened) => {
-                    audio.push(opened);
-                    labels.push(audio_source.label());
+        for (track, source) in &plan.tracks {
+            let opened = source.as_ref().and_then(|source| match backend.open_audio(source) {
+                Ok(opened) => Some((opened, source.label())),
+                Err(error) => {
+                    log::warn!(
+                        "{} will not be recorded; its track stays silent: {error:#}",
+                        source.label()
+                    );
+                    None
                 }
-                Err(error) => log::warn!("{} will not be recorded: {error:#}", audio_source.label()),
-            }
+            });
+            let label = opened
+                .as_ref()
+                .map_or_else(|| "silence".to_owned(), |(_, label)| label.clone());
+            labels.push(format!("{}: {label}", track.label()));
+            audio.push(opened.map(|(opened, _)| opened));
         }
 
+        let has_video = plan.video != VideoPlan::None;
         let format = MediaFormat {
             width,
             height,
             framerate: video_config.framerate,
             quality: video_config.quality,
             fallback_bitrate: video_config.fallback_bitrate_kbps * 1000,
-            has_audio: !audio.is_empty(),
+            has_video,
+            audio_tracks: plan.tracks.iter().map(|(track, _)| *track).collect(),
         };
-        let writer = backend.open_writer(&request.output_path, &format)?;
+        let writer = backend.open_writer(output_path, &format)?;
 
-        let picture = match (&mut video, &source) {
-            (Some(video), Some(source)) => first_picture(&mut backend, video, source, pacer)?,
-            _ => backend.black_picture()?,
+        let picture = match (&mut video, &plan.video) {
+            (Some(video), VideoPlan::Capture(source)) => Some(first_picture(&mut backend, video, source, pacer)?),
+            _ if has_video => Some(backend.black_picture()?),
+            _ => None,
         };
 
-        log::info!(
-            "recording is ready: {} {width}x{height} {}fps audio [{}]",
-            match &source {
-                Some(VideoSource::Window(_)) => "window",
-                Some(VideoSource::Display(_)) => "display",
-                None => "no video target",
-            },
-            video_config.framerate,
-            labels.join(", "),
-        );
+        let video_label = match &plan.video {
+            VideoPlan::Capture(VideoSource::Window(_)) => {
+                format!("window {width}x{height} {}fps", video_config.framerate)
+            }
+            VideoPlan::Capture(VideoSource::Display(_)) => {
+                format!("display {width}x{height} {}fps", video_config.framerate)
+            }
+            VideoPlan::Blank => format!("no video target {width}x{height} {}fps", video_config.framerate),
+            VideoPlan::None => "no video".to_owned(),
+        };
+        log::info!("recording is ready: {video_label} audio [{}]", labels.join(", "));
         Ok(Self {
             video,
             audio,
@@ -146,7 +168,7 @@ impl<B: CaptureBackend> Pipeline<B> {
             picture,
             backend,
             framerate: video_config.framerate,
-            mix: Vec::new(),
+            block: Vec::new(),
         })
     }
 
@@ -193,27 +215,38 @@ impl<B: CaptureBackend> Pipeline<B> {
             if let Some(video) = &mut self.video
                 && let Some(picture) = self.backend.take_picture(video)?
             {
-                self.picture = picture;
+                self.picture = Some(picture);
             }
 
             let step = timeline.step();
-            self.backend
-                .write_video(&mut self.writer, &self.picture, step.video_time, step.video_duration)?;
-            if !self.audio.is_empty() {
-                self.mix.clear();
-                self.mix.resize(step.audio_frames * CHANNELS, 0);
-                for audio in &mut self.audio {
-                    self.backend.mix_audio(audio, &mut self.mix);
-                }
+            if let Some(picture) = &self.picture {
                 self.backend
-                    .write_audio(&mut self.writer, &self.mix, step.audio_time, step.audio_duration)?;
+                    .write_video(&mut self.writer, picture, step.video_time, step.video_duration)?;
+            }
+            for (track, audio) in self.audio.iter_mut().enumerate() {
+                self.block.clear();
+                self.block.resize(step.audio_frames * CHANNELS, 0);
+                if let Some(audio) = audio {
+                    self.backend.mix_audio(audio, &mut self.block);
+                }
+                self.backend.write_audio(
+                    &mut self.writer,
+                    track,
+                    &self.block,
+                    step.audio_time,
+                    step.audio_duration,
+                )?;
             }
         }
         Ok(())
     }
 
-    /// Moves the video target to another window. If that fails, continues with the previous video.
+    /// Moves the video target to another window. If that fails, continues with the previous video. A recording without
+    /// a video track has no window to move to.
     fn switch_window(&mut self, window: u64) {
+        if self.picture.is_none() {
+            return;
+        }
         match self.backend.open_video(&VideoSource::Window(window)) {
             Ok((video, _)) => {
                 self.video = Some(video);
@@ -264,6 +297,7 @@ pub mod fakes {
             duration: i64,
         },
         Audio {
+            track: usize,
             samples: Vec<i16>,
             time: i64,
             duration: i64,
@@ -289,8 +323,10 @@ pub mod fakes {
         pub failing_audio: Vec<AudioSource>,
         /// While true, video capture fails.
         pub video_broken: bool,
-        /// Sound value to mix, per input.
+        /// Sound value an app or output device input adds.
         pub audio_level: i16,
+        /// Sound value a microphone input adds, so that tests can tell the tracks apart.
+        pub microphone_level: i16,
     }
 
     #[derive(Clone)]
@@ -301,6 +337,7 @@ pub mod fakes {
             Self(Arc::new(Mutex::new(BackendState {
                 video_size: (1280, 720),
                 audio_level: 1,
+                microphone_level: 20,
                 ..Default::default()
             })))
         }
@@ -323,6 +360,18 @@ pub mod fakes {
                     } else {
                         None
                     }
+                })
+                .collect()
+        }
+
+        /// The sound written to each audio track, one block per write.
+        pub fn written_audio(&self, track: usize) -> Vec<Vec<i16>> {
+            self.state()
+                .written
+                .iter()
+                .filter_map(|w| match w {
+                    Written::Audio { track: t, samples, .. } if *t == track => Some(samples.clone()),
+                    _ => None,
                 })
                 .collect()
         }
@@ -365,8 +414,12 @@ pub mod fakes {
             Ok("black".to_owned())
         }
 
-        fn mix_audio(&mut self, _audio: &mut AudioSource, out: &mut [i16]) {
-            let level = self.state().audio_level;
+        fn mix_audio(&mut self, audio: &mut AudioSource, out: &mut [i16]) {
+            let state = self.state();
+            let level = match audio {
+                AudioSource::Microphone(_) => state.microphone_level,
+                _ => state.audio_level,
+            };
             for sample in out {
                 *sample += level;
             }
@@ -381,8 +434,16 @@ pub mod fakes {
             Ok(())
         }
 
-        fn write_audio(&mut self, _: &mut (), pcm: &[i16], time: i64, duration: i64) -> anyhow::Result<()> {
+        fn write_audio(
+            &mut self,
+            _: &mut (),
+            track: usize,
+            pcm: &[i16],
+            time: i64,
+            duration: i64,
+        ) -> anyhow::Result<()> {
             self.state().written.push(Written::Audio {
+                track,
                 samples: pcm.to_vec(),
                 time,
                 duration,
@@ -449,8 +510,9 @@ pub mod fakes {
 
 #[cfg(test)]
 mod tests {
-    use meeting_assistant_core::VideoTarget;
+    use meeting_assistant_core::{AudioConfig, RecordingRequest, VideoTarget};
 
+    use super::super::plan::Track;
     use super::fakes::*;
     use super::*;
 
@@ -464,6 +526,15 @@ mod tests {
         }
     }
 
+    fn open_request(
+        backend: &FakeBackend,
+        request: &RecordingRequest,
+        pacer: &mut FakePacer,
+    ) -> anyhow::Result<Pipeline<FakeBackend>> {
+        let plan = plan::meeting_plan(request, &AudioConfig::default())?;
+        Pipeline::open(backend.clone(), &plan, &request.output_path, &video_config(), pacer)
+    }
+
     fn video_config() -> VideoConfig {
         VideoConfig {
             framerate: 30,
@@ -473,13 +544,7 @@ mod tests {
     }
 
     fn open(backend: &FakeBackend, video: VideoTarget) -> anyhow::Result<Pipeline<FakeBackend>> {
-        Pipeline::open(
-            backend.clone(),
-            &request(video, Some(100)),
-            &video_config(),
-            &AudioConfig::default(),
-            &mut FakePacer::default(),
-        )
+        open_request(backend, &request(video, Some(100)), &mut FakePacer::default())
     }
 
     /// Opens window 7 with its first picture "first" already arrived.
@@ -509,7 +574,8 @@ mod tests {
                 framerate: 30,
                 quality: 70,
                 fallback_bitrate: 4_000_000,
-                has_audio: true
+                has_video: true,
+                audio_tracks: vec![Track::OtherSide, Track::Microphone],
             })
         );
     }
@@ -526,40 +592,81 @@ mod tests {
     }
 
     #[test]
-    fn records_with_the_remaining_inputs_when_an_audio_input_cannot_be_captured() {
+    fn a_track_whose_input_cannot_be_captured_is_written_as_silence_and_not_substituted() {
         let backend = FakeBackend::default();
         backend.state().failing_audio = vec![AudioSource::ProcessAudio(100)];
         backend.state().pictures.push_back(Some("first".into()));
-        open(&backend, VideoTarget::Window(7)).unwrap();
-
-        let state = backend.state();
+        let pipeline = open(&backend, VideoTarget::Window(7)).unwrap();
         assert_eq!(
-            state.opened_audio,
+            backend.state().opened_audio,
             [AudioSource::Microphone(None)],
             "output device audio is not substituted"
         );
-        assert!(state.format.as_ref().unwrap().has_audio);
+        assert_eq!(
+            backend.state().format.as_ref().unwrap().audio_tracks,
+            [Track::OtherSide, Track::Microphone],
+            "the file keeps both tracks"
+        );
+
+        pipeline
+            .run(&mut StopAfter::steps(2), &mut FakePacer::default())
+            .unwrap();
+
+        let other_side = backend.written_audio(0);
+        assert_eq!(other_side.len(), 2);
+        assert!(other_side.iter().flatten().all(|&sample| sample == 0), "silence");
+        assert!(backend.written_audio(1).iter().flatten().all(|&sample| sample == 20));
     }
 
     #[test]
-    fn records_video_only_when_no_audio_input_is_available() {
+    fn both_tracks_are_silent_when_no_audio_input_is_available() {
         let backend = FakeBackend::default();
         backend.state().failing_audio = vec![AudioSource::ProcessAudio(100), AudioSource::Microphone(None)];
         backend.state().pictures.push_back(Some("first".into()));
         let pipeline = open(&backend, VideoTarget::Window(7)).unwrap();
-        assert!(!backend.state().format.as_ref().unwrap().has_audio);
 
         pipeline
             .run(&mut StopAfter::steps(3), &mut FakePacer::default())
             .unwrap();
 
+        for track in [0, 1] {
+            let written = backend.written_audio(track);
+            assert_eq!(written.len(), 3);
+            assert!(written.iter().flatten().all(|&sample| sample == 0));
+        }
+    }
+
+    #[test]
+    fn the_microphone_alone_is_recorded_without_video() {
+        let backend = FakeBackend::default();
+        let pipeline = Pipeline::open(
+            backend.clone(),
+            &plan::microphone_plan(&AudioConfig::default(), None),
+            Path::new("mic.m4a"),
+            &video_config(),
+            &mut FakePacer::default(),
+        )
+        .unwrap();
+        let format = backend.state().format.clone().unwrap();
+        assert!(!format.has_video);
+        assert_eq!(format.audio_tracks, [Track::Microphone]);
+        assert!(backend.state().opened_video.is_empty());
+
+        let mut control = StopAfter {
+            retargets: vec![(1, 8)],
+            ..StopAfter::steps(2)
+        };
+        pipeline.run(&mut control, &mut FakePacer::default()).unwrap();
+
+        assert!(backend.written_pictures().is_empty(), "no video is written");
         assert!(
-            backend
-                .state()
-                .written
-                .iter()
-                .all(|w| matches!(w, Written::Video { .. }))
+            backend.state().opened_video.is_empty(),
+            "a window cannot be given to it"
         );
+        let microphone = backend.written_audio(0);
+        assert_eq!(microphone.len(), 2);
+        assert!(microphone.iter().flatten().all(|&sample| sample == 20));
+        assert!(backend.state().finalized);
     }
 
     #[test]
@@ -588,14 +695,7 @@ mod tests {
     fn starts_with_a_black_picture_when_the_window_delivers_no_picture() {
         let backend = FakeBackend::default();
         let mut pacer = FakePacer::default();
-        let pipeline = Pipeline::open(
-            backend.clone(),
-            &request(VideoTarget::Window(7), None),
-            &video_config(),
-            &AudioConfig::default(),
-            &mut pacer,
-        )
-        .unwrap();
+        let pipeline = open_request(&backend, &request(VideoTarget::Window(7), None), &mut pacer).unwrap();
         assert!(
             pacer.now >= FIRST_PICTURE_TIMEOUT,
             "wait for it to arrive before giving up"
@@ -639,50 +739,49 @@ mod tests {
     }
 
     #[test]
-    fn writes_video_and_audio_alternately_at_the_same_time() {
+    fn writes_video_and_each_audio_track_at_the_same_time() {
         let (backend, pipeline) = opened_window();
         pipeline
             .run(&mut StopAfter::steps(2), &mut FakePacer::default())
             .unwrap();
 
         let state = backend.state();
-        let times: Vec<(bool, i64, i64)> = state
+        let times: Vec<(Option<usize>, i64, i64)> = state
             .written
             .iter()
             .map(|w| match w {
-                Written::Video { time, duration, .. } => (true, *time, *duration),
-                Written::Audio { time, duration, .. } => (false, *time, *duration),
+                Written::Video { time, duration, .. } => (None, *time, *duration),
+                Written::Audio {
+                    track, time, duration, ..
+                } => (Some(*track), *time, *duration),
             })
             .collect();
         assert_eq!(
             times,
             [
-                (true, 0, 333_333),
-                (false, 0, 333_333),
-                (true, 333_333, 333_333),
-                (false, 333_333, 333_333)
+                (None, 0, 333_333),
+                (Some(0), 0, 333_333),
+                (Some(1), 0, 333_333),
+                (None, 333_333, 333_333),
+                (Some(0), 333_333, 333_333),
+                (Some(1), 333_333, 333_333)
             ]
         );
     }
 
     #[test]
-    fn audio_adds_all_inputs_and_is_written_one_picture_at_a_time() {
+    fn each_track_holds_only_its_own_input_one_picture_at_a_time() {
         let (backend, pipeline) = opened_window();
         backend.state().audio_level = 3;
         pipeline
             .run(&mut StopAfter::steps(1), &mut FakePacer::default())
             .unwrap();
 
-        let state = backend.state();
-        let Some(Written::Audio { samples, .. }) = state.written.iter().find(|w| matches!(w, Written::Audio { .. }))
-        else {
-            panic!("audio was not written");
-        };
-        assert_eq!(samples.len(), 1_600 * CHANNELS, "one picture at 30fps");
-        assert!(
-            samples.iter().all(|&sample| sample == 6),
-            "the sound of the two inputs is added"
-        );
+        let other_side = backend.written_audio(0);
+        let microphone = backend.written_audio(1);
+        assert_eq!(other_side[0].len(), 1_600 * CHANNELS, "one picture at 30fps");
+        assert!(other_side[0].iter().all(|&sample| sample == 3), "only the app's sound");
+        assert!(microphone[0].iter().all(|&sample| sample == 20), "only the microphone");
     }
 
     #[test]

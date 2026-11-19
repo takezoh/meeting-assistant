@@ -30,4 +30,4 @@ On one Mac (macOS 26) on 2026-11-19, see [the verification note](../note/note-20
 
 ## Context for follow-up
 
-The installer is in `crates/app/src/platform/mac/install.rs` and the decision to install a self-copied executable is in [the self-installing ADR](../adr/adr-20261117-self-installing-per-user-executable.md). Whether the Microphone permission is affected the same way was not checked. The handoff in [the macOS handoff note](../note/note-20261118-macos-recording-and-os-microphone-handof.md) lists this as step 4.
+The installer is in `crates/app/src/platform/mac/install.rs` and the decision to install a self-copied executable is in [the self-installing ADR](../adr/adr-20261117-self-installing-per-user-executable.md). The Microphone permission is affected too: after the `--install` of 10:51 on 2026-11-19, macOS asked for the microphone again when the next browser tab recording started, and that recording waited for the answer, so the first seconds of the call were not recorded ([verification note](../note/note-20261119-two-audio-tracks-verification-2026-11-19.md)).

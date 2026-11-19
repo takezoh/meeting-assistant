@@ -54,7 +54,11 @@ With the default `capture_scope = "app"`:
 | --- | --- | --- |
 | Video | One window: the largest window of the app | The meeting tab |
 | Other side's audio | Audio played by the app's top-level process and its descendants | Audio of the tab |
-| Your audio | The microphone | The microphone |
+| Your audio | The microphone | The microphone, recorded by the app beside the tab |
+
+Every recording has two audio tracks in this order: the other side's audio first, your microphone second. They are not mixed, so that a recording turned into minutes keeps who said what. A source that is turned off in the configuration or cannot be captured leaves its track silent; the order does not change.
+
+For a browser meeting the extension records the tab, and the app records the microphone beside it in a file named `<recording>.microphone.m4a`. When the meeting ends, the app adds the microphone to the tab's file as its second audio track without re-encoding either, and removes the separate file. If that fails, or the browser recorded WebM, the tab's file stays as the browser wrote it and the microphone file stays beside it; the log says so.
 
 - The picture size is fixed when the recording starts. If the window is resized, the picture is scaled to fit with its aspect ratio kept and the rest filled with black.
 - If the recorded window closes, recording moves to another window of the same app. If there is none, the last picture stays and audio continues.
@@ -94,6 +98,7 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 - The browser switch that permits automatic tab recording, `--allowlisted-extension-id`, is undocumented and intended for testing. It worked in Chrome and Edge on 2026-11-17. A later browser version may remove it; recording then does not start and the log says why.
 - On macOS the installer, start at login, the extension path and finalization on quit, update and uninstall were run on one Mac with synthetic meetings on 2026-11-18. A real logout during a recording, the browser launchers and the menu bar appearance were not checked.
 - On macOS, recording the display with all output audio and the microphone was observed on one Mac on 2026-11-19, through the self-test and manual screen recordings, after a defect that dropped all output audio was fixed. Recording a meeting app's window and audio has not been observed, nor whether an app's audio includes what its helper processes play. Each update of the app currently makes macOS stop honouring its Screen & System Audio Recording permission until it is granted again; see [the issue](docs/issue/issue-20261119-every-update-drops-the-macos-screen-reco.md).
+- The microphone recorded by the app and added to a browser tab recording was observed once, on one Mac on 2026-11-19, in a 15-second Google Meet call without other participants: the voice was in the second audio track and the tab's own tracks were copied unchanged. How well the microphone lines up with the other side's audio has not been measured. On Windows the two audio tracks and this merge have only been type-checked.
 - The tray menu, the status panel and notifications were not inspected by an automated test; their logic is tested, their appearance is not. On one Mac on 2026-11-18 the panel, the menu bar icon and its running time were looked at by the user, with a stand-in for the extension reporting synthetic meetings; on Windows they have not been observed.
 - The status panel needs the system web view. On Windows this is the WebView2 runtime; without it only the menu is available.
 - Long recordings, several displays with different scaling, and protected content have not been measured.

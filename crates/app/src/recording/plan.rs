@@ -48,6 +48,46 @@ impl AudioSource {
     }
 }
 
+/// The audio tracks of a recording, in the order they are written to the file. Analysis relies on the order: the other
+/// side first, the user's microphone second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Track {
+    /// What the meeting plays: the meeting app's audio, or all output audio.
+    OtherSide,
+    /// The user's microphone.
+    Microphone,
+}
+
+impl Track {
+    /// Name shown in logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OtherSide => "other side",
+            Self::Microphone => "microphone",
+        }
+    }
+}
+
+/// The video of a recording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoPlan {
+    /// No video track: a recording of sound alone.
+    None,
+    /// A video track that starts black, for a recording started without a target.
+    Blank,
+    /// A video track of this target.
+    Capture(VideoSource),
+}
+
+/// What one recording captures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturePlan {
+    pub video: VideoPlan,
+    /// Every audio track of the file, in order, with the source that fills it. A track without a source, or whose
+    /// source cannot be captured, holds silence: the layout of the file does not depend on what could be captured.
+    pub tracks: Vec<(Track, Option<AudioSource>)>,
+}
+
 /// Format of the file to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaFormat {
@@ -58,36 +98,48 @@ pub struct MediaFormat {
     pub quality: u32,
     /// Average bitrate (bps) for encoders that do not support a quality setting.
     pub fallback_bitrate: u32,
-    pub has_audio: bool,
+    /// Whether the file has a video track. Without one, the size and video settings are not used.
+    pub has_video: bool,
+    /// The audio tracks, in the order they are written.
+    pub audio_tracks: Vec<Track>,
 }
 
-/// What to capture as video. `None` when starting without a target.
-pub fn video_source(target: &VideoTarget) -> anyhow::Result<Option<VideoSource>> {
-    match target {
-        VideoTarget::Window(window) => Ok(Some(VideoSource::Window(*window))),
-        VideoTarget::Display(display) => Ok(Some(VideoSource::Display(display.clone()))),
-        VideoTarget::Blank => Ok(None),
-        VideoTarget::BrowserTab(_) => anyhow::bail!("a browser tab can only be recorded through the browser extension"),
-    }
-}
-
-/// What to capture as audio.
+/// The plan for recording a meeting or the screen: video of the target, and two audio tracks, the other side and the
+/// microphone.
 ///
-/// For the other party's audio, if the target app is known, only that app's audio is used.
-/// If the app's audio cannot be captured, we do not substitute all sound from the output device
-/// (so that a user who meant to record only the app is not silently recorded with other sounds).
-pub fn audio_sources(request: &RecordingRequest, config: &AudioConfig) -> Vec<AudioSource> {
-    let mut sources = Vec::new();
-    if config.record_system_audio {
-        sources.push(match request.audio_process_id {
-            Some(process_id) => AudioSource::ProcessAudio(process_id),
-            None => AudioSource::DeviceAudio(request.render_device_id.clone()),
-        });
+/// For the other side, if the target app is known, only that app's audio is used. If the app's audio cannot be
+/// captured, we do not substitute all sound from the output device (so that a user who meant to record only the app
+/// is not silently recorded with other sounds). An input turned off in the settings leaves its track silent.
+pub fn meeting_plan(request: &RecordingRequest, config: &AudioConfig) -> anyhow::Result<CapturePlan> {
+    let video = match &request.video {
+        VideoTarget::Window(window) => VideoPlan::Capture(VideoSource::Window(*window)),
+        VideoTarget::Display(display) => VideoPlan::Capture(VideoSource::Display(display.clone())),
+        VideoTarget::Blank => VideoPlan::Blank,
+        VideoTarget::BrowserTab(_) => anyhow::bail!("a browser tab can only be recorded through the browser extension"),
+    };
+    let other_side = config.record_system_audio.then(|| match request.audio_process_id {
+        Some(process_id) => AudioSource::ProcessAudio(process_id),
+        None => AudioSource::DeviceAudio(request.render_device_id.clone()),
+    });
+    let microphone = config
+        .record_microphone
+        .then(|| AudioSource::Microphone(request.capture_device_id.clone()));
+    Ok(CapturePlan {
+        video,
+        tracks: vec![(Track::OtherSide, other_side), (Track::Microphone, microphone)],
+    })
+}
+
+/// The plan for recording the microphone alone, beside a recording made elsewhere (a browser tab). `None` means the
+/// default device. With the microphone turned off in the settings, the track is silent.
+pub fn microphone_plan(config: &AudioConfig, device: Option<String>) -> CapturePlan {
+    CapturePlan {
+        video: VideoPlan::None,
+        tracks: vec![(
+            Track::Microphone,
+            config.record_microphone.then_some(AudioSource::Microphone(device)),
+        )],
     }
-    if config.record_microphone {
-        sources.push(AudioSource::Microphone(request.capture_device_id.clone()));
-    }
-    sources
 }
 
 /// Size of the video to write. `source` is the size of the capture target, `None` when starting without a target.
@@ -115,56 +167,65 @@ mod tests {
         }
     }
 
+    fn video(target: VideoTarget) -> VideoPlan {
+        let request = RecordingRequest {
+            video: target,
+            ..request(None)
+        };
+        meeting_plan(&request, &AudioConfig::default()).unwrap().video
+    }
+
+    fn tracks(audio_process_id: Option<u32>, config: &AudioConfig) -> Vec<(Track, Option<AudioSource>)> {
+        meeting_plan(&request(audio_process_id), config).unwrap().tracks
+    }
+
     #[test]
     fn video_target_follows_the_request() {
         assert_eq!(
-            video_source(&VideoTarget::Window(7)).unwrap(),
-            Some(VideoSource::Window(7))
+            video(VideoTarget::Window(7)),
+            VideoPlan::Capture(VideoSource::Window(7))
         );
         assert_eq!(
-            video_source(&VideoTarget::Display(Some("DISPLAY2".into()))).unwrap(),
-            Some(VideoSource::Display(Some("DISPLAY2".into())))
+            video(VideoTarget::Display(Some("DISPLAY2".into()))),
+            VideoPlan::Capture(VideoSource::Display(Some("DISPLAY2".into())))
         );
         assert_eq!(
-            video_source(&VideoTarget::Display(None)).unwrap(),
-            Some(VideoSource::Display(None))
+            video(VideoTarget::Display(None)),
+            VideoPlan::Capture(VideoSource::Display(None))
         );
-        assert_eq!(video_source(&VideoTarget::Blank).unwrap(), None);
+        assert_eq!(video(VideoTarget::Blank), VideoPlan::Blank);
     }
 
     #[test]
     fn browser_tab_cannot_be_captured() {
-        assert!(video_source(&VideoTarget::BrowserTab(BrowserTab { link: 1, tab: 2 })).is_err());
-    }
-
-    #[test]
-    fn captures_the_app_audio_and_microphone_when_the_target_app_is_known() {
-        assert_eq!(
-            audio_sources(&request(Some(100)), &AudioConfig::default()),
-            [
-                AudioSource::ProcessAudio(100),
-                AudioSource::Microphone(Some("mic".into()))
-            ]
-        );
-    }
-
-    #[test]
-    fn captures_output_device_audio_when_the_target_app_is_unknown() {
-        assert_eq!(
-            audio_sources(&request(None), &AudioConfig::default()),
-            [
-                AudioSource::DeviceAudio(Some("speaker".into())),
-                AudioSource::Microphone(Some("mic".into()))
-            ]
-        );
-    }
-
-    #[test]
-    fn does_not_capture_inputs_disabled_in_settings() {
-        let only_microphone = AudioConfig {
-            record_system_audio: false,
-            record_microphone: true,
+        let tab = RecordingRequest {
+            video: VideoTarget::BrowserTab(BrowserTab { link: 1, tab: 2 }),
+            ..request(None)
         };
+        assert!(meeting_plan(&tab, &AudioConfig::default()).is_err());
+    }
+
+    #[test]
+    fn the_other_side_is_the_app_audio_when_the_target_app_is_known_and_the_microphone_comes_second() {
+        assert_eq!(
+            tracks(Some(100), &AudioConfig::default()),
+            [
+                (Track::OtherSide, Some(AudioSource::ProcessAudio(100))),
+                (Track::Microphone, Some(AudioSource::Microphone(Some("mic".into()))))
+            ]
+        );
+    }
+
+    #[test]
+    fn the_other_side_is_the_output_device_audio_when_the_target_app_is_unknown() {
+        assert_eq!(
+            tracks(None, &AudioConfig::default())[0],
+            (Track::OtherSide, Some(AudioSource::DeviceAudio(Some("speaker".into()))))
+        );
+    }
+
+    #[test]
+    fn an_input_disabled_in_settings_keeps_its_track_without_a_source() {
         let only_system = AudioConfig {
             record_system_audio: true,
             record_microphone: false,
@@ -173,16 +234,34 @@ mod tests {
             record_system_audio: false,
             record_microphone: false,
         };
+        assert_eq!(
+            tracks(Some(100), &only_system),
+            [
+                (Track::OtherSide, Some(AudioSource::ProcessAudio(100))),
+                (Track::Microphone, None)
+            ]
+        );
+        assert_eq!(
+            tracks(Some(100), &nothing),
+            [(Track::OtherSide, None), (Track::Microphone, None)],
+            "the layout of the file stays the same"
+        );
+    }
 
+    #[test]
+    fn the_microphone_alone_has_no_video_and_one_track() {
         assert_eq!(
-            audio_sources(&request(Some(100)), &only_microphone),
-            [AudioSource::Microphone(Some("mic".into()))]
+            microphone_plan(&AudioConfig::default(), Some("mic".into())),
+            CapturePlan {
+                video: VideoPlan::None,
+                tracks: vec![(Track::Microphone, Some(AudioSource::Microphone(Some("mic".into()))))],
+            }
         );
-        assert_eq!(
-            audio_sources(&request(Some(100)), &only_system),
-            [AudioSource::ProcessAudio(100)]
-        );
-        assert!(audio_sources(&request(Some(100)), &nothing).is_empty());
+        let off = AudioConfig {
+            record_system_audio: true,
+            record_microphone: false,
+        };
+        assert_eq!(microphone_plan(&off, None).tracks, [(Track::Microphone, None)]);
     }
 
     #[test]

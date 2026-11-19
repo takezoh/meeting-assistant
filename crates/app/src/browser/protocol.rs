@@ -80,18 +80,13 @@ pub enum Outgoing {
 }
 
 /// The first message on an upload connection, as text: proves the peer was told about this recording, and says
-/// which container it records in. Binary messages with the recording follow, in order. A normal close ends the
-/// recording; a close with another code fails it, with the reason given.
+/// which container it records in. The extension sends it as it starts recording, so the app takes its arrival as the
+/// recording's time zero. Binary messages with the recording follow, in order; nothing else is sent. A normal close
+/// ends the recording; a close with another code fails it, with the reason given.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct UploadHello {
     pub token: String,
     pub mime: String,
-}
-
-/// A later text message on an upload connection: something degraded, and recording goes on.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct UploadWarning {
-    pub warning: String,
 }
 
 /// WebSocket close code for a recording that ended normally.
@@ -310,11 +305,9 @@ mod tests {
     }
 
     #[test]
-    fn upload_text_messages_parse() {
+    fn the_upload_hello_parses() {
         let hello: UploadHello = serde_json::from_str(r#"{"token":"t","mime":"video/webm;codecs=vp9,opus"}"#).unwrap();
         assert_eq!(hello.mime, "video/webm;codecs=vp9,opus");
-        let warning: UploadWarning = serde_json::from_str(r#"{"warning":"no microphone"}"#).unwrap();
-        assert_eq!(warning.warning, "no microphone");
         assert!(serde_json::from_str::<UploadHello>(r#"{"mime":"video/mp4"}"#).is_err());
     }
 

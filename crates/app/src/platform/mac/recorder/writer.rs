@@ -44,14 +44,16 @@ const FINALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Mp4Writer {
     writer: Retained<AVAssetWriter>,
-    video: Retained<AVAssetWriterInput>,
-    adaptor: Retained<AVAssetWriterInputPixelBufferAdaptor>,
-    audio: Option<AudioInput>,
+    video: Option<VideoInput>,
+    /// One input per audio track, in the file's order.
+    audio: Vec<Retained<AVAssetWriterInput>>,
+    /// The format of the PCM handed to every audio input.
+    pcm_format: CFRetained<CMAudioFormatDescription>,
 }
 
-struct AudioInput {
+struct VideoInput {
     input: Retained<AVAssetWriterInput>,
-    format: CFRetained<CMAudioFormatDescription>,
+    adaptor: Retained<AVAssetWriterInputPixelBufferAdaptor>,
 }
 
 impl Mp4Writer {
@@ -67,22 +69,30 @@ impl Mp4Writer {
                 .map_err(|error| anyhow::anyhow!("cannot create the output file: {error}"))?;
             writer.setMovieFragmentInterval(seconds(FRAGMENT_INTERVAL_SECONDS));
 
-            let video = AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(
-                AVMediaTypeVideo.context("no video media type")?,
-                Some(&*video_settings(format)?),
-            );
-            video.setExpectsMediaDataInRealTime(true);
-            anyhow::ensure!(
-                writer.canAddInput(&video),
-                "the writer does not take the video settings"
-            );
-            writer.addInput(&video);
-            let adaptor =
-                AVAssetWriterInputPixelBufferAdaptor::assetWriterInputPixelBufferAdaptorWithAssetWriterInput_sourcePixelBufferAttributes(
-                    &video, None,
+            let video = if format.has_video {
+                let input = AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(
+                    AVMediaTypeVideo.context("no video media type")?,
+                    Some(&*video_settings(format)?),
                 );
+                input.setExpectsMediaDataInRealTime(true);
+                anyhow::ensure!(
+                    writer.canAddInput(&input),
+                    "the writer does not take the video settings"
+                );
+                writer.addInput(&input);
+                let adaptor =
+                    AVAssetWriterInputPixelBufferAdaptor::assetWriterInputPixelBufferAdaptorWithAssetWriterInput_sourcePixelBufferAttributes(
+                        &input, None,
+                    );
+                Some(VideoInput { input, adaptor })
+            } else {
+                None
+            };
 
-            let audio = if format.has_audio {
+            // Tracks are written in the order their inputs are added. No input group is formed, so every track stays
+            // enabled rather than being an alternative to the others.
+            let mut audio = Vec::new();
+            for track in &format.audio_tracks {
                 let input = AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(
                     AVMediaTypeAudio.context("no audio media type")?,
                     Some(&*audio_settings()?),
@@ -90,16 +100,12 @@ impl Mp4Writer {
                 input.setExpectsMediaDataInRealTime(true);
                 anyhow::ensure!(
                     writer.canAddInput(&input),
-                    "the writer does not take the audio settings"
+                    "the writer does not take the {} track",
+                    track.label()
                 );
                 writer.addInput(&input);
-                Some(AudioInput {
-                    input,
-                    format: pcm_format()?,
-                })
-            } else {
-                None
-            };
+                audio.push(input);
+            }
 
             anyhow::ensure!(
                 writer.startWriting(),
@@ -110,37 +116,41 @@ impl Mp4Writer {
             Ok(Self {
                 writer,
                 video,
-                adaptor,
                 audio,
+                pcm_format: pcm_format()?,
             })
         }
     }
 
     /// `time` is in 100 ns units. A picture the encoder cannot take yet is dropped; the previous one stays on screen.
+    /// Does nothing for a file without video.
     pub fn write_video(&self, picture: &CVPixelBuffer, time_100ns: i64) -> anyhow::Result<()> {
+        let Some(video) = &self.video else { return Ok(()) };
         self.ensure_writing()?;
         // SAFETY: the picture is a valid pixel buffer; the inputs belong to this writer.
         unsafe {
-            if self.video.isReadyForMoreMediaData() {
-                self.adaptor
+            if video.input.isReadyForMoreMediaData() {
+                video
+                    .adaptor
                     .appendPixelBuffer_withPresentationTime(picture, time(time_100ns));
             }
         }
         Ok(())
     }
 
-    /// `pcm` is interleaved 16-bit stereo at the pipeline's rate; `time` is in 100 ns units.
-    pub fn write_audio(&self, pcm: &[i16], time_100ns: i64) -> anyhow::Result<()> {
-        let Some(audio) = &self.audio else { return Ok(()) };
+    /// Writes to the audio track at `track`. `pcm` is interleaved 16-bit stereo at the pipeline's rate; `time` is in
+    /// 100 ns units.
+    pub fn write_audio(&self, track: usize, pcm: &[i16], time_100ns: i64) -> anyhow::Result<()> {
+        let input = self.audio.get(track).context("the file has no such audio track")?;
         if pcm.is_empty() {
             return Ok(());
         }
         self.ensure_writing()?;
-        let sample = pcm_sample(pcm, &audio.format, time(time_100ns))?;
+        let sample = pcm_sample(pcm, &self.pcm_format, time(time_100ns))?;
         // SAFETY: the sample matches the input's source format.
         unsafe {
-            if audio.input.isReadyForMoreMediaData() {
-                audio.input.appendSampleBuffer(&sample);
+            if input.isReadyForMoreMediaData() {
+                input.appendSampleBuffer(&sample);
             }
         }
         Ok(())
@@ -151,9 +161,11 @@ impl Mp4Writer {
         let (done, finished) = mpsc::channel();
         // SAFETY: the inputs and the writer belong together; the handler only signals.
         unsafe {
-            self.video.markAsFinished();
-            if let Some(audio) = &self.audio {
-                audio.input.markAsFinished();
+            if let Some(video) = &self.video {
+                video.input.markAsFinished();
+            }
+            for input in &self.audio {
+                input.markAsFinished();
             }
             let handler = RcBlock::new(move || {
                 let _ = done.send(());

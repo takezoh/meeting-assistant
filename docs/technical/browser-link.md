@@ -11,7 +11,7 @@ There are two channels. Control messages (meetings, start, stop, start failures)
 | `hook.js` | Runs in the page's own JavaScript world. Wraps `RTCPeerConnection` and reports whether a connected call exists |
 | `bridge.js` | Content script. Forwards the call state and the page title from the page to the extension |
 | `background.js` | Service worker. Tracks meetings per tab, holds the native-messaging port, obtains the tab-capture stream ID and drives the offscreen document |
-| `offscreen.js` | Offscreen document. Records the tab and the microphone with `MediaRecorder` and sends the recording to the app over the upload WebSocket |
+| `offscreen.js` | Offscreen document. Records the tab's video and audio with `MediaRecorder` and sends the recording to the app over the upload WebSocket. It does not use the microphone; the app records it |
 | Relay | The `meeting-assistant` executable started by the browser as native-messaging host `com.meeting_assistant.host`. Copies control frames between its standard input/output and the app's socket |
 | App | Listens on a loopback TCP port for the relay, opens a second loopback listener for each recording's upload, keeps the state in `Hub` and writes the recording to the file |
 
@@ -48,9 +48,9 @@ Each control message is a 32-bit length in native byte order followed by that ma
 For each recording the app binds a new loopback listener on a port chosen by the OS and generates a one-time token, both sent in `start`. The listener accepts connections only while the recording is starting and closes once one has proved itself. As on the control listener, a connection not made by one of the current user's processes is closed before anything is read.
 
 1. The offscreen document opens a WebSocket to `upload`. The app completes the handshake only if the `Origin` header is the extension's, `chrome-extension://lnplioaidiniokndppmckdaflgefgale`.
-2. The first message is text: `{ "token", "mime" }`. A wrong token or anything else closes the connection, and the app keeps waiting for the right one. Until then a message may be at most 4 KiB, and the handshake and this message must complete within 5 seconds of connecting. Connections that have not presented the token are served side by side, at most 8 at once; a ninth makes the one that has waited longest close. A local process that connects and sends slowly or nothing therefore cannot keep the offscreen document out.
+2. The first message is text: `{ "token", "mime" }`, sent right after `MediaRecorder` starts. The app takes the moment it accepts this message as the recording's time zero, and places the microphone it records itself on that timeline. A wrong token or anything else closes the connection, and the app keeps waiting for the right one. Until then a message may be at most 4 KiB, and the handshake and this message must complete within 5 seconds of connecting. Connections that have not presented the token are served side by side, at most 8 at once; a ninth makes the one that has waited longest close. A local process that connects and sends slowly or nothing therefore cannot keep the offscreen document out.
 3. The app then treats the recording as started: `start_capture` returns to the coordinator, and the file is renamed to the extension of the container in `mime`, choosing a free name instead of replacing an existing file.
-4. Binary messages follow, about once per second, each the next piece of the recording; the app appends them to the file as they are. A text message `{ "warning" }` reports something that degraded, such as a microphone that could not be opened; recording continues.
+4. Binary messages follow, about once per second, each the next piece of the recording; the app appends them to the file as they are. The app ignores any later text message.
 5. The offscreen document closes the WebSocket after the last piece: with code 1000 when the recording ended normally, or 1011 with the reason when it failed. Messages sent before the close are delivered before it. The document tells `background.js` that it has finished only once the app has acknowledged the close, so that closing the document cannot cut off data still being sent.
 
 If no message arrives for 30 seconds, or the connection breaks without a close, the recording ends as failed and the bytes received so far remain in the file. If the app ends the recording on its side, it closes the upload, and the offscreen document stops recording.
@@ -60,13 +60,15 @@ If no message arrives for 30 seconds, or the connection breaks without a close, 
 ```
 app                              extension
  | <- meeting(tab, active) ------- |   call connected (control)
+ |   microphone recording starts   |   <recording>.microphone.m4a, on the app's side
  | -- start(tab, upload, token) -> |   (control)
  | <== WebSocket to upload ======= |   Origin checked
- | <== text {token, mime} ======== |   start_capture returns to the coordinator
+ | <== text {token, mime} ======== |   MediaRecorder started: time zero; start_capture returns to the coordinator
  | <== binary ==================== |   about once per second, appended to the file
  | -- stop(tab) -----------------> |   (control)
  | <== binary ... ================ |
  | <== close 1000 ================ |   file is closed
+ |   microphone recording stops    |   added to the file as its second audio track
 ```
 
 - The app holds at most one tab recording. A `start` is sent only when none is in progress.

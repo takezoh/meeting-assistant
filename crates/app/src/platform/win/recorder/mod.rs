@@ -98,7 +98,9 @@ impl CaptureBackend for WindowsBackend {
     }
 
     fn open_writer(&mut self, path: &Path, format: &MediaFormat) -> anyhow::Result<Mp4Writer> {
-        self.scaler = Some(Scaler::new(&self.graphics, format.width, format.height));
+        if format.has_video {
+            self.scaler = Some(Scaler::new(&self.graphics, format.width, format.height));
+        }
         Mp4Writer::create(path, &self.graphics.device, format)
     }
 
@@ -127,8 +129,15 @@ impl CaptureBackend for WindowsBackend {
         writer.write_video(picture, time, duration)
     }
 
-    fn write_audio(&mut self, writer: &mut Mp4Writer, pcm: &[i16], time: i64, duration: i64) -> anyhow::Result<()> {
-        writer.write_audio(pcm, time, duration)
+    fn write_audio(
+        &mut self,
+        writer: &mut Mp4Writer,
+        track: usize,
+        pcm: &[i16],
+        time: i64,
+        duration: i64,
+    ) -> anyhow::Result<()> {
+        writer.write_audio(track, pcm, time, duration)
     }
 
     fn finalize(&mut self, writer: Mp4Writer) -> anyhow::Result<()> {

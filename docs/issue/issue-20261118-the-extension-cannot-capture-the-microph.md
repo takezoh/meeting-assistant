@@ -2,7 +2,7 @@
 id: issue-20261118-the-extension-cannot-capture-the-microph
 kind: issue
 title: The extension cannot capture the microphone in its offscreen document
-status: open
+status: done
 created: '2026-11-18'
 issue_type: bug
 tags: []
@@ -11,8 +11,11 @@ relations: []
 subject_paths:
 - extension/offscreen.js
 - extension/options.js
-summary: Tab recordings never contain the user's voice in Chrome 157 on macOS; the offscreen document's getUserMedia
-  for the microphone is refused although the extension origin's permission is granted.
+summary: Tab recordings never contain the user's voice in Chrome 157 on macOS; the
+  offscreen document's getUserMedia for the microphone is refused although the extension
+  origin's permission is granted.
+disposition_target: design-browser-tab-recording
+updated: '2026-11-19'
 ---
 
 ## Symptom
@@ -36,3 +39,8 @@ A second build asked for the microphone before opening the tab-capture stream. A
 ## Context
 
 The extension's recording design is in [the browser tab recording design](../design/design-browser-tab-recording.md); the observations are in [the macOS note](../note/note-20261118-macos-verification-2026-11-18.md). Whether the refusal is specific to offscreen documents or to this Chrome version has not been tested.
+
+
+{% transition from="open" to="done" date="2026-11-19" %}
+The extension no longer captures the microphone; the app records it from the OS beside the tab and adds it as the second audio track (observed in a real Meet call on 2026-11-19).
+{% /transition %}

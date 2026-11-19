@@ -1,13 +1,20 @@
-//! The real implementations of core's ports. Only this module touches the clock, the file system, and thread sleeping.
-//! None of them depend on the OS (they use only the standard library and chrono).
+//! The real implementations of core's ports and of the app's file ports. Only this module touches the clock, the file
+//! system, and thread sleeping. None of them depend on the OS (they use only the standard library and chrono).
 
 pub mod config_file;
 
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{self, BufWriter, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
+use anyhow::Context;
 use chrono::{Datelike, Timelike};
 use meeting_assistant_core::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
+
+use crate::recording::merge::{Placement, RecordingFiles, Remuxer};
+use crate::recording::mp4::{self, ReadAt};
 
 /// The OS clock.
 pub struct SystemClock;
@@ -53,6 +60,68 @@ impl Pause for ThreadPause {
     }
 }
 
+/// A file read at any position.
+pub struct DiskFile(Mutex<File>);
+
+impl DiskFile {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self(Mutex::new(File::open(path)?)))
+    }
+}
+
+impl ReadAt for DiskFile {
+    fn len(&self) -> io::Result<u64> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .metadata()?
+            .len())
+    }
+
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
+        let mut file = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        file.seek(SeekFrom::Start(offset))?;
+        file.read_exact(buffer)
+    }
+}
+
+/// Adds a track by rewriting the MP4's structure (see [`mp4`]), the same on every OS.
+pub struct Mp4Remuxer;
+
+impl Remuxer for Mp4Remuxer {
+    fn add_audio_track(
+        &self,
+        recording: &Path,
+        microphone: &Path,
+        placement: Placement,
+        output: &Path,
+    ) -> anyhow::Result<()> {
+        let recording = DiskFile::open(recording).context("cannot open the recording")?;
+        let microphone = DiskFile::open(microphone).context("cannot open the microphone recording")?;
+        let pieces = mp4::add_audio_track(&recording, &microphone, placement)?;
+        let mut out =
+            BufWriter::new(File::create(output).with_context(|| format!("cannot create {}", output.display()))?);
+        mp4::write_pieces(&pieces, &recording, &microphone, &mut out)?;
+        out.into_inner().map_err(|error| error.into_error())?.sync_all()?;
+        Ok(())
+    }
+}
+
+/// The file system, for adding the microphone to a recording.
+pub struct DiskFiles;
+
+impl RecordingFiles for DiskFiles {
+    fn replace(&self, from: &Path, to: &Path) -> io::Result<()> {
+        // Replaces an existing `to` on every supported OS.
+        std::fs::rename(from, to)
+    }
+
+    fn remove(&self, path: &Path) -> io::Result<()> {
+        std::fs::remove_file(path)
+    }
+}
+
 /// A set of ports made up only of real implementations.
 pub fn real_ports(output_directory: PathBuf) -> CoordinatorPorts {
     CoordinatorPorts {
@@ -65,6 +134,26 @@ pub fn real_ports(output_directory: PathBuf) -> CoordinatorPorts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Adds the microphone file named by `MEETING_ASSISTANT_MERGE_MICROPHONE` to the recording named by
+    /// `MEETING_ASSISTANT_MERGE_RECORDING`, writing `MEETING_ASSISTANT_MERGE_OUTPUT`: for checking the merge with a
+    /// browser's real recording by hand.
+    #[test]
+    #[ignore = "needs files named in the environment"]
+    fn merges_the_files_named_in_the_environment() {
+        let path = |name: &str| PathBuf::from(std::env::var(name).unwrap());
+        Mp4Remuxer
+            .add_audio_track(
+                &path("MEETING_ASSISTANT_MERGE_RECORDING"),
+                &path("MEETING_ASSISTANT_MERGE_MICROPHONE"),
+                Placement {
+                    skip: Duration::from_millis(250),
+                    delay: Duration::ZERO,
+                },
+                &path("MEETING_ASSISTANT_MERGE_OUTPUT"),
+            )
+            .unwrap();
+    }
 
     #[test]
     fn creates_missing_folder_including_parents() {

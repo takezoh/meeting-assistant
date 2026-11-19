@@ -17,8 +17,10 @@ const KEYFRAME_INTERVAL_SECONDS: u32 = 8;
 
 pub struct Mp4Writer {
     writer: IMFSinkWriter,
-    video_stream: u32,
-    audio_stream: Option<u32>,
+    /// `None` for a file without video.
+    video_stream: Option<u32>,
+    /// One stream per audio track, in the file's order.
+    audio_streams: Vec<u32>,
     // Manager for the D3D device the SinkWriter references. It must be kept alive while writing.
     _device_manager: IMFDXGIDeviceManager,
 }
@@ -43,36 +45,49 @@ impl Mp4Writer {
             let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attributes)
                 .with_context(|| format!("cannot create the output file: {}", path.display()))?;
 
-            let video_stream = add_video_stream(&writer, format).context("cannot configure the video encoder")?;
-            let audio_stream = if format.has_audio {
-                Some(add_audio_stream(&writer).context("cannot configure the audio encoder")?)
+            let video_stream = if format.has_video {
+                Some(add_video_stream(&writer, format).context("cannot configure the video encoder")?)
             } else {
                 None
             };
+            // Streams become tracks in the order they are added.
+            let mut audio_streams = Vec::new();
+            for track in &format.audio_tracks {
+                audio_streams.push(
+                    add_audio_stream(&writer).with_context(|| {
+                        format!("cannot configure the audio encoder for the {} track", track.label())
+                    })?,
+                );
+            }
             writer.BeginWriting().context("cannot begin writing")?;
 
             Ok(Self {
                 writer,
                 video_stream,
-                audio_stream,
+                audio_streams,
                 _device_manager: device_manager,
             })
         }
     }
 
-    /// `time` and `duration` are in 100 ns units. Do not modify the texture until writing has finished.
+    /// `time` and `duration` are in 100 ns units. Do not modify the texture until writing has finished. Does nothing
+    /// for a file without video.
     pub fn write_video(&self, texture: &ID3D11Texture2D, time: i64, duration: i64) -> anyhow::Result<()> {
+        let Some(stream) = self.video_stream else { return Ok(()) };
         unsafe {
             let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, texture, 0, false)?;
             let length = buffer.cast::<IMF2DBuffer>()?.GetContiguousLength()?;
             buffer.SetCurrentLength(length)?;
-            self.write(self.video_stream, &buffer, time, duration)
+            self.write(stream, &buffer, time, duration)
         }
     }
 
-    /// `pcm` is 16-bit interleaved PCM. Does nothing if created without audio.
-    pub fn write_audio(&self, pcm: &[i16], time: i64, duration: i64) -> anyhow::Result<()> {
-        let Some(stream) = self.audio_stream else { return Ok(()) };
+    /// Writes to the audio track at `track`. `pcm` is 16-bit interleaved PCM.
+    pub fn write_audio(&self, track: usize, pcm: &[i16], time: i64, duration: i64) -> anyhow::Result<()> {
+        let stream = *self
+            .audio_streams
+            .get(track)
+            .context("the file has no such audio track")?;
         if pcm.is_empty() {
             return Ok(());
         }

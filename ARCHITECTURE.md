@@ -65,11 +65,13 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | --- | --- |
 | `cli` | Argument parsing into an `Invocation`. Pure |
 | `install` | The install, update and uninstall procedures, written against the `InstallSystem` port |
-| `recording/plan` | From a request and configuration: which video and audio sources to open and the output format. Pure |
+| `recording/plan` | From a request and configuration: the video source, the two audio tracks (other side, microphone) with the source of each, and the output format; also the plan for the microphone alone. Pure |
 | `recording/timeline` | Frame and audio timestamps and pacing. Pure |
-| `recording/mixer` | Mixing 16-bit PCM inputs. Pure |
-| `recording/pipeline` | How one recording proceeds: open, first picture, write loop, retarget, finalize. Uses `CaptureBackend`, `Pacer` and `Control` |
-| `recording/session` | `ThreadedRecorder`: runs a pipeline on its own thread and presents it as a core `Recorder` |
+| `recording/mixer` | Buffering each 16-bit PCM source against jitter and delay. Pure |
+| `recording/pipeline` | How one recording proceeds: open, first picture, write loop with one audio block per track, retarget, finalize. Uses `CaptureBackend`, `Pacer` and `Control` |
+| `recording/session` | `ThreadedRecorder`: runs a pipeline on its own thread and presents it as a core `Recorder` and as the `MicrophoneRecorder` used beside a tab recording |
+| `recording/merge` | Where the microphone recorded beside a tab recording goes on its timeline, and the procedure that adds it as the second audio track and keeps both files on failure. Uses `Remuxer` and `RecordingFiles` |
+| `recording/mp4` | Adds a track to a fragmented MP4 by rewriting its `moov` and appending fragments, copying every byte of the original fragments. Reads through `ReadAt`. Pure |
 | `browser/protocol` | Message types and length-prefixed framing shared with the extension. Pure apart from generic `Read`/`Write` |
 | `browser/hub` | State machine of extension connections, reported meetings and the single tab recording and its upload. Writes data to a `ChunkSink`; touches no socket or file |
 | `browser/server`, `endpoint`, `relay` | The loopback control listener and the per-recording WebSocket upload listener, the published endpoint file, and the relay the browser launches |
@@ -77,7 +79,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
 | `panel/view` | What the status panel and the tray icon show, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
 | `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it |
-| `adapters` | Real implementations of the core ports: system clock, recordings folder, sleeping, configuration file |
+| `adapters` | Real implementations of the core ports (system clock, recordings folder, sleeping, configuration file) and of the merge's ports (`Mp4Remuxer`, files) |
 | `platform/win`, `platform/mac` | The only modules that call operating system APIs |
 | `composition`, `tray`, `main`, `diagnostics`, `logging`, `bundle` | Wiring of real implementations, the tray UI, entry point, `--probe`/`--self-test`, the log file, embedded extension files |
 
@@ -110,18 +112,20 @@ The [meeting detection design](docs/design/design-meeting-detection.md) holds th
 
 ## Recording on the OS path
 
-`ThreadedRecorder::start` spawns a thread, creates the backend inside it (capture objects are bound to the thread that creates them) and waits up to 20 seconds for the first picture. The pipeline then writes one video frame and the matching block of mixed audio per frame interval, using the timeline so that both carry the same clock. The canvas size is fixed at start; later pictures are scaled into it. The file is fragmented MP4, so what has been written stays playable if the process dies. See the [capture pipeline design](docs/design/design-capture-pipeline.md).
+`ThreadedRecorder::start` spawns a thread, creates the backend inside it (capture objects are bound to the thread that creates them) and waits up to 20 seconds for the first picture. The pipeline then writes one video frame and, for each of the two audio tracks, the matching block of that track's source (or silence) per frame interval, using the timeline so that all carry the same clock. The canvas size is fixed at start; later pictures are scaled into it. The file is fragmented MP4, so what has been written stays playable if the process dies. See the [capture pipeline design](docs/design/design-capture-pipeline.md).
 
 ## Recording through the extension
 
-`hook.js` runs in the page and observes `RTCPeerConnection` state; `bridge.js` forwards it to `background.js`, which reports meetings over native messaging. On a start command the background script obtains a tab-capture stream ID, and `offscreen.js` records the tab and the microphone with `MediaRecorder`. The recording does not go back through native messaging, which carries only JSON: `offscreen.js` opens a WebSocket to a loopback port the app opened for this recording and sends each one-second piece as a binary message, which the server appends to the file as it is. The relay carries only the control messages; the `Hub` keeps the state of both channels.
+`hook.js` runs in the page and observes `RTCPeerConnection` state; `bridge.js` forwards it to `background.js`, which reports meetings over native messaging. On a start command the background script obtains a tab-capture stream ID, and `offscreen.js` records the tab's video and audio with `MediaRecorder`. The recording does not go back through native messaging, which carries only JSON: `offscreen.js` opens a WebSocket to a loopback port the app opened for this recording and sends each one-second piece as a binary message, which the server appends to the file as it is. The relay carries only the control messages; the `Hub` keeps the state of both channels.
+
+The browser does not let the extension's offscreen document use the microphone, so `LinkedRecorder` records it on the OS path: before it asks the extension to start, it starts a second `ThreadedRecorder` on the microphone-only plan, writing `<recording>.microphone.m4a`. The moment the upload proves itself is the tab recording's time zero. When the tab recording ends or fails, the microphone recording is stopped and `recording::merge` places it on the tab's timeline and has `recording::mp4` write the tab's file with the microphone as its second audio track. The tab's own fragments are copied byte for byte, because AVFoundation reads the browser's fragment timing differently from the file's `tfdt` and would move them.
 
 The app listens on `127.0.0.1` at a random port and writes the port and a random token to `browser-link.json` in the user's local application data. The relay reads that file and must present the token first. The browser starts the relay only for the extension ID named in the native-host manifest. Each recording's upload listener is another loopback port with a one-time token sent in the start command; it accepts only the extension's `Origin` and closes once the upload has proved itself. See the [browser tab recording design](docs/design/design-browser-tab-recording.md) and [the protocol reference](docs/technical/browser-link.md).
 
 ## Correctness boundaries
 
 - **Core has no effects.** `crates/core` does not use the file system, the clock, threads, environment or OS crates outside `fakes` and tests. `crates/core/tests/architecture.rs` reads the sources and fails on a forbidden dependency.
-- **OS APIs stay in `platform`.** `crates/app/src/architecture.rs` fails if an OS crate (`windows`, `libc`, `signal_hook`, `notify_rust`, `window_vibrancy`) or a `tao` platform extension is used outside `platform`, if a deciding module (`cli`, `install`, `linked`, `worker`, `panel/view`, `browser/protocol`, `browser/hub`, `recording/plan`, `timeline`, `mixer`, `pipeline`) touches files, sockets, processes, the environment or an adapter, or if the two platform implementations stop exposing the same names.
+- **OS APIs stay in `platform`.** `crates/app/src/architecture.rs` fails if an OS crate (`windows`, `libc`, `signal_hook`, `notify_rust`, `window_vibrancy`) or a `tao` platform extension is used outside `platform`, if a deciding module (`cli`, `install`, `linked`, `worker`, `panel/view`, `browser/protocol`, `browser/hub`, `recording/plan`, `timeline`, `mixer`, `pipeline`, `merge`, `mp4`) touches files, sockets, processes, the environment or an adapter, or if the two platform implementations stop exposing the same names.
 - **One recording at a time.** The coordinator holds at most one recording; the hub holds at most one tab recording.
 - **Scope is never widened silently.** In app scope a missing window gives a black picture and a failed app-audio capture gives no app audio. Neither falls back to the display or the output device.
 - **A started file is finalized.** Stop, drop of the recorder, quit, logoff and shutdown all reach `finalize`. On macOS a logout or a quit sent by another app ends the tray's event loop instead of sending a signal, so the tray also finalizes on the loop's last event. A recording that fails keeps its partial file.

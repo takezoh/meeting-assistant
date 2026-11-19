@@ -2,7 +2,8 @@
 //!
 //! Detection and recording:
 //! - `PlatformSignalSource`: implements `meeting_assistant_core::SignalSource`
-//! - `PlatformRecorder` / `recorder`: implements `meeting_assistant_core::Recorder`, plus the function that creates it
+//! - `PlatformRecorder` / `recorder`: implements `meeting_assistant_core::Recorder` and
+//!   `crate::recording::merge::MicrophoneRecorder`, plus the function that creates it
 //!
 //! Resident app:
 //! - `SingleInstance`: prevents multiple instances

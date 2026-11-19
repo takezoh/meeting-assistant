@@ -7,13 +7,16 @@ created: '2026-11-17'
 scope_type: component
 responsibilities:
 - id: RESP-001
-  statement: Decide from a recording request and the configuration which video and
-    audio sources to open and the output format.
+  statement: Decide from a recording request and the configuration the video source,
+    the source of each of the two audio tracks and the output format; and the plan
+    for recording the microphone alone.
 - id: RESP-002
   statement: 'Run one recording: open sources and the writer, obtain the first picture,
-    write video and audio on a common timeline, switch windows on request, finalize.'
+    write video and each audio track on a common timeline, switch windows on request,
+    finalize.'
 - id: RESP-003
-  statement: Present a pipeline running on its own thread as a core Recorder.
+  statement: Present a pipeline running on its own thread as a core Recorder, and
+    as the MicrophoneRecorder that records the microphone beside a browser tab recording.
 invariants:
 - id: INV-001
   statement: The output size is fixed when the recording opens, is even in both dimensions
@@ -27,8 +30,8 @@ invariants:
     when the recorder is dropped.
   enforcement: test
 - id: INV-004
-  statement: An audio source that cannot be opened is skipped and is not replaced
-    by a wider source.
+  statement: An audio source that cannot be opened leaves its track silent and is
+    not replaced by a wider source.
   enforcement: test
 - id: INV-005
   statement: A window recording starts with a black picture when no picture arrives
@@ -37,14 +40,21 @@ invariants:
 - id: INV-006
   statement: start returns only after the pipeline has opened or has failed to open.
   enforcement: test
+- id: INV-007
+  statement: A meeting or screen recording has exactly two audio tracks, the other
+    side first and the microphone second, each written only from its own source; a
+    track whose source is turned off, cannot be opened or fails holds silence. A recording
+    of the microphone alone has no video and one audio track.
+  enforcement: test
 boundaries:
   provides:
   - id: PROV-001
     statement: ThreadedRecorder, an implementation of the core Recorder port.
   consumes:
   - id: CONS-001
-    statement: 'CaptureBackend: open video, audio and writer; take, scale and write
-      pictures; mix and write audio; finalize.'
+    statement: 'CaptureBackend: open video, audio and writer (with or without video,
+      with the listed audio tracks); take, scale and write pictures; fill a block from
+      an audio source and write it to a track; finalize.'
   - id: CONS-002
     statement: Pacer for elapsed time and sleeping, and Control for stop and retarget
       requests.
@@ -89,21 +99,21 @@ summary: Contract of one OS-path recording, from the plan through the write loop
 
 ## Purpose
 
-Produce one playable file from a recording request, with the procedure shared across platforms and only the capture and encode operations supplied per platform.
+Produce one file from a recording request, with the procedure shared across platforms and only the capture and encode operations supplied per platform. The file keeps the other side and the user apart, in two audio tracks, because recordings are analysed into minutes rather than played.
 
 ## Responsibilities
 
-`plan` maps a `RecordingRequest` and the configuration to a `VideoSource`, a list of `AudioSource` and a `MediaFormat`. `timeline` computes frame and audio timestamps and how long to wait. `mixer` adds PCM inputs with saturation. `pipeline` is the procedure: open the sources and the writer, wait for the first picture, then per frame interval write the current picture and the matching block of mixed audio, apply a retarget request, and finalize when told to stop. `session` runs a pipeline on a dedicated thread and implements `Recorder`.
+`plan` maps a `RecordingRequest` and the configuration to a `CapturePlan`: the video (a target, a black start, or none) and the two tracks, `OtherSide` (app audio, or output device audio) and `Microphone`, each with its source or none. It also gives the plan for the microphone alone. `timeline` computes frame and audio timestamps and how long to wait. `mixer` buffers each PCM source against jitter and drops what has piled up. `pipeline` is the procedure: open the sources and the writer, wait for the first picture, then per frame interval write the current picture and, for each track, the matching block of its source or of silence, apply a retarget request, and finalize when told to stop. `session` runs a pipeline on a dedicated thread and implements `Recorder` and `MicrophoneRecorder`.
 
 ## Boundaries
 
-`CaptureBackend` is the only way the pipeline reaches capture and encoding. It is created inside the recorder thread because capture objects are bound to the thread that creates them. `VideoTarget::BrowserTab` is rejected by the plan; tab recordings do not use this component.
+`CaptureBackend` is the only way the pipeline reaches capture and encoding. It is created inside the recorder thread because capture objects are bound to the thread that creates them. `VideoTarget::BrowserTab` is rejected by the plan: the tab itself is recorded by the extension. The microphone beside a tab recording is recorded by this component, on the microphone-only plan, for the [browser tab recording](design-browser-tab-recording.md).
 
 ## Invariants
 
 The canvas size never changes during a recording because the encoder cannot change it; a resized or different window is scaled into the canvas with its aspect ratio kept. When no new picture arrives, the previous one is written again so the video keeps pace with the audio.
 
-INV-004 and INV-005 implement the product's scope rule on this side: degraded input gives less in the file, never more than was asked for.
+INV-004 and INV-005 implement the product's scope rule on this side: degraded input gives less in the file, never more than was asked for. INV-007 fixes the layout of the file so that analysis can rely on the second audio track being the user: a missing source makes its track silent rather than removing it or moving the other one into its place.
 
 ## Collaboration
 
@@ -119,7 +129,7 @@ A backend may choose any capture API, scaler and encoder that satisfies the port
 
 ## Conformance
 
-Unit tests in `recording/{plan,timeline,mixer,pipeline,session}.rs` use `pipeline::fakes::FakeBackend`. They do not exercise the Windows backend; `meeting-assistant --self-test` does, on the machine where it runs.
+Unit tests in `recording/{plan,timeline,mixer,pipeline,session}.rs` use `pipeline::fakes::FakeBackend`, whose microphone adds a different level than other sources so that each track's content is checked. On macOS the writer tests in `platform/mac/recorder` finish files with two audio tracks and with sound alone, and parse their tracks. They do not exercise the Windows backend; `meeting-assistant --self-test` does, on the machine where it runs.
 
 ## Related Decisions
 

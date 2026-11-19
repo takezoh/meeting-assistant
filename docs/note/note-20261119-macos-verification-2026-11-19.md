@@ -5,13 +5,12 @@ title: macOS verification, 2026-11-19
 status: draft
 created: '2026-11-19'
 topic: verification
-summary: First ScreenCaptureKit captures on a Mac. Display capture and the microphone worked; output audio was silently
-  dropped until the buffer-list call was fixed; every update loses the screen recording permission. Dated observations,
-  not guarantees.
+summary: First ScreenCaptureKit captures on a Mac. Display capture and the microphone
+  worked; output audio was silently dropped until the buffer-list call was fixed;
+  every update loses the screen recording permission. Dated observations, not guarantees.
 tags: []
 owners: []
 relations:
-- {type: references, target: note-20261118-macos-recording-and-os-microphone-handof}
 - {type: references, target: issue-20261117-macos-has-no-native-window-display-or-ap}
 - {type: references, target: issue-20261119-every-update-drops-the-macos-screen-reco}
 source_paths:

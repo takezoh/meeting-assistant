@@ -92,6 +92,8 @@ fn decision_modules_have_no_side_effects() {
         "browser/hub.rs",
         "browser/peer.rs",
         "recording/mod.rs",
+        "recording/merge.rs",
+        "recording/mp4.rs",
         "recording/timeline.rs",
         "recording/mixer.rs",
         "recording/pcm.rs",

@@ -1,5 +1,5 @@
-// Runs in a page that is never shown and records the tab's video and audio.
-// Video is the tab's display as is. Audio mixes the tab's sound and the microphone into one track.
+// Runs in a page that is never shown and records the tab's video and audio, as they are.
+// The user's own voice is not recorded here: the app records the microphone itself and adds it to the file.
 // The recording goes straight to the resident app over a WebSocket, as binary messages, every second.
 
 /** Prefer MP4, which players support widely; WebM if the browser cannot produce MP4. */
@@ -49,51 +49,25 @@ function connectUpload(url) {
 async function start({ streamId, tab, size, upload, token }) {
   if (session) throw new Error("Already recording");
 
-  // In Chrome 157 this is refused although the permission is granted, before or after the tab capture alike (see the
-  // issue on microphone capture); the recording then has the tab's sound only.
-  let micStream = null;
-  let warning = null;
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (error) {
-    // What this page sees tells a profile that has not allowed the microphone apart from a refusal despite it.
-    const permission = await navigator.permissions
-      .query({ name: "microphone" })
-      .then((status) => status.state, () => "unknown");
-    warning = `Your own voice will not be recorded because the microphone could not be captured (${error?.name ?? error}: ${error?.message ?? ""}; microphone permission: ${permission}). Allow the microphone on the extension's options page.`;
-  }
-
   const source = { chromeMediaSource: "tab", chromeMediaSourceId: streamId };
-  let tabStream;
-  try {
-    tabStream = await navigator.mediaDevices.getUserMedia({
-      audio: { mandatory: source },
-      video: {
-        mandatory: { ...source, maxFrameRate: 30, ...(size ? { maxWidth: size.width, maxHeight: size.height } : {}) },
-      },
-    });
-  } catch (error) {
-    for (const track of micStream?.getTracks() ?? []) track.stop();
-    throw error;
-  }
-  const tracks = [...tabStream.getTracks(), ...(micStream?.getTracks() ?? [])];
+  const tabStream = await navigator.mediaDevices.getUserMedia({
+    audio: { mandatory: source },
+    video: {
+      mandatory: { ...source, maxFrameRate: 30, ...(size ? { maxWidth: size.width, maxHeight: size.height } : {}) },
+    },
+  });
   const audio = new AudioContext();
   let socket = null;
   const release = () => {
-    for (const track of tracks) track.stop();
+    for (const track of tabStream.getTracks()) track.stop();
     audio.close();
   };
 
   try {
-    const mixed = audio.createMediaStreamDestination();
-    const tabAudio = audio.createMediaStreamSource(tabStream);
-    tabAudio.connect(mixed);
     // Capturing a tab silences it for the user, so play it back so it stays audible.
-    tabAudio.connect(audio.destination);
-    if (micStream) audio.createMediaStreamSource(micStream).connect(mixed);
+    audio.createMediaStreamSource(tabStream).connect(audio.destination);
 
-    const stream = new MediaStream([...tabStream.getVideoTracks(), ...mixed.stream.getAudioTracks()]);
-    const recorder = new MediaRecorder(stream, {
+    const recorder = new MediaRecorder(tabStream, {
       mimeType: MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)),
       videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
       audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
@@ -101,9 +75,6 @@ async function start({ streamId, tab, size, upload, token }) {
     });
 
     socket = await connectUpload(upload);
-    // Proves this page was told about the recording, and says which container follows.
-    socket.send(JSON.stringify({ token, mime: recorder.mimeType }));
-    if (warning) socket.send(JSON.stringify({ warning }));
 
     const port = chrome.runtime.connect({ name: "recording" });
     // background.js closes this page when told the recording finished, which would cut off data still being sent.
@@ -145,6 +116,10 @@ async function start({ streamId, tab, size, upload, token }) {
     };
 
     recorder.start(1000);
+    // Sent right as recording starts: the app takes its arrival as the recording's time zero, to place the microphone
+    // it records on the same timeline. It also proves this page was told about the recording, and says which
+    // container follows. The first data comes a second later, so this stays the first message.
+    socket.send(JSON.stringify({ token, mime: recorder.mimeType }));
     session = { recorder };
     return { mime: recorder.mimeType };
   } catch (error) {

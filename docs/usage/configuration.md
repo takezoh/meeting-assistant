@@ -18,8 +18,8 @@ Changes take effect the next time the app starts. A file that cannot be parsed, 
 | `video.framerate` | `30` | Frames per second, 1 to 60 |
 | `video.quality` | `70` | Encoder quality, 1 to 100. Higher is sharper and larger |
 | `video.fallback_bitrate_kbps` | `4000` | Average bitrate used when the encoder does not support a quality setting, 100 to 100000 |
-| `audio.record_system_audio` | `true` | Record the other side: the app's audio in app scope, the output device in screen scope |
-| `audio.record_microphone` | `true` | Record your microphone |
+| `audio.record_system_audio` | `true` | Record the other side, the first audio track: the app's audio in app scope, the output device in screen scope. When `false` that track is silent |
+| `audio.record_microphone` | `true` | Record your microphone, the second audio track, also for browser tabs. When `false` that track is silent |
 | `rules` | See below | What counts as a meeting. Must not be empty |
 
 The video and audio settings apply to recordings made by the app itself. A tab recording made by the browser extension uses the browser's encoder with the extension's own bitrate.

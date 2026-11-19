@@ -1,19 +1,34 @@
 //! Combines detection and recording through OS features with detection and recording through the browser extension
 //! into a single signal source and a single recorder.
+//!
+//! A browser tab is recorded by the extension, and the user's microphone by the app beside it, because the browser does
+//! not let the extension record the microphone. When the tab recording ends, the microphone is added to it as its second
+//! audio track.
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use meeting_assistant_core::{
     BrowserLink, BrowserMeeting, BrowserTab, Recorder, RecordingRequest, SignalSnapshot, SignalSource, VideoTarget,
 };
 
+use crate::recording::merge::{self, MicrophoneMerge, MicrophoneRecorder};
+
+/// A tab recording that has started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabCapture {
+    /// The file being written: the requested path with the extension of the container the browser records in.
+    pub path: PathBuf,
+    /// When the app accepted the upload, which the extension opens as it starts recording: the recording's time zero.
+    pub started: Instant,
+}
+
 /// Port to the browser extension.
 pub trait BrowserPort {
     /// The connected extension and the meetings it reports.
     fn snapshot(&self) -> (Vec<BrowserLink>, Vec<BrowserMeeting>);
-    /// Makes the extension start recording a tab and write it to `path`. Returns once recording has started, with the
-    /// file written: `path` with the extension of the container the browser records in.
-    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf>;
+    /// Makes the extension start recording a tab and write it to `path`. Returns once recording has started.
+    fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<TabCapture>;
     /// Stops recording and finalizes the file. Does nothing if not recording.
     fn stop_capture(&self) -> anyhow::Result<()>;
     /// If recording failed without a stop request, returns the cause exactly once.
@@ -42,41 +57,113 @@ impl<S: SignalSource, B: BrowserPort> SignalSource for LinkedSignalSource<S, B> 
     }
 }
 
-#[derive(Clone, Copy)]
+/// The microphone being recorded beside a tab recording.
+struct SideMicrophone {
+    path: PathBuf,
+    started: Instant,
+}
+
 enum Active {
     Platform,
-    Browser,
+    Browser {
+        capture: TabCapture,
+        microphone: Option<SideMicrophone>,
+    },
 }
 
 /// Records through either OS features or the browser extension, depending on the recording target.
-pub struct LinkedRecorder<R, B> {
+pub struct LinkedRecorder<R, B, M, G> {
     platform: R,
     browser: Option<B>,
+    microphone: M,
+    merge: G,
     active: Option<Active>,
 }
 
-impl<R, B> LinkedRecorder<R, B> {
-    pub fn new(platform: R, browser: Option<B>) -> Self {
+impl<R, B, M, G> LinkedRecorder<R, B, M, G> {
+    /// `microphone` records the microphone beside a tab recording, and `merge` adds it to the tab recording.
+    pub fn new(platform: R, browser: Option<B>, microphone: M, merge: G) -> Self {
         Self {
             platform,
             browser,
+            microphone,
+            merge,
             active: None,
         }
     }
 }
 
-impl<R: Recorder, B: BrowserPort> Recorder for LinkedRecorder<R, B> {
+/// Starts the microphone beside a tab recording about to start at `recording`. The tab is recorded without it if it
+/// cannot be started.
+fn start_side_microphone(
+    microphone: &mut impl MicrophoneRecorder,
+    recording: &Path,
+    device: Option<String>,
+) -> Option<SideMicrophone> {
+    let path = merge::microphone_path(recording);
+    match microphone.start_microphone(&path, device) {
+        Ok(started) => Some(SideMicrophone { path, started }),
+        Err(error) => {
+            log::warn!("Your own voice will not be in the tab recording: cannot record the microphone: {error:#}");
+            None
+        }
+    }
+}
+
+impl<R, B, M: MicrophoneRecorder, G: MicrophoneMerge> LinkedRecorder<R, B, M, G> {
+    /// Ends the microphone recorded beside a tab recording that has ended, and adds it to that recording.
+    fn finish_tab(&mut self, capture: &TabCapture, microphone: Option<SideMicrophone>) {
+        let Some(microphone) = microphone else { return };
+        if let Err(error) = self.microphone.stop_microphone() {
+            log::warn!("The microphone recording ended early; what it recorded is kept: {error:#}");
+        }
+        if !merge::can_add_to(&capture.path) {
+            log::warn!(
+                "The browser did not record MP4, so your own voice was not added to the recording. It is kept beside it: {}",
+                microphone.path.display()
+            );
+            return;
+        }
+        let placement = merge::placement(capture.started, microphone.started);
+        match self.merge.add_microphone(&capture.path, &microphone.path, placement) {
+            Ok(()) => log::info!("Added your own voice to the recording as its second audio track."),
+            Err(error) => log::warn!(
+                "Could not add your own voice to {}; it is kept beside it: {}: {error:#}",
+                capture.path.display(),
+                microphone.path.display()
+            ),
+        }
+    }
+}
+
+impl<R: Recorder, B: BrowserPort, M: MicrophoneRecorder, G: MicrophoneMerge> Recorder for LinkedRecorder<R, B, M, G> {
     fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
         anyhow::ensure!(self.active.is_none(), "already recording");
         match &request.video {
             VideoTarget::BrowserTab(tab) => {
-                let browser = self
-                    .browser
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("not connected to the browser extension"))?;
-                let written = browser.start_capture(*tab, &request.output_path)?;
-                self.active = Some(Active::Browser);
-                Ok(written)
+                let Some(browser) = &self.browser else {
+                    anyhow::bail!("not connected to the browser extension");
+                };
+                // The microphone starts first, so that it covers the whole tab recording.
+                let microphone = start_side_microphone(
+                    &mut self.microphone,
+                    &request.output_path,
+                    request.capture_device_id.clone(),
+                );
+                match browser.start_capture(*tab, &request.output_path) {
+                    Ok(capture) => {
+                        let written = capture.path.clone();
+                        self.active = Some(Active::Browser { capture, microphone });
+                        Ok(written)
+                    }
+                    Err(error) => {
+                        if let Some(microphone) = microphone {
+                            let _ = self.microphone.stop_microphone();
+                            self.merge.discard(&microphone.path);
+                        }
+                        Err(error)
+                    }
+                }
             }
             _ => {
                 let written = self.platform.start(request)?;
@@ -89,7 +176,11 @@ impl<R: Recorder, B: BrowserPort> Recorder for LinkedRecorder<R, B> {
     fn stop(&mut self) -> anyhow::Result<()> {
         match self.active.take() {
             Some(Active::Platform) => self.platform.stop(),
-            Some(Active::Browser) => self.browser.as_ref().map_or(Ok(()), B::stop_capture),
+            Some(Active::Browser { capture, microphone }) => {
+                let stopped = self.browser.as_ref().map_or(Ok(()), B::stop_capture);
+                self.finish_tab(&capture, microphone);
+                stopped
+            }
             None => Ok(()),
         }
     }
@@ -98,16 +189,19 @@ impl<R: Recorder, B: BrowserPort> Recorder for LinkedRecorder<R, B> {
         match self.active {
             Some(Active::Platform) => self.platform.retarget(window),
             // A tab recording is not something whose window can be switched.
-            Some(Active::Browser) | None => Ok(()),
+            Some(Active::Browser { .. }) | None => Ok(()),
         }
     }
 
     fn take_failure(&mut self) -> Option<String> {
-        let failure = match self.active? {
+        let failure = match self.active.as_ref()? {
             Active::Platform => self.platform.take_failure(),
-            Active::Browser => self.browser.as_ref().and_then(B::take_failure),
+            Active::Browser { .. } => self.browser.as_ref().and_then(B::take_failure),
         }?;
-        self.active = None;
+        if let Some(Active::Browser { capture, microphone }) = self.active.take() {
+            // The tab recording keeps what arrived; it gets the microphone for that time too.
+            self.finish_tab(&capture, microphone);
+        }
         Some(failure)
     }
 }
@@ -116,25 +210,49 @@ impl<R: Recorder, B: BrowserPort> Recorder for LinkedRecorder<R, B> {
 mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use meeting_assistant_core::fakes::{FakeRecorder, ScriptedSignals, zoom_in_meeting};
 
     use super::*;
+    use crate::recording::merge::Placement;
 
     const TAB: BrowserTab = BrowserTab { link: 1, tab: 42 };
 
-    #[derive(Default)]
+    /// What the fakes were asked to do, in order.
+    type Journal = Arc<Mutex<Vec<String>>>;
+
+    fn note(journal: &Journal, entry: impl Into<String>) {
+        journal.lock().unwrap().push(entry.into());
+    }
+
     struct BrowserState {
-        started: Vec<(BrowserTab, PathBuf)>,
-        stopped: u32,
+        journal: Journal,
+        /// The time zero each started recording reports.
+        zero: Instant,
+        /// The extension of the file the browser writes.
+        container: &'static str,
         start_fails: bool,
         failure: Option<String>,
         meetings: Vec<BrowserMeeting>,
     }
 
     /// A fake browser extension that only records the instructions it receives.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct FakeBrowser(Arc<Mutex<BrowserState>>);
+
+    impl FakeBrowser {
+        fn new(journal: &Journal, zero: Instant) -> Self {
+            Self(Arc::new(Mutex::new(BrowserState {
+                journal: journal.clone(),
+                zero,
+                container: "mp4",
+                start_fails: false,
+                failure: None,
+                meetings: Vec::new(),
+            })))
+        }
+    }
 
     impl BrowserPort for FakeBrowser {
         fn snapshot(&self) -> (Vec<BrowserLink>, Vec<BrowserMeeting>) {
@@ -146,19 +264,122 @@ mod tests {
                 self.0.lock().unwrap().meetings.clone(),
             )
         }
-        fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<PathBuf> {
-            let mut state = self.0.lock().unwrap();
+        fn start_capture(&self, tab: BrowserTab, path: &Path) -> anyhow::Result<TabCapture> {
+            let state = self.0.lock().unwrap();
             anyhow::ensure!(!state.start_fails, "not allowed");
-            state.started.push((tab, path.to_owned()));
-            // The browser recorded WebM.
-            Ok(path.with_extension("webm"))
+            note(&state.journal, format!("tab {} started: {}", tab.tab, path.display()));
+            Ok(TabCapture {
+                path: path.with_extension(state.container),
+                started: state.zero,
+            })
         }
         fn stop_capture(&self) -> anyhow::Result<()> {
-            self.0.lock().unwrap().stopped += 1;
+            note(&self.0.lock().unwrap().journal, "tab stopped");
             Ok(())
         }
         fn take_failure(&self) -> Option<String> {
             self.0.lock().unwrap().failure.take()
+        }
+    }
+
+    struct FakeMicrophone {
+        journal: Journal,
+        zero: Instant,
+        start_fails: bool,
+        stop_fails: bool,
+    }
+
+    impl MicrophoneRecorder for Arc<Mutex<FakeMicrophone>> {
+        fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Instant> {
+            let state = self.lock().unwrap();
+            anyhow::ensure!(!state.start_fails, "no microphone permission");
+            note(
+                &state.journal,
+                format!("microphone started: {} ({device:?})", path.display()),
+            );
+            Ok(state.zero)
+        }
+        fn stop_microphone(&mut self) -> anyhow::Result<()> {
+            let state = self.lock().unwrap();
+            note(&state.journal, "microphone stopped");
+            anyhow::ensure!(!state.stop_fails, "device lost");
+            Ok(())
+        }
+    }
+
+    struct FakeMerge {
+        journal: Journal,
+        fails: bool,
+    }
+
+    impl MicrophoneMerge for Arc<Mutex<FakeMerge>> {
+        fn add_microphone(&self, recording: &Path, microphone: &Path, placement: Placement) -> anyhow::Result<()> {
+            let state = self.lock().unwrap();
+            note(
+                &state.journal,
+                format!(
+                    "added {} to {} skipping {:?}",
+                    microphone.display(),
+                    recording.display(),
+                    placement.skip
+                ),
+            );
+            anyhow::ensure!(!state.fails, "cannot read");
+            Ok(())
+        }
+        fn discard(&self, microphone: &Path) {
+            note(
+                &self.lock().unwrap().journal,
+                format!("discarded {}", microphone.display()),
+            );
+        }
+    }
+
+    type Linked = LinkedRecorder<FakeRecorder, FakeBrowser, Arc<Mutex<FakeMicrophone>>, Arc<Mutex<FakeMerge>>>;
+
+    struct Fixture {
+        linked: Linked,
+        platform: FakeRecorder,
+        browser: FakeBrowser,
+        microphone: Arc<Mutex<FakeMicrophone>>,
+        merge: Arc<Mutex<FakeMerge>>,
+        journal: Journal,
+    }
+
+    impl Fixture {
+        fn journal(&self) -> Vec<String> {
+            self.journal.lock().unwrap().clone()
+        }
+    }
+
+    /// The microphone's time zero is 250 ms before the tab's.
+    fn fixture() -> Fixture {
+        let journal = Journal::default();
+        let microphone_zero = Instant::now();
+        let platform = FakeRecorder::default();
+        let browser = FakeBrowser::new(&journal, microphone_zero + Duration::from_millis(250));
+        let microphone = Arc::new(Mutex::new(FakeMicrophone {
+            journal: journal.clone(),
+            zero: microphone_zero,
+            start_fails: false,
+            stop_fails: false,
+        }));
+        let merge = Arc::new(Mutex::new(FakeMerge {
+            journal: journal.clone(),
+            fails: false,
+        }));
+        Fixture {
+            linked: LinkedRecorder::new(
+                platform.clone(),
+                Some(browser.clone()),
+                microphone.clone(),
+                merge.clone(),
+            ),
+            platform,
+            browser,
+            microphone,
+            merge,
+            journal,
         }
     }
 
@@ -168,125 +389,180 @@ mod tests {
             video,
             audio_process_id: None,
             render_device_id: None,
-            capture_device_id: None,
+            capture_device_id: Some("mic".into()),
         }
     }
 
-    fn recorder() -> (LinkedRecorder<FakeRecorder, FakeBrowser>, FakeRecorder, FakeBrowser) {
-        let (platform, browser) = (FakeRecorder::default(), FakeBrowser::default());
-        (
-            LinkedRecorder::new(platform.clone(), Some(browser.clone())),
-            platform,
-            browser,
-        )
-    }
+    const MERGED: &str = "added out.microphone.m4a to out.mp4 skipping 250ms";
 
     #[test]
-    fn tab_recording_is_delegated_to_the_extension() {
-        let (mut linked, platform, browser) = recorder();
-        let written = linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+    fn a_tab_is_recorded_by_the_extension_with_the_microphone_recorded_beside_it_and_added_when_it_ends() {
+        let mut f = fixture();
+        let written = f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
 
-        assert_eq!(browser.0.lock().unwrap().started, [(TAB, PathBuf::from("out.mp4"))]);
         assert_eq!(
             written,
-            PathBuf::from("out.webm"),
-            "the file the extension wrote is reported"
+            PathBuf::from("out.mp4"),
+            "the file the extension writes is reported"
         );
-        assert!(platform.state().started.is_empty());
+        assert!(f.platform.state().started.is_empty());
+        assert_eq!(
+            f.journal(),
+            [
+                "microphone started: out.microphone.m4a (Some(\"mic\"))",
+                "tab 42 started: out.mp4"
+            ],
+            "the microphone starts first, so that it covers the whole tab recording"
+        );
 
-        linked.stop().unwrap();
-        assert_eq!(browser.0.lock().unwrap().stopped, 1);
-        assert_eq!(platform.state().stop_count, 0);
+        f.linked.stop().unwrap();
+        assert_eq!(
+            f.journal()[2..],
+            ["tab stopped", "microphone stopped", MERGED],
+            "the part of the microphone before the tab's start is dropped"
+        );
+        assert_eq!(f.platform.state().stop_count, 0);
     }
 
     #[test]
     fn other_recording_is_delegated_to_os_features() {
         for video in [VideoTarget::Window(7), VideoTarget::Display(None), VideoTarget::Blank] {
-            let (mut linked, platform, browser) = recorder();
-            linked.start(&request(video.clone())).unwrap();
+            let mut f = fixture();
+            f.linked.start(&request(video.clone())).unwrap();
 
-            assert_eq!(platform.state().started.len(), 1, "{video:?}");
-            assert!(browser.0.lock().unwrap().started.is_empty());
-
-            linked.stop().unwrap();
-            assert_eq!(platform.state().stop_count, 1);
-            assert_eq!(browser.0.lock().unwrap().stopped, 0);
+            assert_eq!(f.platform.state().started.len(), 1, "{video:?}");
+            f.linked.stop().unwrap();
+            assert_eq!(f.platform.state().stop_count, 1);
+            assert!(f.journal().is_empty(), "no tab and no separate microphone: {video:?}");
         }
     }
 
     #[test]
-    fn does_not_start_another_recording_while_recording() {
-        let (mut linked, platform, _) = recorder();
-        linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+    fn a_tab_that_cannot_start_leaves_no_microphone_recording() {
+        let mut f = fixture();
+        f.browser.0.lock().unwrap().start_fails = true;
 
-        assert!(linked.start(&request(VideoTarget::Display(None))).is_err());
-        assert!(platform.state().started.is_empty());
+        assert!(f.linked.start(&request(VideoTarget::BrowserTab(TAB))).is_err());
+
+        assert_eq!(f.journal()[1..], ["microphone stopped", "discarded out.microphone.m4a"]);
+        f.linked.start(&request(VideoTarget::Display(None))).unwrap();
+        assert_eq!(f.platform.state().started.len(), 1, "it is not left recording");
     }
 
     #[test]
-    fn stays_in_not_recording_state_when_start_fails() {
-        let (mut linked, platform, browser) = recorder();
-        browser.0.lock().unwrap().start_fails = true;
+    fn a_tab_is_still_recorded_when_the_microphone_cannot_be_started() {
+        let mut f = fixture();
+        f.microphone.lock().unwrap().start_fails = true;
 
-        assert!(linked.start(&request(VideoTarget::BrowserTab(TAB))).is_err());
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        f.linked.stop().unwrap();
 
-        linked.start(&request(VideoTarget::Display(None))).unwrap();
-        assert_eq!(platform.state().started.len(), 1);
+        assert_eq!(f.journal(), ["tab 42 started: out.mp4", "tab stopped"]);
+    }
+
+    #[test]
+    fn a_microphone_that_ended_early_is_still_added() {
+        let mut f = fixture();
+        f.microphone.lock().unwrap().stop_fails = true;
+
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        f.linked.stop().unwrap();
+
+        assert_eq!(f.journal().last().unwrap(), MERGED);
+    }
+
+    #[test]
+    fn a_failed_merge_does_not_fail_the_recording() {
+        let mut f = fixture();
+        f.merge.lock().unwrap().fails = true;
+
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        f.linked.stop().unwrap();
+
+        assert_eq!(f.journal().last().unwrap(), MERGED);
+    }
+
+    #[test]
+    fn a_tab_recorded_as_webm_keeps_the_microphone_beside_it() {
+        let mut f = fixture();
+        f.browser.0.lock().unwrap().container = "webm";
+
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        f.linked.stop().unwrap();
+
+        assert_eq!(f.journal()[2..], ["tab stopped", "microphone stopped"]);
+    }
+
+    #[test]
+    fn a_failed_tab_recording_still_gets_the_microphone_and_is_reported_once() {
+        let mut f = fixture();
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+
+        f.platform.fail("unrelated");
+        assert_eq!(f.linked.take_failure(), None, "only the side that is recording reports");
+
+        f.browser.0.lock().unwrap().failure = Some("tab closed".into());
+        assert_eq!(f.linked.take_failure(), Some("tab closed".into()));
+        assert_eq!(f.journal()[2..], ["microphone stopped", MERGED]);
+        assert_eq!(f.linked.take_failure(), None);
+        f.linked.stop().unwrap();
+        assert_eq!(f.journal().len(), 4, "nothing is stopped twice");
+    }
+
+    #[test]
+    fn does_not_start_another_recording_while_recording() {
+        let mut f = fixture();
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+
+        assert!(f.linked.start(&request(VideoTarget::Display(None))).is_err());
+        assert!(f.platform.state().started.is_empty());
     }
 
     #[test]
     fn tab_cannot_be_recorded_without_extension_connection() {
-        let mut linked = LinkedRecorder::<_, FakeBrowser>::new(FakeRecorder::default(), None);
+        let f = fixture();
+        let mut linked =
+            LinkedRecorder::<_, FakeBrowser, _, _>::new(FakeRecorder::default(), None, f.microphone, f.merge);
 
         assert!(linked.start(&request(VideoTarget::BrowserTab(TAB))).is_err());
-    }
-
-    #[test]
-    fn reports_failures_only_from_the_side_that_is_recording() {
-        let (mut linked, platform, browser) = recorder();
-        linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
-
-        platform.fail("unrelated");
-        assert_eq!(linked.take_failure(), None);
-
-        browser.0.lock().unwrap().failure = Some("tab closed".into());
-        assert_eq!(linked.take_failure(), Some("tab closed".into()));
+        assert!(f.journal.lock().unwrap().is_empty(), "the microphone is not started");
     }
 
     #[test]
     fn can_start_next_recording_after_failure_is_reported() {
-        let (mut linked, platform, _) = recorder();
-        linked.start(&request(VideoTarget::Window(7))).unwrap();
-        platform.fail("device lost");
+        let mut f = fixture();
+        f.linked.start(&request(VideoTarget::Window(7))).unwrap();
+        f.platform.fail("device lost");
 
-        assert_eq!(linked.take_failure(), Some("device lost".into()));
-        linked.start(&request(VideoTarget::Window(7))).unwrap();
+        assert_eq!(f.linked.take_failure(), Some("device lost".into()));
+        f.linked.start(&request(VideoTarget::Window(7))).unwrap();
     }
 
     #[test]
     fn window_switching_happens_only_while_recording_through_os_features() {
-        let (mut linked, platform, _) = recorder();
-        linked.retarget(1).unwrap();
-        linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
-        linked.retarget(2).unwrap();
-        linked.stop().unwrap();
-        linked.start(&request(VideoTarget::Window(7))).unwrap();
-        linked.retarget(3).unwrap();
+        let mut f = fixture();
+        f.linked.retarget(1).unwrap();
+        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        f.linked.retarget(2).unwrap();
+        f.linked.stop().unwrap();
+        f.linked.start(&request(VideoTarget::Window(7))).unwrap();
+        f.linked.retarget(3).unwrap();
 
-        assert_eq!(platform.state().retargets, [3]);
+        assert_eq!(f.platform.state().retargets, [3]);
     }
 
     #[test]
     fn signals_include_meetings_reported_by_the_extension() {
-        let (signals, browser) = (ScriptedSignals::default(), FakeBrowser::default());
+        let f = fixture();
+        let signals = ScriptedSignals::default();
         signals.set(zoom_in_meeting());
-        browser.0.lock().unwrap().meetings = vec![BrowserMeeting {
+        f.browser.0.lock().unwrap().meetings = vec![BrowserMeeting {
             tab: TAB,
             service: "GoogleMeet".into(),
             title: None,
         }];
 
-        let snapshot = LinkedSignalSource::new(signals, Some(browser)).capture().unwrap();
+        let snapshot = LinkedSignalSource::new(signals, Some(f.browser)).capture().unwrap();
 
         assert_eq!(
             snapshot.capture_sessions.len(),
@@ -311,13 +587,10 @@ mod tests {
 
     #[test]
     fn reports_failure_when_os_signals_cannot_be_obtained() {
+        let f = fixture();
         let signals = ScriptedSignals::default();
         signals.set_failure(Some("audio service gone"));
 
-        assert!(
-            LinkedSignalSource::new(signals, Some(FakeBrowser::default()))
-                .capture()
-                .is_err()
-        );
+        assert!(LinkedSignalSource::new(signals, Some(f.browser)).capture().is_err());
     }
 }

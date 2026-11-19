@@ -24,7 +24,9 @@ The tray icon shows the state: a ring while idle, amber when a meeting is detect
 
 Other windows, notifications and audio from other apps stay out of the file. If the meeting window cannot be found, the recording continues with a black picture and the meeting audio instead of falling back to the whole screen. Set `capture_scope = "screen"` when you do want the whole display and all output audio.
 
-Your microphone is captured directly, so your voice is recorded even while you are muted inside the meeting.
+Their voices and yours are kept apart, in two audio tracks: the first holds the meeting, the second your microphone. A tool that turns recordings into minutes can then tell who spoke; a player that plays only the first audio track plays only the meeting.
+
+Your microphone is captured directly by the app, also for a browser meeting, so your voice is recorded even while you are muted inside the meeting.
 
 ## Browser meetings are recorded per tab
 

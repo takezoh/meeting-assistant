@@ -33,8 +33,12 @@ For apps with several windows the largest one is chosen. A shared screen shown i
 
 ## My own voice is missing
 
+Your voice is the recording's second audio track. Many players play only the first; check with a tool that lists the tracks, such as `ffprobe`.
+
 - The microphone is muted in Windows, not just in the meeting. The log has a warning at the start of the recording.
-- For a tab recording, the extension has not been allowed to use the microphone. Open the extension's options page and allow it. If the browser refuses without asking, set Microphone to **Allow** in the extension's site settings (the page's **Open microphone settings** button); leaving it at Ask is not enough then.
+- On macOS, Meeting Assistant is not allowed under System Settings > Privacy & Security > Microphone. The track is then silent.
+- `audio.record_microphone` is `false`.
+- For a tab recording, a file named `<recording>.microphone.m4a` beside the recording means the microphone could not be added to it; the log says why. It holds your voice from slightly before the recording started.
 
 ## A browser meeting is recorded as a window, not a tab
 

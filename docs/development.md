@@ -35,7 +35,7 @@ target\release\meeting-assistant.exe --self-test out.mp4
 target\release\meeting-assistant.exe --probe
 ```
 
-`--self-test` records five seconds of the primary display with the default audio devices; on macOS it reports that native capture is not implemented, and the extension path is checked with a browser instead. `--probe` prints the processes using the microphone, the windows found and the verdict of each rule; use it when changing rules or signal collection.
+`--self-test` records five seconds of the primary display with the default audio devices into the two audio tracks; on macOS start it through `open` (see the [testing reference](technical/testing.md)). The extension path is checked with a browser. `cargo test -p meeting-assistant merges_the_files_named_in_the_environment -- --ignored` adds a microphone file to a browser's recording named in the environment, for checking the merge with a real recording. `--probe` prints the processes using the microphone, the windows found and the verdict of each rule; use it when changing rules or signal collection.
 
 An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder.
 

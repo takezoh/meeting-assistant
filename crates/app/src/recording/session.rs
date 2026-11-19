@@ -3,7 +3,7 @@
 //! The actual capture and writing ([`CaptureBackend`]) is created inside the recording thread
 //! (because some OS capture objects are bound to the thread that created them).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 
 use meeting_assistant_core::{AudioConfig, Recorder, RecordingRequest, VideoConfig};
 
+use super::merge::MicrophoneRecorder;
 use super::pipeline::{CaptureBackend, Control, Pacer, Pipeline};
+use super::plan::{self, CapturePlan};
 
 /// Upper limit on waiting for recording preparation (starting capture, creating the output, the first picture).
 const START_TIMEOUT: Duration = Duration::from_secs(20);
@@ -72,31 +74,33 @@ impl<B> ThreadedRecorder<B> {
     }
 }
 
-impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
+impl<B: CaptureBackend + 'static> ThreadedRecorder<B> {
+    /// Starts recording `plan` to `output_path`. Returns once recording has started, with the moment the recording's
+    /// timeline starts: the sound written at its time zero is what was captured then.
+    pub fn start_plan(&mut self, plan: CapturePlan, output_path: PathBuf) -> anyhow::Result<Instant> {
         anyhow::ensure!(self.session.is_none(), "already recording");
 
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_sender, ready_receiver) = mpsc::channel();
         let (retarget_sender, retarget_receiver) = mpsc::channel();
         let thread = std::thread::Builder::new().name("recorder".into()).spawn({
-            let (request, video, audio) = (request.clone(), self.video.clone(), self.audio.clone());
+            let video = self.video.clone();
             let create_backend = self.create_backend;
             let control = ThreadControl {
                 stop: stop.clone(),
                 retarget: retarget_receiver,
             };
-            move || record(create_backend, &request, &video, &audio, control, ready_sender)
+            move || record(create_backend, &plan, &output_path, &video, control, ready_sender)
         })?;
 
         match ready_receiver.recv_timeout(START_TIMEOUT) {
-            Ok(Ok(())) => {
+            Ok(Ok(started)) => {
                 self.session = Some(Session {
                     stop,
                     retarget: retarget_sender,
                     thread,
                 });
-                Ok(request.output_path.clone())
+                Ok(started)
             }
             Ok(Err(error)) => Err(error),
             Err(_) => {
@@ -105,6 +109,26 @@ impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
                 anyhow::bail!("recording did not finish starting in time")
             }
         }
+    }
+}
+
+/// The same recorder records the microphone alone beside a browser tab recording.
+impl<B: CaptureBackend + 'static> MicrophoneRecorder for ThreadedRecorder<B> {
+    fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Instant> {
+        let plan = plan::microphone_plan(&self.audio, device);
+        self.start_plan(plan, path.to_owned())
+    }
+
+    fn stop_microphone(&mut self) -> anyhow::Result<()> {
+        Recorder::stop(self)
+    }
+}
+
+impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
+        let plan = plan::meeting_plan(request, &self.audio)?;
+        self.start_plan(plan, request.output_path.clone())?;
+        Ok(request.output_path.clone())
     }
 
     fn stop(&mut self) -> anyhow::Result<()> {
@@ -159,17 +183,18 @@ impl<B> Drop for ThreadedRecorder<B> {
 /// The return value is the result after preparation (a preparation failure is reported via `ready`, so it is `Ok`).
 fn record<B: CaptureBackend>(
     create_backend: fn() -> anyhow::Result<B>,
-    request: &RecordingRequest,
+    plan: &CapturePlan,
+    output_path: &Path,
     video: &VideoConfig,
-    audio: &AudioConfig,
     mut control: ThreadControl,
-    ready: mpsc::Sender<anyhow::Result<()>>,
+    ready: mpsc::Sender<anyhow::Result<Instant>>,
 ) -> anyhow::Result<()> {
     let mut pacer = RealPacer(Instant::now());
-    let opened = create_backend().and_then(|backend| Pipeline::open(backend, request, video, audio, &mut pacer));
+    let opened = create_backend().and_then(|backend| Pipeline::open(backend, plan, output_path, video, &mut pacer));
     let pipeline = match opened {
         Ok(pipeline) => {
-            let _ = ready.send(Ok(()));
+            // Writing starts right after this, so this is the timeline's time zero.
+            let _ = ready.send(Ok(Instant::now()));
             pipeline
         }
         Err(error) => {
