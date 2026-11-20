@@ -59,7 +59,7 @@ On macOS the same two commands install `~/Applications/Meeting Assistant.app`; s
 | --- | --- | --- |
 | Browser meetings with the extension, per tab | Supported | Supported; run with Google Meet calls in Chrome on one Mac |
 | Desktop apps such as Zoom | Supported | Supported; run with Slack huddles on one Mac, Zoom, Teams and Webex not run |
-| Manual recording | Supported | Supported; the entire screen run on one Mac, a chosen window not yet run |
+| Manual recording | Supported | Supported; the entire screen and a chosen window run on one Mac |
 | Install, start at login, finalize on exit, browser launcher | Supported | Supported; a real logout and the Edge launcher were not run |
 
 ## What to expect

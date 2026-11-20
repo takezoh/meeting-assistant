@@ -24,6 +24,7 @@ relations:
 - {type: references, target: note-20261119-windows-checks-after-the-macos-merge}
 - {type: references, target: adr-20261120-record-the-desktop-or-a-window-by-hand}
 - {type: references, target: note-20261120-window-recording-by-hand-on-windows}
+- {type: references, target: note-20261120-window-recording-by-hand-on-a-mac}
 source_paths:
 - crates/app/src/platform/win/recorder/writer.rs
 - crates/app/src/platform/win/recorder/mod.rs
@@ -105,6 +106,8 @@ d1a8127 changed shared code on Windows that has not run on a Mac, and the macOS 
 - Run on one Mac on 2026-11-20 with this code: clippy for macOS, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`, the whole test suite and the extension's tests passed. Metadata written into two AVAssetWriter files (a self-test and a Slack huddle recording) left every packet's timing and data unchanged, and ffprobe and AVFoundation read the four keys. A tab recording with the microphone added has not been made with it.
 
 On 2026-11-20 the Windows session also let the status panel record the entire screen or a window chosen from a list, with or without the microphone ([ADR](../adr/adr-20261120-record-the-desktop-or-a-window-by-hand.md)); on Windows a window and the entire screen were recorded with the microphone left out ([note](note-20261120-window-recording-by-hand-on-windows.md)). The macOS code changed only in saying that every window it lists can be picked. On a Mac: the panel's window list (titles need the Screen & System Audio Recording permission; the app's own windows are left out), a window recorded with its app's sound through ScreenCaptureKit, and the entire screen and a window with the microphone left out, whose track should be silent with the microphone indicator off.
+
+Run on one Mac on 2026-11-20 with e3ad51c installed, after fmt, clippy for macOS and Windows, the tests and the extension's tests passed there ([note](note-20261120-window-recording-by-hand-on-a-mac.md)). The user opened the window list and recorded windows of Chrome and Finder with and without the microphone, and the entire screen without it. Every file had the picture, two audio tracks and the `Manual` metadata. The microphone's track held sound only with the switch on. A window's track held its app's sound, also from another of its windows, though only Chrome's main process was named to the capture, and not another app's. macOS showed no microphone indicator, also while the microphone was recorded, so the indicator cannot tell whether the microphone was opened. The entire screen from the panel with the microphone on, and a window that closes, were not run.
 
 ### After the merge
 
