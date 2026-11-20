@@ -116,8 +116,8 @@ impl Default for Config {
             version: CONFIG_VERSION,
             output_directory: None,
             start_debounce_seconds: 3.0,
-            // A desktop meeting continues while its app uses the microphone or keeps the window that appeared with
-            // it, so it can end soon after both are gone.
+            // A desktop meeting continues and ends on its app's microphone use alone, so it can end soon after the app
+            // lets go of it.
             end_grace_seconds: 2.0,
             // A connected call is a firmer signal than microphone use; the extension already treats a call that is
             // reconnecting as connected.

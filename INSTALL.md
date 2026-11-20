@@ -8,7 +8,7 @@ This page takes you from a checkout to a running app that records desktop meetin
 - A Rust toolchain that supports edition 2024 (Rust 1.85 or later). No prebuilt binaries are published.
 - For per-tab recording: Google Chrome or Microsoft Edge.
 
-For macOS see [macOS](#macos) first; it needs two permissions and parts of it have not been run there.
+For macOS see [macOS](#macos) first; it needs two permissions, which for now have to be given again after each update.
 
 ## Build and install
 
@@ -119,11 +119,11 @@ Recording a desktop app or the screen needs two permissions, which macOS asks fo
 | Screen & System Audio Recording | System Settings > Privacy & Security. Turn on **Meeting Assistant**, then quit and start it again | Recordings of desktop apps and of the screen fail to start; browser tabs are recorded by the extension and are not affected |
 | Microphone | System Settings > Privacy & Security > Microphone | The microphone track of every recording, browser tabs included, is silent |
 
-The app is signed ad hoc, so after an update macOS may treat it as a new app and ask again, or list it twice; turn the new entry on.
+The app is signed ad hoc, so after each update macOS stops honouring its Screen & System Audio Recording permission although System Settings still shows it on, and turning it off and on does not help. Reset it with `tccutil reset ScreenCapture com.meeting-assistant.app`, start a recording (or `open -n -a "Meeting Assistant" --args --self-test`) so that macOS asks again, turn **Meeting Assistant** on, and quit and start the app. macOS may ask for the microphone again too. See [the issue](docs/issue/issue-20261119-every-update-drops-the-macos-screen-reco.md).
 
 What has been run on a Mac is listed in [Product](PRODUCT.md#what-is-not-established). `--self-test` records the main display, the output audio and the microphone for five seconds.
 
-The macOS build needs Rust 1.89 or later and the Xcode Command Line Tools. It was built, installed and run on one Apple Silicon Mac with macOS 26 on 2026-11-18, with synthetic meetings only; [the verification note](docs/note/note-20261118-macos-verification-2026-11-18.md) lists what was and was not observed.
+The macOS build needs Rust 1.89 or later and the Xcode Command Line Tools. It was built, installed and run on one Apple Silicon Mac with macOS 26 on 2026-11-18 with synthetic meetings, and on 2026-11-19 with Slack huddles and Google Meet calls; [the first verification note](docs/note/note-20261118-macos-verification-2026-11-18.md) and [the notes of 2026-11-19](docs/note/note-20261119-macos-verification-2026-11-19.md) list what was and was not observed.
 
 ```
 cargo build --release
