@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use meeting_assistant_core::{Config, CoordinatorStatus, Notice, NoticeLevel};
+use meeting_assistant_core::{Config, CoordinatorStatus, Notice, NoticeLevel, WindowChoice};
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
@@ -72,6 +72,8 @@ struct Icons {
 #[derive(Default)]
 struct State {
     status: Option<CoordinatorStatus>,
+    /// The windows the user can choose to record, as last read when the panel asked for them.
+    windows: Vec<WindowChoice>,
     clock: RecordingClock,
     /// When the shown running time changes next.
     next_tick: Option<Instant>,
@@ -163,6 +165,12 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
                 }
             }
             Event::UserEvent(AppEvent::Worker(Update::Notice(notice))) => show_notice(&notice),
+            Event::UserEvent(AppEvent::Worker(Update::Windows(windows))) => {
+                state.windows = windows;
+                if let Some(panel) = &mut panel {
+                    render_panel(panel, &state);
+                }
+            }
             Event::UserEvent(AppEvent::Tray(TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -217,7 +225,7 @@ pub fn run(config: Config, locations: Locations) -> anyhow::Result<std::convert:
                         if let Some(command) = state
                             .status
                             .as_ref()
-                            .and_then(|status| view::command_for(&other, status))
+                            .and_then(|status| view::command_for(&other, status, &state.windows))
                         {
                             let _ = commands.send(command);
                         }
@@ -329,7 +337,12 @@ fn render_tray(tray: &mut Tray, state: &State) {
 /// Shows the latest status in the panel, with the recording's running time as of now.
 fn render_panel(panel: &mut Panel, state: &State) {
     if let Some(status) = &state.status {
-        panel.render(&view::panel_view(status, state.elapsed(), platform::SCREEN_CAPTURE));
+        panel.render(&view::panel_view(
+            status,
+            state.elapsed(),
+            platform::SCREEN_CAPTURE,
+            &state.windows,
+        ));
     }
 }
 

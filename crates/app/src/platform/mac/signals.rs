@@ -279,6 +279,8 @@ fn window_entry(window: &CFDictionary<CFString, CFType>) -> Option<WindowEntry> 
             y: rect.origin.y + rect.size.height / 2.0,
         }),
         area: (rect.size.width * rect.size.height) as u64,
+        // Only ordinary app windows on screen are listed.
+        pickable: true,
     })
 }
 

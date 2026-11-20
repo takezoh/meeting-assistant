@@ -8,20 +8,12 @@ use crate::metadata::RecordingMetadata;
 use crate::naming;
 use crate::ports::{CoordinatorPorts, LocalDateTime};
 use crate::recording::{Recorder, RecordingRequest, VideoTarget};
+use crate::target::RecordingTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordingTrigger {
     Auto,
     Manual,
-}
-
-/// What a manual recording records.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ManualTarget {
-    /// One detected meeting, recorded as its automatic recording would be.
-    Meeting(MeetingKey),
-    /// The main display and all output audio, with no meeting attached.
-    Screen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,8 +52,14 @@ pub struct MeetingStatus {
 pub struct RecordingStatus {
     pub path: PathBuf,
     pub trigger: RecordingTrigger,
-    /// The meeting being recorded. `None` for a recording of the screen.
-    pub meeting: Option<MeetingKey>,
+    pub target: RecordingTarget,
+}
+
+impl RecordingStatus {
+    /// The meeting being recorded. `None` for a recording of the desktop or a window.
+    pub fn meeting(&self) -> Option<&MeetingKey> {
+        self.target.meeting()
+    }
 }
 
 impl CoordinatorStatus {
@@ -73,7 +71,7 @@ impl CoordinatorStatus {
     pub fn is_recording_meeting(&self, key: &MeetingKey) -> bool {
         self.recording
             .as_ref()
-            .is_some_and(|recording| recording.meeting.as_ref() == Some(key))
+            .is_some_and(|recording| recording.meeting() == Some(key))
     }
 }
 
@@ -87,13 +85,20 @@ struct Meeting {
 struct ActiveRecording {
     path: PathBuf,
     trigger: RecordingTrigger,
-    meeting: Option<MeetingKey>,
+    target: RecordingTarget,
     /// The window targeted for video.
     window: Option<u64>,
-    /// Whether this recording targets only the app's window for video (false for whole-display recordings).
+    /// Whether the video follows the meeting app's window: false for display recordings and for a window chosen by
+    /// hand, which is never exchanged for another.
     follows_app: bool,
     /// What the recording was last told to write into its file.
     metadata: RecordingMetadata,
+}
+
+impl ActiveRecording {
+    fn meeting(&self) -> Option<&MeetingKey> {
+        self.target.meeting()
+    }
 }
 
 /// Maps meeting start/end and manual actions to starting and stopping recordings.
@@ -102,7 +107,8 @@ struct ActiveRecording {
 /// - If auto-recording is enabled, a meeting that starts while nothing is being recorded is recorded, and the
 ///   recording stops when that meeting ends. Then the earliest meeting that started meanwhile, and whose automatic
 ///   recording has not been stopped, is recorded next.
-/// - A manually started recording, of a meeting or of the screen, continues until stopped manually or until shutdown.
+/// - A manually started recording, of a meeting, the desktop or a window, continues until stopped manually or until
+///   shutdown.
 /// - Stopping a recording by hand starts nothing else, and auto-recording does not start that meeting again for the
 ///   rest of the meeting.
 /// - Failures to start and failures during recording are retried a limited number of times.
@@ -147,7 +153,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
 
     /// The meeting being recorded.
     pub fn recorded_meeting(&self) -> Option<&MeetingKey> {
-        self.recording.as_ref()?.meeting.as_ref()
+        self.recording.as_ref()?.meeting()
     }
 
     /// True when recording targets an app window and that window is not in `existing`
@@ -189,7 +195,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
             recording: self.recording.as_ref().map(|recording| RecordingStatus {
                 path: recording.path.clone(),
                 trigger: recording.trigger,
-                meeting: recording.meeting.clone(),
+                target: recording.target.clone(),
             }),
         }
     }
@@ -217,14 +223,14 @@ impl<R: Recorder> RecordingCoordinator<R> {
                 // waits for the meeting being recorded automatically to end.
                 if self.auto_enabled
                     && self.recording.is_none()
-                    && !self.start(RecordingTrigger::Auto, Some(key.clone()))
+                    && !self.start(RecordingTrigger::Auto, RecordingTarget::Meeting(key.clone()))
                 {
                     self.mark_auto_stopped(&key);
                 }
             }
             DetectorEvent::Updated(meeting) => {
                 let key = meeting.key();
-                if let Some(recording) = self.recording.as_mut().filter(|r| r.meeting.as_ref() == Some(&key)) {
+                if let Some(recording) = self.recording.as_mut().filter(|r| r.meeting() == Some(&key)) {
                     // The app and the start stay as they were; only what is known of the meeting changes.
                     recording.metadata.meeting = meeting.metadata.clone();
                     self.recorder.describe(&recording.metadata);
@@ -240,7 +246,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
                 if self
                     .recording
                     .as_ref()
-                    .is_some_and(|r| r.trigger == RecordingTrigger::Auto && r.meeting.as_ref() == Some(&key))
+                    .is_some_and(|r| r.trigger == RecordingTrigger::Auto && r.meeting() == Some(&key))
                 {
                     self.stop();
                     // The automatic recording passes to a meeting that waited for it.
@@ -250,28 +256,25 @@ impl<R: Recorder> RecordingCoordinator<R> {
         }
     }
 
-    /// Starts a recording by hand. Does nothing while something is being recorded.
-    pub fn start_manual(&mut self, target: ManualTarget) {
+    /// Starts a recording by hand: of a detected meeting, recorded as its automatic recording would be, of the desktop
+    /// or of a window. Does nothing while something is being recorded.
+    pub fn start_manual(&mut self, target: RecordingTarget) {
         if self.recording.is_some() {
             log::info!("Already recording; the manual start was ignored.");
             return;
         }
-        let meeting = match target {
-            ManualTarget::Screen => None,
-            ManualTarget::Meeting(key) if self.meeting(&key).is_none() => {
-                self.notify(NoticeLevel::Warning, "That meeting is no longer detected.".into());
-                return;
-            }
-            ManualTarget::Meeting(key) => Some(key),
-        };
-        self.start(RecordingTrigger::Manual, meeting);
+        if target.meeting().is_some_and(|key| self.meeting(key).is_none()) {
+            self.notify(NoticeLevel::Warning, "That meeting is no longer detected.".into());
+            return;
+        }
+        self.start(RecordingTrigger::Manual, target);
     }
 
     /// Stops the recording in progress. A meeting whose recording is stopped is not recorded automatically again,
     /// and stopping does not start a recording of another detected meeting.
     pub fn stop_manual(&mut self) {
         let Some(recording) = &self.recording else { return };
-        if let Some(key) = recording.meeting.clone() {
+        if let Some(key) = recording.meeting().cloned() {
             self.mark_auto_stopped(&key);
         }
         self.stop();
@@ -307,7 +310,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
         log::error!("Recording was interrupted: {error} ({})", failed.path.display());
 
         let auto_enabled = self.auto_enabled;
-        let meeting = failed.meeting.as_ref().and_then(|key| self.meeting_mut(key));
+        let meeting = failed.meeting().cloned().and_then(|key| self.meeting_mut(&key));
         let resume = match meeting {
             Some(meeting)
                 if failed.trigger == RecordingTrigger::Auto
@@ -328,8 +331,8 @@ impl<R: Recorder> RecordingCoordinator<R> {
                 NoticeLevel::Warning,
                 "Recording was interrupted; resuming in a new file.".into(),
             );
-            let key = failed.meeting.clone();
-            if self.start(RecordingTrigger::Auto, failed.meeting) {
+            let key = failed.meeting().cloned();
+            if self.start(RecordingTrigger::Auto, failed.target) {
                 return;
             }
             if let Some(key) = key {
@@ -351,7 +354,7 @@ impl<R: Recorder> RecordingCoordinator<R> {
             let Some(key) = self.meetings.iter().find(|m| !m.auto_stopped).map(|m| m.info.key()) else {
                 return;
             };
-            if !self.start(RecordingTrigger::Auto, Some(key.clone())) {
+            if !self.start(RecordingTrigger::Auto, RecordingTarget::Meeting(key.clone())) {
                 // Do not try the same meeting again on every event; another detected meeting may still start.
                 self.mark_auto_stopped(&key);
             }
@@ -373,23 +376,25 @@ impl<R: Recorder> RecordingCoordinator<R> {
     }
 
     /// Returns whether the recording started.
-    fn start(&mut self, trigger: RecordingTrigger, meeting: Option<MeetingKey>) -> bool {
+    fn start(&mut self, trigger: RecordingTrigger, target: RecordingTarget) -> bool {
         for attempt in 1..=Self::MAX_START_ATTEMPTS {
-            match self.try_start(meeting.as_ref()) {
+            match self.try_start(&target) {
                 Ok(request) => {
                     let path = request.output_path;
                     let metadata = request.metadata;
                     log::info!("Recording started ({trigger:?}): {}", path.display());
                     self.notify(NoticeLevel::Info, format!("Recording started: {}", file_name(&path)));
+                    // Only a meeting's window is followed; a window chosen by hand stays the one recorded.
+                    let follows_meeting = target.meeting().is_some();
                     let (window, follows_app) = match request.video {
-                        VideoTarget::Window(window) => (Some(window), true),
-                        VideoTarget::Blank => (None, true),
+                        VideoTarget::Window(window) => (Some(window), follows_meeting),
+                        VideoTarget::Blank => (None, follows_meeting),
                         VideoTarget::Display(_) | VideoTarget::BrowserTab(_) => (None, false),
                     };
                     self.recording = Some(ActiveRecording {
                         path,
                         trigger,
-                        meeting,
+                        target,
                         window,
                         follows_app,
                         metadata,
@@ -411,9 +416,9 @@ impl<R: Recorder> RecordingCoordinator<R> {
         false
     }
 
-    fn try_start(&mut self, meeting: Option<&MeetingKey>) -> anyhow::Result<RecordingRequest> {
+    fn try_start(&mut self, target: &RecordingTarget) -> anyhow::Result<RecordingRequest> {
         // A meeting that is gone must not turn into a recording of the screen.
-        let meeting = match meeting {
+        let meeting = match target.meeting() {
             Some(key) => Some(
                 self.meeting(key)
                     .map(|m| m.info.clone())
@@ -429,20 +434,26 @@ impl<R: Recorder> RecordingCoordinator<R> {
         let meeting = meeting.as_ref();
         // Recording only the app is possible only when the target app is known (a detected meeting).
         let app = meeting.filter(|_| self.capture_scope == CaptureScope::App);
-        let video = match app {
+        let (video, audio_process_id) = match (target, app) {
+            // A window chosen by hand, with its app's sound and never all output audio.
+            (RecordingTarget::Window { window, .. }, _) => (VideoTarget::Window(window.id), Some(window.process_id)),
             // With the app-only setting, never fall back to recording the whole display even if no window is found.
-            Some(app) => match app.browser_tab {
-                Some(tab) => VideoTarget::BrowserTab(tab),
-                None => app.window.map_or(VideoTarget::Blank, VideoTarget::Window),
-            },
-            None => VideoTarget::Display(meeting.and_then(|m| m.display.clone())),
+            (_, Some(app)) => (
+                match app.browser_tab {
+                    Some(tab) => VideoTarget::BrowserTab(tab),
+                    None => app.window.map_or(VideoTarget::Blank, VideoTarget::Window),
+                },
+                app.process_id,
+            ),
+            (_, None) => (VideoTarget::Display(meeting.and_then(|m| m.display.clone())), None),
         };
         let request = RecordingRequest {
             output_path,
             video,
-            audio_process_id: app.and_then(|m| m.process_id),
+            audio_process_id,
             render_device_id: meeting.and_then(|m| m.render_device_id.clone()),
             capture_device_id: meeting.and_then(|m| m.capture_device_id.clone()),
+            microphone: target.microphone(),
             metadata: RecordingMetadata {
                 app: label,
                 started_at: Some(started_at),

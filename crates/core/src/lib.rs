@@ -24,12 +24,12 @@ mod ports;
 mod recording;
 mod rules;
 mod signals;
+mod target;
 
 pub use apps::{MeetingApp, WindowRole};
 pub use config::{AudioConfig, CONFIG_VERSION, CaptureScope, Config, ConfigError, VideoConfig};
 pub use coordinator::{
-    CoordinatorStatus, ManualTarget, MeetingStatus, Notice, NoticeLevel, RecordingCoordinator, RecordingStatus,
-    RecordingTrigger,
+    CoordinatorStatus, MeetingStatus, Notice, NoticeLevel, RecordingCoordinator, RecordingStatus, RecordingTrigger,
 };
 pub use detector::{DetectorEvent, MeetingDetector, MeetingInfo, MeetingKey, Timing};
 pub use engine::Engine;
@@ -41,3 +41,4 @@ pub use signals::{
     AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry,
     full_snapshot,
 };
+pub use target::{RecordingTarget, WindowChoice, window_choices};

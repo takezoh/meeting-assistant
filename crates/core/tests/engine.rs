@@ -6,7 +6,7 @@ use meeting_assistant_core::fakes::{
 };
 use meeting_assistant_core::{
     BrowserLink, BrowserMeeting, BrowserTab, Config, Engine, MeetingApp, NoticeLevel, RecordingCoordinator,
-    VideoTarget, WindowEntry,
+    VideoTarget, WindowChoice, WindowEntry,
 };
 
 struct Fixture {
@@ -380,6 +380,7 @@ fn records_the_window_an_apps_adapter_tells_is_a_meetings_when_it_was_open_at_th
         title: title.into(),
         display: Some("DISPLAY1".into()),
         area,
+        pickable: true,
     };
     let slack = |microphone: bool, windows: &[WindowEntry]| {
         let users: &[u32] = if microphone { &[100] } else { &[] };
@@ -409,4 +410,46 @@ fn records_the_window_an_apps_adapter_tells_is_a_meetings_when_it_was_open_at_th
     f.run(4);
     assert!(!f.recording());
     assert!(f.recorder.state().retargets.is_empty());
+}
+
+#[test]
+fn the_windows_to_record_by_hand_are_read_when_asked_without_the_apps_own() {
+    let f = fixture();
+    let notepad = window(300, "Untitled - Notepad", "DISPLAY1", 100);
+    let own = window(400, "Meeting Assistant", "DISPLAY1", 100);
+    let hidden = WindowEntry {
+        pickable: false,
+        ..window(500, "Windows Input Experience", "DISPLAY1", 100)
+    };
+    f.signals.set(snapshot(
+        &[
+            process(300, 1, "Notepad.exe"),
+            process(400, 1, "meeting-assistant.exe"),
+            process(500, 1, "TextInputHost.exe"),
+        ],
+        &[],
+        &[],
+        &[notepad.clone(), own, hidden],
+    ));
+
+    let mut engine = f.engine.with_own_process(400);
+    let choices = engine.window_choices().unwrap();
+
+    assert_eq!(f.signals.take_reads(), ["windows", "processes"]);
+    assert_eq!(
+        choices,
+        [WindowChoice {
+            id: notepad.id,
+            process_id: 300,
+            app: "Notepad".into(),
+            title: "Untitled - Notepad".into(),
+        }]
+    );
+}
+
+#[test]
+fn the_windows_to_record_by_hand_cannot_be_read_while_the_signals_fail() {
+    let mut f = fixture();
+    f.signals.set_failure(Some("denied"));
+    assert!(f.engine.window_choices().is_err());
 }

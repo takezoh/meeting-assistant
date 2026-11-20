@@ -3,13 +3,17 @@
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{CoordinatorStatus, Engine, ManualTarget, Notice, Recorder, SignalSource};
+use meeting_assistant_core::{
+    CoordinatorStatus, Engine, Notice, NoticeLevel, Recorder, RecordingTarget, SignalSource, WindowChoice,
+};
 
 /// Instructions from the UI side.
 pub enum Command {
-    StartManual(ManualTarget),
+    StartManual(RecordingTarget),
     StopManual,
     SetAutoEnabled(bool),
+    /// Reads the windows the user can choose to record and reports them.
+    ListWindows,
     /// Finalizes the recording and exits. Sends an acknowledgement back when done.
     Shutdown(mpsc::Sender<()>),
 }
@@ -19,6 +23,8 @@ pub enum Command {
 pub enum Update {
     Status(CoordinatorStatus),
     Notice(Notice),
+    /// The windows the user can choose to record, read when asked; empty when they could not be read.
+    Windows(Vec<WindowChoice>),
 }
 
 /// Advances detection every `interval` and handles instructions in between.
@@ -41,6 +47,17 @@ pub fn run<S: SignalSource, R: Recorder>(
             Ok(Command::StartManual(target)) => engine.start_manual(target),
             Ok(Command::StopManual) => engine.stop_manual(),
             Ok(Command::SetAutoEnabled(enabled)) => engine.set_auto_enabled(enabled),
+            Ok(Command::ListWindows) => match engine.window_choices() {
+                Ok(windows) => publish(Update::Windows(windows)),
+                Err(error) => {
+                    log::warn!("Cannot list the windows to record: {error:#}");
+                    publish(Update::Windows(Vec::new()));
+                    publish(Update::Notice(Notice {
+                        level: NoticeLevel::Warning,
+                        message: "The windows could not be listed. Check the log.".into(),
+                    }));
+                }
+            },
             Ok(Command::Shutdown(done)) => {
                 engine.shutdown();
                 finished = Some(Some(done));
@@ -78,8 +95,10 @@ pub fn run<S: SignalSource, R: Recorder>(
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use meeting_assistant_core::fakes::{FakeRecorder, ScriptedSignals, fake_ports, zoom_in_meeting};
-    use meeting_assistant_core::{Config, NoticeLevel, RecordingCoordinator, RecordingTrigger};
+    use meeting_assistant_core::fakes::{
+        FakeRecorder, ScriptedSignals, fake_ports, process, snapshot, window, zoom_in_meeting,
+    };
+    use meeting_assistant_core::{Config, RecordingCoordinator, RecordingTrigger};
 
     use super::*;
 
@@ -195,7 +214,9 @@ mod tests {
     #[test]
     fn starts_and_stops_recording_on_manual_instruction() {
         let h = harness();
-        h.commands.send(Command::StartManual(ManualTarget::Screen)).unwrap();
+        h.commands
+            .send(Command::StartManual(RecordingTarget::Desktop { microphone: true }))
+            .unwrap();
         h.wait_until("recording", |h| h.recorder.state().recording);
         h.wait_until("manual recording status arrives", |h| {
             h.latest_status()
@@ -231,7 +252,7 @@ mod tests {
 
         let key = h.latest_status().meetings[0].key.clone();
         h.commands
-            .send(Command::StartManual(ManualTarget::Meeting(key.clone())))
+            .send(Command::StartManual(RecordingTarget::Meeting(key.clone())))
             .unwrap();
         h.wait_until("recording status arrives", |h| {
             h.latest_status().is_recording_meeting(&key)
@@ -241,10 +262,58 @@ mod tests {
         h.shut_down();
     }
 
+    fn windows_reported(h: &Harness) -> Option<Vec<WindowChoice>> {
+        h.updates.lock().unwrap().iter().rev().find_map(|u| match u {
+            Update::Windows(windows) => Some(windows.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn reports_the_windows_to_record_when_asked() {
+        let h = harness();
+        h.signals.set(snapshot(
+            &[process(300, 1, "Notepad.exe")],
+            &[],
+            &[],
+            &[window(300, "Untitled - Notepad", "DISPLAY1", 100)],
+        ));
+        h.commands.send(Command::ListWindows).unwrap();
+        h.wait_until("the windows arrive", |h| windows_reported(h).is_some());
+
+        let windows = windows_reported(&h).unwrap();
+        assert_eq!(
+            windows
+                .iter()
+                .map(|w| (w.app.as_str(), w.title.as_str()))
+                .collect::<Vec<_>>(),
+            [("Notepad", "Untitled - Notepad")]
+        );
+        h.shut_down();
+    }
+
+    #[test]
+    fn reports_no_windows_and_a_warning_when_they_cannot_be_read() {
+        let h = harness();
+        h.signals.set_failure(Some("denied"));
+        h.commands.send(Command::ListWindows).unwrap();
+        h.wait_until("the windows arrive", |h| windows_reported(h).is_some());
+
+        assert_eq!(windows_reported(&h), Some(Vec::new()));
+        let updates = h.shut_down();
+        assert!(
+            updates
+                .iter()
+                .any(|u| matches!(u, Update::Notice(n) if n.level == NoticeLevel::Warning))
+        );
+    }
+
     #[test]
     fn finalizes_recording_then_acknowledges_on_quit_instruction() {
         let h = harness();
-        h.commands.send(Command::StartManual(ManualTarget::Screen)).unwrap();
+        h.commands
+            .send(Command::StartManual(RecordingTarget::Desktop { microphone: true }))
+            .unwrap();
         h.wait_until("recording", |h| h.recorder.state().recording);
         let recorder = h.recorder.clone();
 
@@ -258,7 +327,9 @@ mod tests {
     #[test]
     fn finalizes_recording_and_exits_when_the_instruction_sender_is_gone() {
         let h = harness();
-        h.commands.send(Command::StartManual(ManualTarget::Screen)).unwrap();
+        h.commands
+            .send(Command::StartManual(RecordingTarget::Desktop { microphone: true }))
+            .unwrap();
         h.wait_until("recording", |h| h.recorder.state().recording);
         let Harness {
             commands,

@@ -28,6 +28,9 @@ pub struct RecordingRequest {
     pub render_device_id: Option<String>,
     /// The microphone. If `None`, the default device is used.
     pub capture_device_id: Option<String>,
+    /// Whether the microphone is recorded. When not, its track is silent and the microphone is not opened. Only a
+    /// recording of the desktop or a window started by hand leaves it out.
+    pub microphone: bool,
     /// What to write into the file besides its media, as known at start; see [`Recorder::describe`].
     pub metadata: RecordingMetadata,
 }

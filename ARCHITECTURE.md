@@ -56,7 +56,8 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `metadata` | `MeetingMetadata`, what is known of a meeting besides its app (keys and values per app, kept by one set of rules), and `RecordingMetadata`, what is written into a recording: the app, its start and the meeting's metadata. Pure |
 | `detector` | `MeetingDetector`: start debounce and end grace over a sequence of evaluations, which window is a meeting's, and what is learned of each meeting (reported as `Updated`). Pure; time is passed in |
 | `coordinator` | `RecordingCoordinator`: turns meeting starts, ends and manual commands into recorder calls; chooses the video target and audio process; retries after failure; names the file |
-| `engine` | `Engine`: one tick = capture signals, evaluate, update the detector, tell the coordinator; returns state and notices |
+| `target` | `RecordingTarget`, what a recording records (a meeting, the desktop or a window, the last two with or without the microphone), and which windows the user can choose to record by hand. Pure |
+| `engine` | `Engine`: one tick = capture signals, evaluate, update the detector, tell the coordinator; returns state and notices. Reads the windows to choose from when asked |
 | `naming` | Recording file names and collision handling. Pure |
 | `config` | `Config`: the file's format version, TOML parsing, defaults and validation. Pure; reading the file, and replacing one of another version with the defaults, is an adapter's job |
 | `signals`, `recording`, `ports` | The ports and their value types: `SignalSource`, `Recorder`, `Clock`, `OutputFolder`, `Pause` |
@@ -81,8 +82,8 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | `browser/hub` | State machine of extension connections, reported meetings and the single tab recording and its upload. Writes data to a `ChunkSink`; touches no socket or file |
 | `browser/server`, `endpoint`, `relay` | The loopback control listener and the per-recording WebSocket upload listener, the published endpoint file, and the relay the browser launches |
 | `linked` | `LinkedSignalSource` and `LinkedRecorder`: combine the OS path and the extension path behind the core ports, using `BrowserPort`; every recording that finishes or fails gets its metadata written here, the same way whichever path made it |
-| `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI |
-| `panel/view` | What the status panel and the tray icon show, the tooltip and running time, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
+| `worker` | The loop that ticks the engine at the poll interval and handles commands from the UI, including reading the windows the panel offers to record |
+| `panel/view` | What the status panel and the tray icon show, the tooltip and running time, the windows offered to record, what the panel's messages ask for, and where the panel goes next to the icon. Pure |
 | `panel/window`, `panel/panel.html` | The panel's borderless window and the self-contained page that the system web view (`wry`) shows in it. One page for both platforms; it follows the macOS or the Windows 11 design through a mark the platform gives it |
 | `apps` | The `MeetingApp` adapters, one per app that more is known about (Slack: the mark it puts in its main window's title while a joined huddle is open). Pure; given to the engine in `composition` |
 | `adapters` | Real implementations of the core ports (system clock, recordings folder, sleeping, configuration file) and of the merge's ports (`Mp4Remuxer`, files) |
@@ -93,7 +94,7 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 
 | Platform item | Small operations it provides |
 | --- | --- |
-| `PlatformSignalSource` | Processes with an active capture session, the process tree, the list of top-level windows, default device state |
+| `PlatformSignalSource` | Processes with an active capture session, the process tree, the list of top-level windows with whether each can be picked to record (on Windows, not cloaked and not a tool window), default device state |
 | `PlatformRecorder` | A `CaptureBackend`: open a window or display capture, take a picture, scale it, open audio inputs, write and finalize the file |
 | `PlatformLoopbackPeers` | A `LoopbackPeers`: the user that owns the other end of a loopback connection, and the user the app runs as. The browser listeners admit only the current user's connections ([ADR](docs/adr/adr-20261118-admit-loopback-connections-only-from-the.md)) |
 | `PlatformInstaller` | An `InstallSystem`: copy and remove files, registry or plist entries, native-host registration, shortcuts or launcher apps |

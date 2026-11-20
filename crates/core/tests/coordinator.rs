@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use meeting_assistant_core::fakes::{FakeOutputFolder, FakeRecorder, RecordedPauses, fake_ports_with, output_path};
 use meeting_assistant_core::{
-    BrowserTab, CaptureScope, CoordinatorStatus, DetectorEvent, ManualTarget, MeetingInfo, NoticeLevel,
-    RecordingCoordinator, RecordingTrigger, VideoTarget,
+    BrowserTab, CaptureScope, CoordinatorStatus, DetectorEvent, MeetingInfo, NoticeLevel, RecordingCoordinator,
+    RecordingTarget, RecordingTrigger, VideoTarget, WindowChoice,
 };
 
 type Coordinator = RecordingCoordinator<FakeRecorder>;
@@ -62,8 +64,8 @@ fn trigger(status: &CoordinatorStatus) -> Option<RecordingTrigger> {
     status.recording.as_ref().map(|r| r.trigger)
 }
 
-fn record_zoom() -> ManualTarget {
-    ManualTarget::Meeting(zoom().key())
+fn record_zoom() -> RecordingTarget {
+    RecordingTarget::Meeting(zoom().key())
 }
 
 #[test]
@@ -179,7 +181,8 @@ fn after_auto_recording_is_stopped_manually_it_does_not_resume_for_that_meeting(
 #[test]
 fn a_manually_started_recording_continues_after_the_meeting_ends() {
     let mut f = fixture();
-    f.coordinator.start_manual(ManualTarget::Screen);
+    f.coordinator
+        .start_manual(RecordingTarget::Desktop { microphone: true });
     started(&mut f.coordinator);
     ended(&mut f.coordinator);
 
@@ -208,7 +211,8 @@ fn a_manual_recording_of_a_meeting_continues_after_that_meeting_ends() {
 #[test]
 fn manual_recording_of_the_screen_targets_the_whole_display_and_default_devices() {
     let mut f = fixture();
-    f.coordinator.start_manual(ManualTarget::Screen);
+    f.coordinator
+        .start_manual(RecordingTarget::Desktop { microphone: true });
 
     let state = f.recorder.state();
     let request = &state.started[0];
@@ -217,6 +221,77 @@ fn manual_recording_of_the_screen_targets_the_whole_display_and_default_devices(
     assert_eq!(request.audio_process_id, None);
     assert_eq!(request.capture_device_id, None);
     assert_eq!(request.render_device_id, None);
+    assert!(request.microphone);
+}
+
+#[test]
+fn a_recording_of_the_desktop_can_leave_the_microphone_out() {
+    let mut f = fixture();
+    f.coordinator
+        .start_manual(RecordingTarget::Desktop { microphone: false });
+
+    let state = f.recorder.state();
+    assert_eq!(state.started[0].video, VideoTarget::Display(None));
+    assert!(!state.started[0].microphone);
+    assert_eq!(
+        f.coordinator.status().recording.map(|r| r.target),
+        Some(RecordingTarget::Desktop { microphone: false })
+    );
+}
+
+fn notepad() -> WindowChoice {
+    WindowChoice {
+        id: 55,
+        process_id: 300,
+        app: "Notepad".into(),
+        title: "Untitled - Notepad".into(),
+    }
+}
+
+#[test]
+fn a_window_chosen_by_hand_is_recorded_with_its_apps_sound_alone() {
+    let mut f = fixture();
+    f.coordinator.start_manual(RecordingTarget::Window {
+        window: notepad(),
+        microphone: true,
+    });
+
+    let state = f.recorder.state();
+    let request = &state.started[0];
+    assert!(request.output_path.ends_with("2026-11-17_10-00-00_Manual.mp4"));
+    assert_eq!(request.video, VideoTarget::Window(55));
+    assert_eq!(request.audio_process_id, Some(300), "never all output audio");
+    assert!(request.microphone);
+    assert_eq!(request.metadata.app, "Manual");
+    let status = f.coordinator.status();
+    let recording = status.recording.unwrap();
+    assert_eq!(recording.meeting(), None);
+    assert_eq!(recording.trigger, RecordingTrigger::Manual);
+}
+
+#[test]
+fn a_window_chosen_by_hand_is_never_exchanged_for_another_even_when_it_closes() {
+    let mut f = fixture();
+    f.coordinator.start_manual(RecordingTarget::Window {
+        window: notepad(),
+        microphone: false,
+    });
+    assert!(!f.recorder.state().started[0].microphone);
+
+    assert!(
+        !f.coordinator.needs_window(&HashSet::new()),
+        "its closing asks for no other window"
+    );
+    f.coordinator.retarget(88);
+    assert!(f.recorder.state().retargets.is_empty());
+    assert_eq!(f.coordinator.target_window(), Some(55));
+}
+
+#[test]
+fn a_meeting_is_always_recorded_with_the_microphone() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    assert!(f.recorder.state().started[0].microphone);
 }
 
 #[test]
@@ -285,7 +360,8 @@ fn stops_resuming_and_notifies_an_error_when_recording_failures_repeat() {
 #[test]
 fn a_failed_manual_recording_is_not_resumed_and_notifies_an_error() {
     let mut f = fixture();
-    f.coordinator.start_manual(ManualTarget::Screen);
+    f.coordinator
+        .start_manual(RecordingTarget::Desktop { microphone: true });
     f.recorder.fail("disk full");
     f.coordinator.poll_recorder();
 
@@ -641,8 +717,9 @@ fn a_manual_start_while_recording_is_ignored() {
     let mut f = fixture();
     started(&mut f.coordinator);
     f.coordinator.handle(DetectorEvent::Started(teams()));
-    f.coordinator.start_manual(ManualTarget::Meeting(teams().key()));
-    f.coordinator.start_manual(ManualTarget::Screen);
+    f.coordinator.start_manual(RecordingTarget::Meeting(teams().key()));
+    f.coordinator
+        .start_manual(RecordingTarget::Desktop { microphone: true });
 
     assert_eq!(f.recorder.state().started.len(), 1);
     assert!(f.coordinator.status().is_recording_meeting(&zoom().key()));

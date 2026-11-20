@@ -104,7 +104,8 @@ pub struct MediaFormat {
 ///
 /// For the other side, if the target app is known, only that app's audio is used. If the app's audio cannot be
 /// captured, we do not substitute all sound from the output device (so that a user who meant to record only the app
-/// is not silently recorded with other sounds). An input turned off in the settings leaves its track silent.
+/// is not silently recorded with other sounds). An input turned off in the settings, or a microphone the request
+/// leaves out, leaves its track silent: the microphone is then not opened.
 pub fn meeting_plan(request: &RecordingRequest, config: &AudioConfig) -> anyhow::Result<CapturePlan> {
     let video = match &request.video {
         VideoTarget::Window(window) => VideoPlan::Capture(VideoSource::Window(*window)),
@@ -116,8 +117,7 @@ pub fn meeting_plan(request: &RecordingRequest, config: &AudioConfig) -> anyhow:
         Some(process_id) => AudioSource::ProcessAudio(process_id),
         None => AudioSource::DeviceAudio(request.render_device_id.clone()),
     });
-    let microphone = config
-        .record_microphone
+    let microphone = (config.record_microphone && request.microphone)
         .then(|| AudioSource::Microphone(request.capture_device_id.clone()));
     Ok(CapturePlan {
         video,
@@ -150,6 +150,7 @@ mod tests {
             audio_process_id,
             render_device_id: Some("speaker".into()),
             capture_device_id: Some("mic".into()),
+            microphone: true,
             metadata: meeting_assistant_core::RecordingMetadata::default(),
         }
     }
@@ -232,6 +233,21 @@ mod tests {
             tracks(Some(100), &nothing),
             [(Track::OtherSide, None), (Track::Microphone, None)],
             "the layout of the file stays the same"
+        );
+    }
+
+    #[test]
+    fn a_microphone_the_request_leaves_out_keeps_its_track_without_a_source() {
+        let request = RecordingRequest {
+            microphone: false,
+            ..request(Some(100))
+        };
+        assert_eq!(
+            meeting_plan(&request, &AudioConfig::default()).unwrap().tracks,
+            [
+                (Track::OtherSide, Some(AudioSource::ProcessAudio(100))),
+                (Track::Microphone, None)
+            ]
         );
     }
 

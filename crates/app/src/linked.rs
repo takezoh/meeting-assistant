@@ -493,6 +493,7 @@ mod tests {
             audio_process_id: None,
             render_device_id: None,
             capture_device_id: Some("mic".into()),
+            microphone: true,
             metadata: described("Zoom", "at start"),
         }
     }

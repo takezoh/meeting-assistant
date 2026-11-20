@@ -64,7 +64,8 @@ invariants:
 - id: INV-011
   statement: A meeting or screen recording has exactly two audio tracks, the other
     side first and the microphone second, each written only from its own source; a
-    track whose source is turned off, cannot be opened or fails holds silence. A recording
+    track whose source is turned off, left out by the request, cannot be opened or fails
+    holds silence. A recording
     of the microphone alone has no video and one audio track.
   enforcement: test
 boundaries:

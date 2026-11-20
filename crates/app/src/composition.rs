@@ -74,5 +74,7 @@ fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<Ap
     let coordinator =
         RecordingCoordinator::new(recorder, real_ports(output_directory)).with_capture_scope(config.capture_scope);
     let signals = LinkedSignalSource::new(PlatformSignalSource::new()?, browser);
-    Ok(Engine::new(signals, coordinator, config)?.with_apps(&crate::apps::adapters()))
+    Ok(Engine::new(signals, coordinator, config)?
+        .with_apps(&crate::apps::adapters())
+        .with_own_process(std::process::id()))
 }

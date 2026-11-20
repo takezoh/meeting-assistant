@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use meeting_assistant_core::{CoordinatorStatus, ManualTarget, MeetingKey, MeetingStatus, RecordingTrigger};
+use meeting_assistant_core::{
+    CoordinatorStatus, MeetingKey, MeetingStatus, RecordingTarget, RecordingTrigger, WindowChoice,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::worker::Command;
@@ -102,21 +104,37 @@ pub struct PanelView {
     pub recording: Option<RecordingView>,
     pub meetings: Vec<MeetingView>,
     pub auto_enabled: bool,
-    /// Whether this platform can record the whole screen; when not, the panel does not offer it.
+    /// Whether this platform can record the desktop and windows; when not, the panel does not offer them.
     pub screen_capture: bool,
-    /// Whether a recording of the whole screen can be started now.
+    /// Whether a recording of the desktop or a window can be started now.
     pub can_record_screen: bool,
+    /// The windows the user can choose to record, as last read when the panel asked for them.
+    pub windows: Vec<WindowView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingView {
-    /// The meeting's name, or "Entire screen".
+    /// The meeting's name, "Entire screen" or the window's app and title.
     pub title: String,
     pub file_name: String,
     /// "Automatic" or "Manual".
     pub trigger: String,
     pub elapsed_seconds: u64,
+    /// Whether the microphone was asked for; only a recording of the desktop or a window started by hand leaves it
+    /// out.
+    pub microphone: bool,
+}
+
+/// A window the user can choose to record.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowView {
+    /// Identifies the window in the panel's messages.
+    pub id: String,
+    pub app: String,
+    /// Empty where the system does not tell it.
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -145,13 +163,16 @@ pub enum MeetingState {
     NotRecording,
 }
 
-/// Builds the panel's content. `elapsed` is how long the current recording has been running.
-pub fn panel_view(status: &CoordinatorStatus, elapsed: Duration, screen_capture: bool) -> PanelView {
+/// Builds the panel's content. `elapsed` is how long the current recording has been running; `windows` are the
+/// windows last read for the user to choose from.
+pub fn panel_view(
+    status: &CoordinatorStatus,
+    elapsed: Duration,
+    screen_capture: bool,
+    windows: &[WindowChoice],
+) -> PanelView {
     let recording = status.recording.as_ref().map(|recording| RecordingView {
-        title: recording
-            .meeting
-            .as_ref()
-            .map_or_else(|| "Entire screen".to_owned(), |key| meeting_label(status, key)),
+        title: target_label(status, &recording.target),
         file_name: file_name(&recording.path),
         trigger: match recording.trigger {
             RecordingTrigger::Auto => "Automatic",
@@ -159,6 +180,7 @@ pub fn panel_view(status: &CoordinatorStatus, elapsed: Duration, screen_capture:
         }
         .to_owned(),
         elapsed_seconds: elapsed.as_secs(),
+        microphone: recording.target.microphone(),
     });
     let headline = match activity(status) {
         Activity::Recording => "Recording".to_owned(),
@@ -167,6 +189,9 @@ pub fn panel_view(status: &CoordinatorStatus, elapsed: Duration, screen_capture:
         Activity::Idle => "No meeting".to_owned(),
     };
     let detail = match (&recording, status.auto_enabled) {
+        (Some(recording), _) if !recording.microphone => {
+            format!("{} · {} · No microphone", recording.title, recording.trigger)
+        }
         (Some(recording), _) => format!("{} · {}", recording.title, recording.trigger),
         (None, true) if status.meetings.is_empty() => "Waiting for a call to start".to_owned(),
         (None, true) => "Not recording".to_owned(),
@@ -185,7 +210,38 @@ pub fn panel_view(status: &CoordinatorStatus, elapsed: Duration, screen_capture:
         auto_enabled: status.auto_enabled,
         screen_capture,
         can_record_screen: screen_capture && !status.is_recording(),
+        windows: windows
+            .iter()
+            .map(|window| WindowView {
+                id: window_id(window),
+                app: window.app.clone(),
+                title: window.title.clone(),
+            })
+            .collect(),
     }
+}
+
+/// What a recording records, for one-line places.
+fn target_label(status: &CoordinatorStatus, target: &RecordingTarget) -> String {
+    match target {
+        RecordingTarget::Meeting(key) => meeting_label(status, key),
+        RecordingTarget::Desktop { .. } => "Entire screen".to_owned(),
+        RecordingTarget::Window { window, .. } => window_label(window),
+    }
+}
+
+/// A window by its app and title, for one-line places: "Notepad (Untitled - Notepad)", or its app alone.
+pub fn window_label(window: &WindowChoice) -> String {
+    if window.title.is_empty() {
+        window.app.clone()
+    } else {
+        format!("{} ({})", window.app, window.title)
+    }
+}
+
+/// A stable identifier of a window for the page.
+fn window_id(window: &WindowChoice) -> String {
+    window.id.to_string()
 }
 
 fn meeting_view(status: &CoordinatorStatus, meeting: &MeetingStatus) -> MeetingView {
@@ -205,7 +261,7 @@ fn meeting_view(status: &CoordinatorStatus, meeting: &MeetingStatus) -> MeetingV
     } else if status
         .recording
         .as_ref()
-        .is_some_and(|r| r.trigger == RecordingTrigger::Auto && r.meeting.is_some())
+        .is_some_and(|r| r.trigger == RecordingTrigger::Auto && r.meeting().is_some())
     {
         // Recorded when the meeting being recorded automatically ends. A recording started or stopped by hand
         // passes nothing on.
@@ -282,7 +338,17 @@ pub enum PanelMessage {
     Record {
         meeting: String,
     },
-    RecordScreen,
+    /// Records the desktop, with or without the microphone.
+    RecordDesktop {
+        microphone: bool,
+    },
+    /// Records one of the windows last listed, by its id, with or without the microphone.
+    RecordWindow {
+        window: String,
+        microphone: bool,
+    },
+    /// Asks for the windows that can be recorded.
+    ListWindows,
     Stop,
     SetAuto {
         enabled: bool,
@@ -298,15 +364,27 @@ pub fn parse_message(text: &str) -> Option<PanelMessage> {
     serde_json::from_str(text).ok()
 }
 
-/// The worker command a message asks for, if any. A meeting that is no longer listed yields nothing.
-pub fn command_for(message: &PanelMessage, status: &CoordinatorStatus) -> Option<Command> {
+/// The worker command a message asks for, if any. A meeting that is no longer listed, or a window that is not among
+/// `windows`, the windows last listed, yields nothing.
+pub fn command_for(message: &PanelMessage, status: &CoordinatorStatus, windows: &[WindowChoice]) -> Option<Command> {
     match message {
         PanelMessage::Record { meeting } => status
             .meetings
             .iter()
             .find(|m| meeting_id(&m.key) == *meeting)
-            .map(|m| Command::StartManual(ManualTarget::Meeting(m.key.clone()))),
-        PanelMessage::RecordScreen => Some(Command::StartManual(ManualTarget::Screen)),
+            .map(|m| Command::StartManual(RecordingTarget::Meeting(m.key.clone()))),
+        PanelMessage::RecordDesktop { microphone } => Some(Command::StartManual(RecordingTarget::Desktop {
+            microphone: *microphone,
+        })),
+        PanelMessage::RecordWindow { window, microphone } => {
+            windows.iter().find(|w| window_id(w) == *window).map(|w| {
+                Command::StartManual(RecordingTarget::Window {
+                    window: w.clone(),
+                    microphone: *microphone,
+                })
+            })
+        }
+        PanelMessage::ListWindows => Some(Command::ListWindows),
         PanelMessage::Stop => Some(Command::StopManual),
         PanelMessage::SetAuto { enabled } => Some(Command::SetAutoEnabled(*enabled)),
         _ => None,
@@ -327,7 +405,7 @@ pub struct TraySummary {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordCommand {
-    Start(ManualTarget),
+    Start(RecordingTarget),
     Stop,
 }
 
@@ -350,9 +428,9 @@ pub fn tray_summary(status: &CoordinatorStatus, screen_capture: bool) -> TraySum
             .join(", ")
     };
     let status_line = match (&status.recording, status.meetings.len()) {
-        (Some(recording), _) => match &recording.meeting {
-            Some(key) => format!("Recording: {}", meeting_label(status, key)),
-            None => "Recording: entire screen".to_owned(),
+        (Some(recording), _) => match &recording.target {
+            RecordingTarget::Desktop { .. } => "Recording: entire screen".to_owned(),
+            target => format!("Recording: {}", target_label(status, target)),
         },
         (None, 0) => "No meeting".to_owned(),
         (None, _) => format!("Not recording: {}", names()),
@@ -362,11 +440,11 @@ pub fn tray_summary(status: &CoordinatorStatus, screen_capture: bool) -> TraySum
         (true, _) => ("Stop recording".to_owned(), Some(RecordCommand::Stop)),
         (false, Some(meeting)) => (
             format!("Record {}", meeting_label(status, &meeting.key)),
-            Some(RecordCommand::Start(ManualTarget::Meeting(meeting.key.clone()))),
+            Some(RecordCommand::Start(RecordingTarget::Meeting(meeting.key.clone()))),
         ),
         (false, None) if screen_capture => (
             "Record entire screen".to_owned(),
-            Some(RecordCommand::Start(ManualTarget::Screen)),
+            Some(RecordCommand::Start(RecordingTarget::Desktop { microphone: true })),
         ),
         (false, None) => ("Start recording".to_owned(), None),
     };
@@ -512,10 +590,17 @@ mod tests {
     }
 
     fn recording(meeting: Option<MeetingKey>, trigger: RecordingTrigger) -> Option<RecordingStatus> {
+        recording_of(
+            meeting.map_or(RecordingTarget::Desktop { microphone: true }, RecordingTarget::Meeting),
+            trigger,
+        )
+    }
+
+    fn recording_of(target: RecordingTarget, trigger: RecordingTrigger) -> Option<RecordingStatus> {
         Some(RecordingStatus {
             path: "Videos/2026-11-18_14-00-05_Zoom.mp4".into(),
             trigger,
-            meeting,
+            target,
         })
     }
 
@@ -530,19 +615,19 @@ mod tests {
 
     #[test]
     fn an_idle_status_offers_the_screen_only_where_it_can_be_recorded() {
-        let view = panel_view(&idle(), Duration::ZERO, true);
+        let view = panel_view(&idle(), Duration::ZERO, true, &[]);
         assert_eq!(view.activity, Activity::Idle);
         assert_eq!(view.headline, "No meeting");
         assert!(view.meetings.is_empty() && view.recording.is_none());
         assert!(view.can_record_screen);
 
-        let view = panel_view(&idle(), Duration::ZERO, false);
+        let view = panel_view(&idle(), Duration::ZERO, false, &[]);
         assert!(!view.can_record_screen && !view.screen_capture);
     }
 
     #[test]
     fn each_detected_meeting_is_listed_with_what_can_be_done_with_it() {
-        let view = panel_view(&two_meetings(), Duration::from_secs(75), true);
+        let view = panel_view(&two_meetings(), Duration::from_secs(75), true, &[]);
 
         assert_eq!(view.activity, Activity::Recording);
         let recording = view.recording.as_ref().unwrap();
@@ -576,14 +661,14 @@ mod tests {
             }],
             ..idle()
         };
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.headline, "Meeting detected");
         assert_eq!(view.meetings[0].state, MeetingState::NotRecording);
         assert!(view.meetings[0].can_record);
         assert_eq!(view.meetings[0].note, "Stopped for this meeting");
 
         status.auto_enabled = false;
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.meetings[0].note, "Auto-recording paused");
         assert_eq!(view.detail, "Automatic recording is paused");
     }
@@ -604,23 +689,23 @@ mod tests {
             recording: recording(Some(tab_key("Whereby", 2)), RecordingTrigger::Auto),
             ..idle()
         };
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.meetings[0].state, MeetingState::NotRecording);
         assert_eq!(view.meetings[0].note, "Stopped for this meeting");
         assert!(!view.meetings[0].can_record, "one recording at a time");
 
         status.meetings[0].auto_stopped = false;
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.meetings[0].state, MeetingState::Waiting);
 
         // A recording started by hand passes nothing on when it is stopped.
         status.recording = recording(Some(tab_key("Whereby", 2)), RecordingTrigger::Manual);
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.meetings[0].state, MeetingState::NotRecording);
         assert_eq!(view.meetings[0].note, "Not recording");
 
         status.auto_enabled = false;
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.meetings[0].note, "Auto-recording paused");
     }
 
@@ -637,7 +722,7 @@ mod tests {
             ..idle()
         };
 
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         let titles: Vec<_> = view.meetings.iter().map(|m| m.title.as_deref()).collect();
         assert_eq!(titles, [Some("abc-defg-hij"), Some("xyz-uvwx-rst")]);
         assert_eq!(view.recording.unwrap().title, "Google Meet (abc-defg-hij)");
@@ -660,14 +745,14 @@ mod tests {
             recording: recording(None, RecordingTrigger::Manual),
             ..idle()
         };
-        let view = panel_view(&status, Duration::ZERO, true);
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
         assert_eq!(view.recording.unwrap().title, "Entire screen");
         assert_eq!(view.detail, "Entire screen · Manual");
     }
 
     #[test]
     fn the_view_is_sent_to_the_page_in_camel_case() {
-        let json = serde_json::to_value(panel_view(&two_meetings(), Duration::ZERO, true)).unwrap();
+        let json = serde_json::to_value(panel_view(&two_meetings(), Duration::ZERO, true, &[])).unwrap();
         assert_eq!(json["activity"], "recording");
         assert_eq!(json["autoEnabled"], true);
         assert_eq!(json["recording"]["elapsedSeconds"], 0);
@@ -678,15 +763,23 @@ mod tests {
     #[test]
     fn page_messages_become_worker_commands() {
         let status = two_meetings();
-        let command = |text: &str| command_for(&parse_message(text).unwrap(), &status);
+        let command = |text: &str| command_for(&parse_message(text).unwrap(), &status, &[]);
 
         assert!(matches!(
             command(r#"{"type":"record","meeting":"GoogleMeet@3:9"}"#),
-            Some(Command::StartManual(ManualTarget::Meeting(k))) if k == tab_key("GoogleMeet", 9)
+            Some(Command::StartManual(RecordingTarget::Meeting(k))) if k == tab_key("GoogleMeet", 9)
         ));
         assert!(matches!(
-            command(r#"{"type":"recordScreen"}"#),
-            Some(Command::StartManual(ManualTarget::Screen))
+            command(r#"{"type":"recordDesktop","microphone":true}"#),
+            Some(Command::StartManual(RecordingTarget::Desktop { microphone: true }))
+        ));
+        assert!(matches!(
+            command(r#"{"type":"recordDesktop","microphone":false}"#),
+            Some(Command::StartManual(RecordingTarget::Desktop { microphone: false }))
+        ));
+        assert!(matches!(
+            command(r#"{"type":"listWindows"}"#),
+            Some(Command::ListWindows)
         ));
         assert!(matches!(command(r#"{"type":"stop"}"#), Some(Command::StopManual)));
         assert!(matches!(
@@ -696,10 +789,91 @@ mod tests {
         assert!(command(r#"{"type":"openLogs"}"#).is_none());
     }
 
+    fn notepad() -> WindowChoice {
+        WindowChoice {
+            id: 0x30_1a2c,
+            process_id: 300,
+            app: "Notepad".into(),
+            title: "Untitled - Notepad".into(),
+        }
+    }
+
+    #[test]
+    fn a_window_is_recorded_by_its_id_among_the_windows_last_listed() {
+        let windows = [notepad()];
+        let message = |microphone: bool| {
+            parse_message(&format!(
+                r#"{{"type":"recordWindow","window":"3152428","microphone":{microphone}}}"#
+            ))
+            .unwrap()
+        };
+
+        assert!(matches!(
+            command_for(&message(false), &idle(), &windows),
+            Some(Command::StartManual(RecordingTarget::Window { window, microphone: false })) if window == notepad()
+        ));
+        assert!(matches!(
+            command_for(&message(true), &idle(), &windows),
+            Some(Command::StartManual(RecordingTarget::Window { microphone: true, .. }))
+        ));
+        assert!(
+            command_for(&message(true), &idle(), &[]).is_none(),
+            "a window no longer listed is not recorded"
+        );
+    }
+
+    #[test]
+    fn the_windows_to_choose_from_are_sent_to_the_page_by_id_app_and_title() {
+        let untitled = WindowChoice {
+            id: 7,
+            title: String::new(),
+            ..notepad()
+        };
+        let view = panel_view(&idle(), Duration::ZERO, true, &[notepad(), untitled]);
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(
+            json["windows"],
+            serde_json::json!([
+                {"id": "3152428", "app": "Notepad", "title": "Untitled - Notepad"},
+                {"id": "7", "app": "Notepad", "title": ""}
+            ])
+        );
+    }
+
+    #[test]
+    fn a_recording_of_a_window_is_named_by_its_app_and_title_and_says_when_the_microphone_is_left_out() {
+        let status = CoordinatorStatus {
+            recording: recording_of(
+                RecordingTarget::Window {
+                    window: notepad(),
+                    microphone: false,
+                },
+                RecordingTrigger::Manual,
+            ),
+            ..idle()
+        };
+        let view = panel_view(&status, Duration::ZERO, true, &[]);
+        let recording = view.recording.unwrap();
+        assert_eq!(recording.title, "Notepad (Untitled - Notepad)");
+        assert!(!recording.microphone);
+        assert_eq!(view.detail, "Notepad (Untitled - Notepad) · Manual · No microphone");
+        assert!(!view.can_record_screen, "one recording at a time");
+        assert_eq!(
+            tray_summary(&status, true).status_line,
+            "Recording: Notepad (Untitled - Notepad)"
+        );
+
+        let untitled = WindowChoice {
+            title: String::new(),
+            ..notepad()
+        };
+        assert_eq!(window_label(&untitled), "Notepad");
+    }
+
     #[test]
     fn a_record_message_for_a_meeting_that_is_gone_does_nothing() {
         let message = parse_message(r#"{"type":"record","meeting":"Teams"}"#).unwrap();
-        assert!(command_for(&message, &two_meetings()).is_none());
+        assert!(command_for(&message, &two_meetings(), &[]).is_none());
     }
 
     #[test]
@@ -707,6 +881,12 @@ mod tests {
         assert_eq!(parse_message("not json"), None);
         assert_eq!(parse_message(r#"{"type":"format-disk"}"#), None);
         assert_eq!(parse_message(r#"{"type":"record"}"#), None);
+        assert_eq!(
+            parse_message(r#"{"type":"recordDesktop"}"#),
+            None,
+            "the microphone is always chosen"
+        );
+        assert_eq!(parse_message(r#"{"type":"recordWindow","microphone":true}"#), None);
         assert_eq!(
             parse_message(r#"{"type":"resize","height":312.5}"#),
             Some(PanelMessage::Resize { height: 312.5 })
@@ -730,12 +910,12 @@ mod tests {
         assert_eq!(summary.record_label, "Record Zoom");
         assert_eq!(
             summary.record_command,
-            Some(RecordCommand::Start(ManualTarget::Meeting(key("Zoom"))))
+            Some(RecordCommand::Start(RecordingTarget::Meeting(key("Zoom"))))
         );
 
         assert_eq!(
             tray_summary(&idle(), true).record_command,
-            Some(RecordCommand::Start(ManualTarget::Screen))
+            Some(RecordCommand::Start(RecordingTarget::Desktop { microphone: true }))
         );
         assert_eq!(tray_summary(&idle(), false).record_command, None);
     }

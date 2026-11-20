@@ -218,6 +218,23 @@
   .row .hint { color: var(--text-muted); font-size: 12px; }
   .row.clickable:hover { background: var(--surface-hover); }
 
+  /* Recording the screen by hand: what to record, the window, and the microphone. */
+  .segmented { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--surface-hover); }
+  .segment { height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+  .segment:hover { color: var(--text); }
+  .segment[aria-checked="true"] { background: var(--surface-raised); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+  .row .text .segmented + .hint { margin-top: 6px; }
+  .windows { list-style: none; margin: 0 6px 4px; padding: 2px; max-height: 172px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .window { display: flex; flex-direction: column; min-width: 0; padding: 5px 8px; border-radius: 6px; }
+  .window + .window { margin-top: 1px; }
+  .window:hover { background: var(--surface-hover); }
+  .window:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .window[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
+  .window .app { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .window .title { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .window[aria-selected="true"] .title { color: inherit; opacity: 0.85; }
+  .windows-empty { margin: 0 6px 4px; padding: 12px; text-align: center; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 8px; }
+
   .switch { position: relative; flex: none; width: 38px; height: 22px; border-radius: 11px; background: var(--switch-off); transition: background 0.18s; }
   .switch::after {
     content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
@@ -272,6 +289,15 @@
   [data-design="windows"] .btn-lg:hover { background: var(--accent); filter: brightness(1.08); }
   [data-design="windows"] .btn-danger { background: var(--rec); color: var(--rec-text); }
   [data-design="windows"] .btn-danger:hover { background: var(--rec); filter: brightness(1.08); }
+
+  [data-design="windows"] .segmented { border-radius: 4px; }
+  [data-design="windows"] .segment { height: 26px; border-radius: 3px; font-size: 12px; font-weight: 400; border: 1px solid transparent; }
+  [data-design="windows"] .segment[aria-checked="true"] { background: var(--control); border-color: var(--control-border); border-bottom-color: var(--control-border-bottom); box-shadow: none; font-weight: 600; }
+  [data-design="windows"] .windows, [data-design="windows"] .windows-empty { border-radius: 4px; }
+  [data-design="windows"] .window { border-radius: 3px; }
+  [data-design="windows"] .window:focus-visible { outline-color: var(--text); }
+  [data-design="windows"] .window[aria-selected="true"] { background: var(--surface-hover); color: var(--text); box-shadow: inset 3px 0 0 var(--accent); }
+  [data-design="windows"] .window[aria-selected="true"] .title { color: var(--text-muted); opacity: 1; }
 
   [data-design="windows"] .switch {
     width: 40px; height: 20px; border-radius: 10px; background: var(--surface-pressed);
@@ -426,14 +452,79 @@ function drawSettings() {
         el("div", { class: "hint" }, view.autoEnabled ? "Starts and stops with each call" : "Paused — use Record to start by hand")),
       toggle),
   ];
-  if (view.screenCapture) {
-    rows.push(el("div", { class: "row" },
-      el("div", { class: "text" },
-        el("div", {}, "Entire screen"),
-        el("div", { class: "hint" }, "Every window and all sound")),
-      button("quiet", null, "Record", { type: "recordScreen" }, !view.canRecordScreen)));
-  }
   return el("section", { class: "card settings" }, ...rows);
+}
+
+// What the user has chosen to record by hand. It stays while the app runs, and a recording leaves it as it was.
+const screenChoice = { mode: "desktop", window: null, microphone: true };
+
+function chooseMode(mode) {
+  screenChoice.mode = mode;
+  if (mode === "window") send({ type: "listWindows" });
+  draw();
+}
+
+function chooseWindow(id) {
+  screenChoice.window = id;
+  draw();
+}
+
+function toggleMicrophone() {
+  screenChoice.microphone = !screenChoice.microphone;
+  draw();
+}
+
+function recordScreen() {
+  if (screenChoice.mode === "desktop") send({ type: "recordDesktop", microphone: screenChoice.microphone });
+  else if (screenChoice.window) send({ type: "recordWindow", window: screenChoice.window, microphone: screenChoice.microphone });
+}
+
+function drawWindows() {
+  if (view.windows.length === 0) return el("div", { class: "windows-empty" }, "No window to record");
+  const list = el("ul", { class: "windows", role: "listbox", "aria-label": "Windows" });
+  for (const choice of view.windows) {
+    const pick = () => chooseWindow(choice.id);
+    // A title that only repeats the app's name is shown once.
+    const title = choice.title.toLowerCase() === choice.app.toLowerCase() ? "" : choice.title;
+    list.append(el("li", {
+      class: "window", role: "option", tabindex: "0", "aria-selected": String(choice.id === screenChoice.window),
+      title: title ? `${choice.app} · ${title}` : choice.app,
+      onclick: pick,
+      onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(); } },
+    },
+      el("span", { class: "app" }, choice.app),
+      title ? el("span", { class: "title" }, title) : null));
+  }
+  return list;
+}
+
+function drawScreen() {
+  // A window that is no longer listed cannot be recorded.
+  if (!view.windows.some((choice) => choice.id === screenChoice.window)) screenChoice.window = null;
+  const desktop = screenChoice.mode === "desktop";
+  const segment = (mode, label) => el("button", {
+    class: "segment", role: "radio", "aria-checked": String(screenChoice.mode === mode), onclick: () => chooseMode(mode),
+  }, label);
+  const record = el("button", {
+    class: "btn btn-quiet", disabled: !view.canRecordScreen || (!desktop && !screenChoice.window), onclick: recordScreen,
+  }, "Record");
+  const microphone = el("button", {
+    class: "switch", role: "switch", "aria-checked": String(screenChoice.microphone), "aria-label": "Record the microphone",
+    onclick: (event) => { event.stopPropagation(); toggleMicrophone(); },
+  });
+  return el("section", { class: "card settings", "aria-label": "Record the screen" },
+    el("div", { class: "row" },
+      el("div", { class: "text" },
+        el("div", { class: "segmented", role: "radiogroup", "aria-label": "What to record" },
+          segment("desktop", "Entire screen"), segment("window", "Window")),
+        el("div", { class: "hint" }, desktop ? "Every window and all sound" : "One window and the sound of its app")),
+      record),
+    desktop ? null : drawWindows(),
+    el("div", { class: "row clickable", onclick: toggleMicrophone },
+      el("div", { class: "text" },
+        el("div", {}, "Microphone"),
+        el("div", { class: "hint" }, screenChoice.microphone ? "Your voice is recorded too" : "Left out; its track is silent")),
+      microphone));
 }
 
 function draw() {
@@ -448,7 +539,12 @@ function draw() {
   const content = [];
   if (view.recording) content.push(drawRecording(view.recording));
   content.push(el("div", { class: "section-title" }, "Meetings"), drawMeetings(view.meetings), drawSettings());
+  if (view.screenCapture) content.push(el("div", { class: "section-title" }, "Screen"), drawScreen());
+  // Drawing again keeps where the list of windows was scrolled to.
+  const scrolled = main.querySelector(".windows")?.scrollTop ?? 0;
   main.replaceChildren(...content);
+  const windows = main.querySelector(".windows");
+  if (windows) windows.scrollTop = scrolled;
 }
 
 window.render = (next) => {
@@ -489,6 +585,10 @@ document.getElementById("quit-cancel").addEventListener("click", () => askToQuit
 document.getElementById("quit-confirm").addEventListener("click", () => send({ type: "quit" }));
 // The question does not outlive the panel: it is withdrawn when the panel closes.
 window.addEventListener("blur", () => askToQuit(false));
+// The windows are read again each time the panel opens while a window is to be chosen.
+window.addEventListener("focus", () => {
+  if (view && view.screenCapture && screenChoice.mode === "window") send({ type: "listWindows" });
+});
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;

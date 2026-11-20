@@ -128,6 +128,7 @@ pub fn self_test(config: &Config, keep: Option<PathBuf>, length: Duration) -> an
         audio_process_id: None,
         render_device_id: None,
         capture_device_id: None,
+        microphone: true,
         // A self-test records through the platform alone, which writes no metadata into the file.
         metadata: RecordingMetadata {
             app: "SelfTest".into(),

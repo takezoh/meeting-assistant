@@ -4,11 +4,12 @@ use std::time::{Duration, Instant};
 
 use crate::apps::{MeetingApp, WindowRole};
 use crate::config::{Config, ConfigError};
-use crate::coordinator::{CoordinatorStatus, ManualTarget, Notice, NoticeLevel, RecordingCoordinator};
+use crate::coordinator::{CoordinatorStatus, Notice, NoticeLevel, RecordingCoordinator};
 use crate::detector::{MeetingDetector, Timing};
 use crate::recording::Recorder;
 use crate::rules::{RuleEvaluator, RuleEvidence};
 use crate::signals::{SignalSnapshot, SignalSource};
+use crate::target::{RecordingTarget, WindowChoice, window_choices};
 
 /// Ties together signal acquisition, rule evaluation, start/end detection, and recording coordination.
 /// Call [`Engine::tick`] periodically. Use it from a single thread.
@@ -26,6 +27,8 @@ pub struct Engine<S: SignalSource, R: Recorder> {
     outage_reported: bool,
     /// Whether the windows were read at the previous tick.
     reading_windows: bool,
+    /// The app's own process, whose windows are not offered to record.
+    own_process: Option<u32>,
 }
 
 impl<S: SignalSource, R: Recorder> Engine<S, R> {
@@ -50,12 +53,19 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
             failing_since: None,
             outage_reported: false,
             reading_windows: false,
+            own_process: None,
         })
     }
 
     /// Uses what `apps` know about particular meeting apps to tell their meetings' windows.
     pub fn with_apps(mut self, apps: &[Arc<dyn MeetingApp>]) -> Self {
         self.evaluator = self.evaluator.with_apps(apps);
+        self
+    }
+
+    /// Leaves the windows of `process_id`, the app itself, out of the windows offered to record.
+    pub fn with_own_process(mut self, process_id: u32) -> Self {
+        self.own_process = Some(process_id);
         self
     }
 
@@ -176,8 +186,16 @@ impl<S: SignalSource, R: Recorder> Engine<S, R> {
         }
     }
 
-    pub fn start_manual(&mut self, target: ManualTarget) {
+    pub fn start_manual(&mut self, target: RecordingTarget) {
         self.coordinator.start_manual(target);
+    }
+
+    /// Reads the windows the user can choose to record by hand, apart from the app's own. Read only when asked, apart
+    /// from the ticks.
+    pub fn window_choices(&mut self) -> anyhow::Result<Vec<WindowChoice>> {
+        let windows = self.source.windows()?;
+        let processes = self.source.processes()?;
+        Ok(window_choices(&windows, &processes, self.own_process))
     }
 
     pub fn stop_manual(&mut self) {

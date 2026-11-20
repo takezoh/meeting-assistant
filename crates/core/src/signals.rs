@@ -26,6 +26,9 @@ pub struct WindowEntry {
     /// Identifier of the display holding the window. Format is OS-specific; [`crate::Recorder`] interprets it as is.
     pub display: Option<String>,
     pub area: u64,
+    /// Whether the system shows it as a window of its own, which the user can choose to record: on Windows, one that
+    /// is not cloaked (hidden by the system, as a suspended app's) and not a tool window. Detection does not use it.
+    pub pickable: bool,
 }
 
 /// One connection to the browser extension.

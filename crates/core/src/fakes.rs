@@ -280,6 +280,7 @@ pub fn window(process_id: u32, title: &str, display: &str, area: u64) -> WindowE
         title: title.to_owned(),
         display: Some(display.to_owned()),
         area,
+        pickable: true,
     }
 }
 

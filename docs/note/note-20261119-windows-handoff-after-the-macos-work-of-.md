@@ -22,6 +22,8 @@ relations:
 - {type: references, target: note-20261119-slack-huddle-window-after-the-merge}
 - {type: references, target: note-20261119-macos-idle-resources-after-the-merge}
 - {type: references, target: note-20261119-windows-checks-after-the-macos-merge}
+- {type: references, target: adr-20261120-record-the-desktop-or-a-window-by-hand}
+- {type: references, target: note-20261120-window-recording-by-hand-on-windows}
 source_paths:
 - crates/app/src/platform/win/recorder/writer.rs
 - crates/app/src/platform/win/recorder/mod.rs
@@ -100,6 +102,8 @@ d1a8127 changed shared code on Windows that has not run on a Mac, and the macOS 
 
 - `recording::mp4` reads a source's samples from its fragments as well as from its sample tables; a fragment without a `tfdt` starts where the track's previous fragment ended. Adding a track now moves explicit `tfhd` base offsets and the `mfra` with the grown `moov`, as writing metadata already did, and both go through the same code.
 - On a Mac: `cargo clippy --workspace --all-targets` and `cargo test --workspace`; then a desktop recording, whose metadata is written into AVAssetWriter's output, with every sample unchanged; and a tab recording with the microphone added as its last track and heard where it was spoken.
+
+On 2026-11-20 the Windows session also let the status panel record the entire screen or a window chosen from a list, with or without the microphone ([ADR](../adr/adr-20261120-record-the-desktop-or-a-window-by-hand.md)); on Windows a window was recorded once with the microphone left out ([note](note-20261120-window-recording-by-hand-on-windows.md)). The macOS code changed only in saying that every window it lists can be picked. On a Mac: the panel's window list (titles need the Screen & System Audio Recording permission; the app's own windows are left out), a window recorded with its app's sound through ScreenCaptureKit, and the entire screen and a window with the microphone left out, whose track should be silent with the microphone indicator off.
 
 ### After the merge
 
