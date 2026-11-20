@@ -11,7 +11,9 @@ relations: []
 subject_paths:
 - crates/core/src/rules.rs
 - extension/hook.js
-summary: The default rules and the in-page call detection were exercised with synthetic meetings only, not in real calls on each service.
+summary: Slack huddles and Google Meet calls were detected in real use on one Mac
+  on 2026-11-19; Zoom, Teams, Webex and the other browser services have not been tried
+  in a real call, and nothing on Windows.
 ---
 
 ## Opportunity
@@ -20,8 +22,8 @@ Detection should be confirmed in real calls on the services the defaults claim t
 
 ## Evidence
 
-Verification on 2026-11-17 used a test process that held the microphone and a test page that held a WebRTC connection; see the [verification note](../note/note-20261117-local-verification.md). The process names and title patterns in `crates/core/src/rules.rs` and the URL patterns in `extension/manifest.json` were written from knowledge of the services, not observed in calls.
+Verification on 2026-11-17 used a test process that held the microphone and a test page that held a WebRTC connection; see the [verification note](../note/note-20261117-local-verification.md). On 2026-11-19, on one Mac, Slack huddles and Google Meet calls in Chrome were detected and recorded, without other participants ([Slack huddle note](../note/note-20261119-slack-huddle-window-after-the-merge.md), [metadata note](../note/note-20261119-recording-metadata-verification.md)). The process names in `crates/core/src/rules.rs` for Zoom, Teams and Webex, and the URL patterns in `extension/manifest.json` other than Google Meet's, were written from knowledge of the services, not observed in calls; nothing was tried on Windows.
 
 ## Context for follow-up
 
-Questions a real call answers per service: the name of the process that holds the microphone; whether the app releases the microphone while muted, which would end the recording after `end_grace_seconds`; the window title during a call; which window the app's largest-window heuristic selects; and whether `hook.js` sees a connected `RTCPeerConnection` in the page, including in pre-join screens where a false start is possible. `meeting-assistant --probe` prints the signals. The [meeting detection design](../design/design-meeting-detection.md) holds the contract; findings belong in a dated note, and changes to defaults in a change of their own.
+Questions a real call answers per service: the name of the process that holds the microphone; whether the app releases the microphone while muted, which would end the recording after `end_grace_seconds`; whether its call has a window of its own that opens after the microphone is taken, or one its titles tell apart from the main window, which would need an adapter in `crates/app/src/apps`; and whether `hook.js` sees a connected `RTCPeerConnection` in the page, including in pre-join screens where a false start is possible. `meeting-assistant --probe` prints the signals. The [meeting detection design](../design/design-meeting-detection.md) holds the contract; findings belong in a dated note, and changes to defaults in a change of their own.

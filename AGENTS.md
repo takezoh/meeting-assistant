@@ -35,6 +35,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets
 cargo clippy --workspace --target aarch64-apple-darwin
 cargo test --workspace
+node --test "extension/test/*.test.mjs"
 ```
 
 The macOS command type-checks and lints only; it does not establish that anything works on a Mac. Passing tests do not establish that real capture, the tray UI, a real browser or a real meeting service work; say which of those you actually ran.

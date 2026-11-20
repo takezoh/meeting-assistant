@@ -100,6 +100,7 @@ d1a8127 changed shared code on Windows that has not run on a Mac, and the macOS 
 
 - `recording::mp4` reads a source's samples from its fragments as well as from its sample tables; a fragment without a `tfdt` starts where the track's previous fragment ended. Adding a track now moves explicit `tfhd` base offsets and the `mfra` with the grown `moov`, as writing metadata already did, and both go through the same code.
 - On a Mac: `cargo clippy --workspace --all-targets` and `cargo test --workspace`; then a desktop recording, whose metadata is written into AVAssetWriter's output, with every sample unchanged; and a tab recording with the microphone added as its last track and heard where it was spoken.
+- Run on one Mac on 2026-11-20 with this code: clippy for macOS, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`, the whole test suite and the extension's tests passed. Metadata written into two AVAssetWriter files (a self-test and a Slack huddle recording) left every packet's timing and data unchanged, and ffprobe and AVFoundation read the four keys. A tab recording with the microphone added has not been made with it.
 
 ### After the merge
 
