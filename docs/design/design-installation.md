@@ -7,78 +7,144 @@ created: '2026-11-17'
 scope_type: component
 responsibilities:
 - id: RESP-001
-  statement: "Install, update and uninstall the app for the current user: files, start at logon, native-host registration, browser launchers, uninstall entry."
+  statement: 'Install, update and uninstall the app for the current user: files, start
+    at logon, native-host registration, browser launchers, uninstall entry.'
+- id: RESP-004
+  statement: 'Make the file a user installs from, signed by the build: on macOS a disk
+    image holding the signed app bundle. Opened from elsewhere, that app offers to install
+    itself.'
 - id: RESP-002
-  statement: "Ensure a single resident instance and let another invocation ask it to finalize and exit."
+  statement: Ensure a single resident instance and let another invocation ask it to
+    finalize and exit.
 - id: RESP-003
-  statement: "Finalize a recording before the process ends on quit, logoff, shutdown or a termination signal."
+  statement: Finalize a recording before the process ends on quit, logoff, shutdown
+    or a termination signal.
 invariants:
 - id: INV-001
-  statement: "Installation changes only the current user's profile and needs no elevation."
+  statement: Installation changes only the current user's profile and needs no elevation.
   enforcement: review
 - id: INV-002
-  statement: "If the running instance cannot be made to exit, install and uninstall change nothing."
+  statement: If the running instance cannot be made to exit, install and uninstall
+    change nothing.
   enforcement: test
 - id: INV-003
-  statement: "An installation that fails part-way stops at the failure and does not start the app."
+  statement: An installation that fails part-way stops at the failure and does not
+    start the app.
   enforcement: test
 - id: INV-004
-  statement: "Uninstall removes every registration before removing files and keeps configuration, logs and recordings."
+  statement: Uninstall removes every registration before removing files and keeps
+    configuration, logs and recordings.
   enforcement: test
 - id: INV-005
-  statement: "The native-host manifest names the installed executable and only this extension's origin."
+  statement: The native-host manifest names the installed executable and only this
+    extension's origin.
   enforcement: test
 - id: INV-006
-  statement: "Native hosts and launchers are created only for browsers that are present."
+  statement: Native hosts and launchers are created only for browsers that are present.
+  enforcement: test
+- id: INV-007
+  statement: The installer places the app as it was built. It refuses, before changing
+    anything, an app whose signature does not verify where the OS ties permissions to
+    it, and it neither writes into nor signs the app it places.
+  enforcement: test
+- id: INV-008
+  statement: A built app opened without a command from somewhere other than the install
+    location asks before it installs itself, and declining changes nothing. A run with
+    --config never asks.
   enforcement: test
 boundaries:
   provides:
   - id: PROV-001
-    statement: "The commands --install, --uninstall and --quit, and the tray actions for installing and for start at logon."
+    statement: The commands --install, --uninstall and --quit, the question a built
+      app asks when opened from elsewhere, and the tray actions for installing and for
+      start at logon.
+  - id: PROV-002
+    statement: packaging/macos/build.sh, which builds, signs and puts the macOS app
+      into a disk image.
   consumes:
   - id: CONS-001
-    statement: "InstallSystem: copy and remove files, register the app, set autostart, register native hosts, create launchers, request quit, launch, read the app's identity, sign the app, clear the permissions kept for an earlier identity."
+    statement: 'InstallSystem: copy the app and remove files, register the app, set
+      autostart, register native hosts, create launchers, request quit, launch, say whether
+      a built app installs itself when opened, read how the app was signed and the installed
+      app''s identity, clear the permissions kept for an earlier identity.'
   forbidden:
   - id: FORB-001
-    statement: "Installing as a service or into a machine-wide location."
+    statement: Installing as a service or into a machine-wide location.
   - id: FORB-002
-    statement: "File system, registry or process access from the install procedure itself."
+    statement: File system, registry or process access from the install procedure
+      itself.
+  - id: FORB-003
+    statement: Signing the app on the user's computer, or changing what was signed.
 variability:
   fixed:
   - id: FIX-001
-    statement: "The order: stop the running instance, place files, register, create launchers, start."
+    statement: 'The order: stop the running instance, place files, register, create
+      launchers, start.'
   free:
   - id: FREE-001
-    statement: "Install locations, registration mechanisms and launcher form per platform."
+    statement: Install locations, registration mechanisms and launcher form per platform.
 capabilities: []
 failure_responsibilities:
 - id: FAIL-001
-  statement: "Each step reports its failure with the path or key involved; the procedure stops and returns it to the user."
+  statement: Each step reports its failure with the path or key involved; the procedure
+    stops and returns it to the user.
 trust_boundaries: []
 compatibility_policies:
 - id: COMPAT-001
-  statement: "Running --install over an existing installation is the update path and must leave user data untouched."
+  statement: Running --install over an existing installation is the update path and
+    must leave user data untouched.
 tags: []
 owners: []
 relations:
 - {type: references, target: adr-20261117-self-installing-per-user-executable}
+- {type: references, target: adr-20261124-distribute-a-built-app-that-installs-itself}
 source_paths:
 - crates/app/src/install/mod.rs
 - crates/app/src/platform/win/install.rs
 - crates/app/src/platform/win/session.rs
 - crates/app/src/platform/mac/install.rs
 - crates/app/src/cli.rs
+- crates/app/src/main.rs
+- packaging/macos/build.sh
+- packaging/macos/Info.plist
+- packaging/macos/entitlements.plist
 - INSTALL.md
-summary: Contract of the self-installing executable, the single resident instance and finalization on every exit path.
+summary: Contract of the self-installing app, the file it is distributed in, the single
+  resident instance and finalization on every exit path.
 ---
 
 ## Purpose
 
-Let one executable set itself up to run at every logon and be removed cleanly, without administrator rights, and make sure no way of ending the app leaves an unfinalized recording.
+Let a user install the app from one file, without administrator rights or development tools: set it up to run at every logon and remove it cleanly. Make sure no way of ending the app leaves an unfinalized recording.
 
 ## Responsibilities
 
-`install` holds the procedures as shared code over the `InstallSystem` port: `install` (which is also update), `uninstall`, the autostart toggle and the content of the native-host manifest. The platform installers supply the operations. On Windows these are a copy to `%LOCALAPPDATA%\Programs\MeetingAssistant`, a `Run` value, native-host keys under `HKCU`, `.lnk` shortcuts and an uninstall key. On macOS they are an app bundle `~/Applications/Meeting Assistant.app` whose `Info.plist` is the registration, the extension in `~/Library/Application Support/MeetingAssistant`, a LaunchAgent plist, native-host JSON files and launcher `.app` bundles; the installed app is started through LaunchServices. On macOS the installer signs the bundle, after writing its `Info.plist` and before anything runs it, with the keychain identity `Meeting Assistant Local Signing` or else ad hoc, and clears the app's screen recording permission when its designated requirement changed across the update ([the decision](../adr/adr-20261124-sign-the-macos-app-with-a-lasting-identity.md)).
+`install` holds the procedures as shared code over the `InstallSystem` port:
+
+- `install`, which is also the update
+- `uninstall`
+- the autostart toggle
+- the content of the native-host manifest
+- whether an opened app offers to install itself, and the question it asks
+
+The platform installers supply the operations:
+
+| | Windows | macOS |
+| --- | --- | --- |
+| The app | Copied to `%LOCALAPPDATA%\Programs\MeetingAssistant` | `~/Applications/Meeting Assistant.app`, copied whole with `ditto` as the build signed it; its own `Info.plist` lists it |
+| Start at logon | A `Run` value | A LaunchAgent plist |
+| Native hosts | Keys under `HKCU` | JSON files |
+| Browser launchers | `.lnk` shortcuts | Launcher `.app` bundles |
+| Other | An uninstall key | The extension in `~/Library/Application Support/MeetingAssistant`; the installed app is started through LaunchServices |
+
+The file a user installs from is made by the build ([the decision](../adr/adr-20261124-distribute-a-built-app-that-installs-itself.md)). On macOS, `packaging/macos/build.sh` does this:
+
+1. Builds the release executable.
+2. Puts it into a bundle with `packaging/macos/Info.plist`.
+3. Signs the whole bundle as `com.meeting-assistant.app`, with the hardened runtime and the entitlements in `packaging/macos/entitlements.plist`. By default it signs with the identity `Meeting Assistant Local Signing`; `--identity` names another, such as a Developer ID.
+4. Puts the bundle into a disk image, which `--notary-profile` also notarizes.
+
+The installer checks that the bundle's signature verifies before it changes anything, and reports who signed it. It clears the app's screen recording permission when the installed app's designated requirement changed across the update ([the earlier decision](../adr/adr-20261124-sign-the-macos-app-with-a-lasting-identity.md)). On macOS a built app is one that runs from a bundle. Windows has no build script yet, and its executable does not offer to install itself when opened ([the issue](../issue/issue-20261124-the-windows-installer-is-not-built.md)).
 
 The platform session code provides the single-instance guard and delivers a quit request to the resident instance. The tray turns a quit request, a menu quit and the end of the user session into the same shutdown path, which stops the engine and with it the recorder. On macOS the end of the session reaches the app as a request to terminate the application, which ends the tray's event loop; the tray finalizes on that loop's last event as well, once.
 
@@ -90,9 +156,11 @@ The procedure names browsers and paths only through the port. It embeds no platf
 
 Update safety rests on INV-002: the installer asks the running instance to quit, which finalizes its recording, and proceeds only when that instance has exited. Replacing the executable under a recording would lose the file.
 
+Permission continuity on macOS rests on INV-007: macOS keeps the permissions of an app whose designated requirement stays the same. That requirement comes from the signature the build made, which the installer neither replaces nor breaks by writing into the bundle.
+
 ## Collaboration
 
-`cli` parses the commands. `main` runs them before the resident path. The browser launcher receives its switch from `browser::protocol::browser_launch_option`, so the extension ID has a single source.
+`cli` parses the commands. `main` runs them before the resident path. With no command and no `--config`, `main` asks `install::offers_installation` first. When it is true, `main` puts the question through `platform::confirm`, runs `install` if it is accepted, and exits either way. The browser launcher receives its switch from `browser::protocol::browser_launch_option`, so the extension ID has a single source.
 
 ## Failure Responsibility
 
@@ -100,12 +168,29 @@ The installer prints each completed step and the failing one. It does not roll b
 
 ## Variability
 
-Locations and mechanisms are per platform. The order of steps and the rule that user data survives uninstall are fixed.
+Locations, mechanisms and the form of the distributed file are per platform. So is who signs it, and with which identity. The order of steps and the rule that user data survives uninstall are fixed.
 
 ## Conformance
 
-`install/mod.rs` tests the procedures against a fake `InstallSystem` that records calls. Install, update and uninstall were run by hand on Windows on 2026-11-17 and on macOS on 2026-11-18, on macOS during a recording; a real logoff was not performed on either. Signing with the identity, the one-time clearing of the screen recording permission, and an update that kept both permissions were run on one Mac on 2026-11-24. See the [macOS verification note](../note/note-20261118-macos-verification-2026-11-18.md).
+`install/mod.rs` tests the procedures against a fake `InstallSystem` that records calls. The tests cover these points:
+
+- An app whose signature does not verify changes nothing.
+- The app is placed as built.
+- A changed identity clears the earlier permissions before anything runs the app.
+- Only a built app that is not installed offers to install itself.
+
+`platform/mac/install.rs` checks that `packaging/macos/Info.plist` names the identifier and executable the installer uses.
+
+What was run by hand:
+
+- Install, update and uninstall on Windows on 2026-11-17, and on macOS on 2026-11-18, on macOS during a recording. A real logoff was not performed on either.
+- On one Mac on 2026-11-24: signing with the identity, the one-time clearing of the screen recording permission, and an update that kept both permissions. That was with the installer that signed the app itself. See the [macOS verification note](../note/note-20261118-macos-verification-2026-11-18.md).
+- On the same Mac on 2026-11-24, the build script made the disk image. Its app had the hardened runtime, the microphone entitlement, and the designated requirement of the app installed there before.
+- On 2026-11-25 that disk image was installed, declined once, and installed again over itself. The installed app recorded the screen and the microphone without a permission prompt. See [the note](../note/note-20261125-installing-from-the-macos-disk-image-2026-11-25.md). A downloaded disk image, and so Gatekeeper, was not run.
 
 ## Related Decisions
 
-[ADR: ship one self-installing per-user executable](../adr/adr-20261117-self-installing-per-user-executable.md). The user steps are in `INSTALL.md`.
+- [ADR: ship one self-installing per-user executable](../adr/adr-20261117-self-installing-per-user-executable.md)
+- [ADR: distribute a built and signed app that installs itself](../adr/adr-20261124-distribute-a-built-app-that-installs-itself.md)
+
+The user steps are in `INSTALL.md`. Building the disk image is in [the packaging reference](../technical/packaging.md).

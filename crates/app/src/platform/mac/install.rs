@@ -3,8 +3,8 @@
 //!
 //! | Operation | Implementation |
 //! |---|---|
-//! | Deployment | The executable in `~/Applications/Meeting Assistant.app`, the extension in `~/Library/Application Support/MeetingAssistant` |
-//! | Listing in the app list | The bundle's `Info.plist`, which makes it an app for Finder, Launchpad and Spotlight |
+//! | Deployment | The app bundle, as `packaging/macos/build.sh` built and signed it, copied to `~/Applications/Meeting Assistant.app`; the extension in `~/Library/Application Support/MeetingAssistant` |
+//! | Listing in the app list | The bundle's own `Info.plist`, which makes it an app for Finder, Launchpad and Spotlight |
 //! | Start at login | Definition file in `~/Library/LaunchAgents` |
 //! | Registration with browsers | Manifest file in each browser's `NativeMessagingHosts` folder |
 //! | Browser launchers | Small apps in `~/Applications` |
@@ -20,13 +20,13 @@ use crate::browser::protocol::HOST_NAME;
 use crate::install::{APP_NAME, InstallSystem, Signature};
 
 const LAUNCH_AGENT_LABEL: &str = "com.meeting-assistant.agent";
+/// The identifier in the bundle's `Info.plist` (`packaging/macos/Info.plist`), which the build also signs the app as.
 const APP_BUNDLE_IDENTIFIER: &str = "com.meeting-assistant.app";
+/// The executable in the bundle, named by `CFBundleExecutable`.
 const EXECUTABLE_NAME: &str = "meeting-assistant";
-/// The code-signing identity in the user's keychain that the app is signed with, so that macOS ties its permissions
-/// to the same identity across updates. INSTALL.md says how to create it.
-const SIGNING_IDENTITY: &str = "Meeting Assistant Local Signing";
 
-/// Runs a command-line tool of macOS without input. Returns its standard output, or an error with its standard error.
+/// Runs a command-line tool of macOS without input. Returns what it printed, standard output and then standard error
+/// (`codesign -d` prints its details to standard error), or an error with its standard error.
 fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> anyhow::Result<String> {
     let output = Command::new(program)
         .args(args)
@@ -38,7 +38,11 @@ fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> anyhow::Result<String> 
         "{}",
         String::from_utf8_lossy(&output.stderr).trim()
     );
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
 }
 
 /// The designated requirement in what `codesign -d -r-` prints, which is the identity macOS ties permissions to. An
@@ -50,26 +54,16 @@ fn designated_requirement(output: &str) -> Option<String> {
     })
 }
 
-/// Whether `security find-identity` lists a code-signing identity with this name, trusted or not.
-fn lists_identity(output: &str, name: &str) -> bool {
-    let quoted = format!("\"{name}\"");
-    output.lines().any(|line| line.contains(&quoted))
-}
-
-/// Signs `bundle` with the identity of that name (`-` for ad hoc), as the app this installer registers.
-fn codesign(bundle: &Path, identity: &str) -> anyhow::Result<()> {
-    run_tool(
-        "/usr/bin/codesign",
-        &[
-            "--force".as_ref(),
-            "--sign".as_ref(),
-            identity.as_ref(),
-            "--identifier".as_ref(),
-            APP_BUNDLE_IDENTIFIER.as_ref(),
-            bundle.as_os_str(),
-        ],
-    )
-    .map(drop)
+/// Who signed the app, from what `codesign -d -vv` prints: the first `Authority` is the certificate that signed it.
+fn signer(details: &str) -> Signature {
+    let lines = || details.lines().map(str::trim);
+    if lines().any(|line| line == "Signature=adhoc") {
+        return Signature::AdHoc("it was built without a signing identity".to_owned());
+    }
+    match lines().find_map(|line| line.strip_prefix("Authority=")) {
+        Some(name) => Signature::Lasting(name.to_owned()),
+        None => Signature::AdHoc("its signature names no signer".to_owned()),
+    }
 }
 
 /// A supported browser.
@@ -196,45 +190,6 @@ fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// Info.plist of the app. `LSUIElement` keeps it out of the Dock; it lives in the menu bar.
-fn app_info_plist(executable_name: &str) -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleDisplayName</key>
-    <string>{APP_NAME}</string>
-    <key>CFBundleExecutable</key>
-    <string>{}</string>
-    <key>CFBundleIdentifier</key>
-    <string>{APP_BUNDLE_IDENTIFIER}</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>{APP_NAME}</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>{version}</string>
-    <key>CFBundleVersion</key>
-    <string>{version}</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>{APP_NAME} records your voice in the meetings it records.</string>
-</dict>
-</plist>
-"#,
-        xml_escape(executable_name),
-    )
-}
-
 fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
     let result = if path.is_dir() {
         std::fs::remove_dir_all(path)
@@ -337,18 +292,29 @@ impl InstallSystem for PlatformInstaller {
         matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
     }
 
+    /// When it runs from an app bundle, which is how the build makes it; an executable built by `cargo build` alone
+    /// runs where it is.
+    fn installs_when_opened(&self) -> bool {
+        self.current_executable()
+            .is_ok_and(|executable| enclosing_bundle(&executable).is_some())
+    }
+
     fn request_quit(&mut self) -> bool {
         request_quit()
     }
 
-    fn copy_executable(&mut self, from: &Path, to: &Path) -> anyhow::Result<()> {
-        if let Some(parent) = to.parent() {
-            std::fs::create_dir_all(parent)?;
+    /// Copies the whole bundle with `ditto`, which keeps a bundle's signature, symbolic links and extended attributes
+    /// as they are, over a bundle deleted first, so that nothing of an earlier version stays in it.
+    fn copy_app(&mut self, from: &Path, to: &Path) -> anyhow::Result<()> {
+        let source = enclosing_bundle(from).with_context(|| format!("Not inside an app bundle: {}", from.display()))?;
+        let target = enclosing_bundle(to).with_context(|| format!("Not inside an app bundle: {}", to.display()))?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).with_context(|| format!("Cannot create: {}", parent.display()))?;
         }
-        // Delete first, then copy, so a running executable is not overwritten in place.
-        remove_if_exists(to)?;
-        std::fs::copy(from, to).with_context(|| format!("Cannot place the executable: {}", to.display()))?;
-        Ok(())
+        remove_if_exists(target)?;
+        run_tool("/usr/bin/ditto", &[source.as_os_str(), target.as_os_str()])
+            .with_context(|| format!("Cannot place the app: {}", target.display()))
+            .map(drop)
     }
 
     fn write_file(&mut self, path: &Path, content: &str) -> anyhow::Result<()> {
@@ -384,11 +350,10 @@ impl InstallSystem for PlatformInstaller {
         Ok(())
     }
 
-    fn register_app(&mut self, executable: &Path) -> anyhow::Result<()> {
-        let bundle = enclosing_bundle(executable)
-            .with_context(|| format!("Not inside an app bundle: {}", executable.display()))?;
-        let name = executable.file_name().unwrap_or_default().to_string_lossy();
-        self.write_file(&bundle.join("Contents/Info.plist"), &app_info_plist(&name))
+    /// Nothing to do: the bundle's own `Info.plist` lists it in Finder, Launchpad and Spotlight once it is in
+    /// `~/Applications`, and writing into the bundle would break its signature.
+    fn register_app(&mut self, _executable: &Path) -> anyhow::Result<()> {
+        Ok(())
     }
 
     fn unregister_app(&mut self) -> anyhow::Result<()> {
@@ -463,6 +428,29 @@ impl InstallSystem for PlatformInstaller {
         remove_if_exists(&Browser::named(browser)?.launcher())
     }
 
+    /// The app must be a bundle whose signature seals all of it, as the build makes it: macOS ties the app's
+    /// permissions to that signature, and a bundle that is not sealed is not the app as it was built.
+    fn app_signature(&self, executable: &Path) -> anyhow::Result<Signature> {
+        let bundle = enclosing_bundle(executable).with_context(|| {
+            format!(
+                "{} is not inside an app bundle. Build the app with packaging/macos/build.sh and install it from the \
+                 app or the disk image that makes.",
+                executable.display()
+            )
+        })?;
+        run_tool(
+            "/usr/bin/codesign",
+            &["--verify".as_ref(), "--strict".as_ref(), bundle.as_os_str()],
+        )
+        .with_context(|| format!("The signature of {} does not verify", bundle.display()))?;
+        let details = run_tool(
+            "/usr/bin/codesign",
+            &["-d".as_ref(), "-vv".as_ref(), bundle.as_os_str()],
+        )
+        .with_context(|| format!("Cannot read the signature of {}", bundle.display()))?;
+        Ok(signer(&details))
+    }
+
     fn app_identity(&self, executable: &Path) -> Option<String> {
         let bundle = enclosing_bundle(executable)?;
         let output = run_tool(
@@ -471,28 +459,6 @@ impl InstallSystem for PlatformInstaller {
         )
         .ok()?;
         designated_requirement(&output)
-    }
-
-    /// With the lasting identity when the keychain has it; otherwise ad hoc, which still seals the bundle under the
-    /// app's identifier. Using the identity's key may make macOS ask for the user's permission.
-    fn sign_app(&mut self, executable: &Path) -> anyhow::Result<Signature> {
-        let bundle = enclosing_bundle(executable)
-            .with_context(|| format!("Not inside an app bundle: {}", executable.display()))?;
-        let identities = run_tool(
-            "/usr/bin/security",
-            &["find-identity".as_ref(), "-p".as_ref(), "codesigning".as_ref()],
-        )
-        .unwrap_or_default();
-        let reason = if lists_identity(&identities, SIGNING_IDENTITY) {
-            match codesign(bundle, SIGNING_IDENTITY) {
-                Ok(()) => return Ok(Signature::Lasting(SIGNING_IDENTITY.to_owned())),
-                Err(error) => format!("\"{SIGNING_IDENTITY}\" could not be used: {error:#}"),
-            }
-        } else {
-            format!("the keychain has no code-signing identity named \"{SIGNING_IDENTITY}\"")
-        };
-        codesign(bundle, "-").context("Cannot sign the app ad hoc")?;
-        Ok(Signature::AdHoc(reason))
     }
 
     /// Only the screen recording permission: macOS asks for the microphone again by itself when the identity changes,
@@ -533,12 +499,26 @@ mod tests {
     }
 
     #[test]
-    fn finds_the_signing_identity_by_its_exact_name_trusted_or_not() {
-        let output = "\nPolicy: Code Signing\n  Matching identities\n  1) D2CF \"Meeting Assistant Local Signing\" \
-                      (CSSMERR_TP_NOT_TRUSTED)\n     1 identities found\n";
-        assert!(lists_identity(output, SIGNING_IDENTITY));
-        assert!(!lists_identity(output, "Meeting Assistant"));
-        assert!(!lists_identity("     0 identities found\n", SIGNING_IDENTITY));
+    fn reads_who_signed_the_app() {
+        let lasting = "Executable=/x/Meeting Assistant.app/Contents/MacOS/meeting-assistant\n\
+                       Identifier=com.meeting-assistant.app\nCodeDirectory v=20500 size=1 flags=0x10000(runtime)\n\
+                       Authority=Meeting Assistant Local Signing\nSignature size=1234\n";
+        assert_eq!(
+            signer(lasting),
+            Signature::Lasting("Meeting Assistant Local Signing".into())
+        );
+
+        let developer_id = "Authority=Developer ID Application: Someone (TEAM123456)\n\
+                            Authority=Developer ID Certification Authority\nAuthority=Apple Root CA\n";
+        assert_eq!(
+            signer(developer_id),
+            Signature::Lasting("Developer ID Application: Someone (TEAM123456)".into())
+        );
+
+        assert!(matches!(
+            signer("Identifier=com.meeting-assistant.app\nSignature=adhoc\n"),
+            Signature::AdHoc(_)
+        ));
     }
 
     #[test]
@@ -557,23 +537,41 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_installed_executable_is_inside_the_app_bundle() {
-        let executable = PlatformInstaller.installed_executable();
+    /// The `Info.plist` the build puts into the bundle.
+    const INFO_PLIST: &str = include_str!("../../../../../packaging/macos/Info.plist");
 
-        assert_eq!(enclosing_bundle(&executable), Some(app_bundle().as_path()));
-        assert!(app_info_plist(EXECUTABLE_NAME).contains(&format!("<string>{EXECUTABLE_NAME}</string>")));
+    /// The value of a key in [`INFO_PLIST`], which has one `<key>` line followed by one value line per entry.
+    fn info_plist_value(key: &str) -> Option<&'static str> {
+        let mut lines = INFO_PLIST.lines().map(str::trim);
+        lines.find(|line| *line == format!("<key>{key}</key>"))?;
+        lines.next()
     }
 
     #[test]
-    fn app_info_plist_identifies_a_menu_bar_app() {
-        let plist = app_info_plist("meeting-assistant");
+    fn the_installed_executable_is_the_one_the_bundle_names() {
+        let executable = PlatformInstaller.installed_executable();
 
-        assert!(plist.contains(&format!("<string>{APP_BUNDLE_IDENTIFIER}</string>")));
-        assert!(plist.contains("<key>LSUIElement</key>\n    <true/>"));
-        assert!(plist.contains(&format!("<string>{}</string>", env!("CARGO_PKG_VERSION"))));
+        assert_eq!(enclosing_bundle(&executable), Some(app_bundle().as_path()));
+        assert_eq!(
+            info_plist_value("CFBundleExecutable"),
+            Some(format!("<string>{EXECUTABLE_NAME}</string>").as_str())
+        );
+    }
+
+    #[test]
+    fn the_bundle_is_a_menu_bar_app_with_the_identifier_its_permissions_are_kept_under() {
+        assert_eq!(
+            info_plist_value("CFBundleIdentifier"),
+            Some(format!("<string>{APP_BUNDLE_IDENTIFIER}</string>").as_str())
+        );
+        assert_eq!(info_plist_value("LSUIElement"), Some("<true/>"));
         // Without it macOS ends the app the moment it opens the microphone.
-        assert!(plist.contains("<key>NSMicrophoneUsageDescription</key>"));
+        assert!(info_plist_value("NSMicrophoneUsageDescription").is_some());
+        // The build puts the version in.
+        assert_eq!(
+            info_plist_value("CFBundleShortVersionString"),
+            Some("<string>@VERSION@</string>")
+        );
     }
 
     #[test]

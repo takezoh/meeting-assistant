@@ -11,7 +11,9 @@ use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError
 use windows::Win32::Storage::FileSystem::{FILE_TYPE_UNKNOWN, GetFileType};
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 use windows::Win32::System::Threading::CreateMutexW;
-use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MESSAGEBOX_STYLE, MessageBoxW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    IDOK, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_OKCANCEL, MESSAGEBOX_STYLE, MessageBoxW,
+};
 use windows::core::{HSTRING, w};
 
 pub use self::install::PlatformInstaller;
@@ -48,6 +50,18 @@ pub fn show_error(message: &str) {
 /// Reports the result in a dialog when there is no output.
 pub fn show_info(message: &str) {
     message_box(message, MB_ICONINFORMATION);
+}
+
+/// Asks in a dialog whether to go ahead. Its buttons are Windows' OK and Cancel, so `action` names no button.
+pub fn confirm(message: &str, _action: &str) -> bool {
+    unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(message),
+            w!("Meeting Assistant"),
+            MB_OKCANCEL | MB_ICONQUESTION,
+        ) == IDOK
+    }
 }
 
 /// Whether the whole screen can be recorded.

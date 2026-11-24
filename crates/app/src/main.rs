@@ -106,6 +106,10 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // A configuration of its own is how a development build runs beside the installed app, so it never offers to
+    // install itself.
+    let offers_installation =
+        command == Command::Run && config_override.is_none() && install::offers_installation(&PlatformInstaller);
     let (config_path, log_directory) = locations(config_override);
 
     // When running resident, assume there is no output; report why startup failed in a dialog.
@@ -124,6 +128,7 @@ fn main() -> ExitCode {
         Command::Probe => load(&config_path, false).and_then(|config| diagnostics::probe(&config)),
         Command::SelfTest { keep, seconds } => load(&config_path, false)
             .and_then(|config| diagnostics::self_test(&config, keep, Duration::from_secs(seconds))),
+        Command::Run if offers_installation => offer_installation(&reporter),
         Command::Run => load(&config_path, true).and_then(|config| run_tray(config, config_path, log_directory)),
     };
     match result {
@@ -152,6 +157,18 @@ fn load(config_path: &std::path::Path, notify: bool) -> anyhow::Result<Config> {
         }
     }
     Ok(loaded.config)
+}
+
+/// Opened from somewhere other than the install location, such as the disk image it came in, a built app installs
+/// itself, which starts the installed copy, instead of running from there. Declining changes nothing.
+fn offer_installation(reporter: &Reporter) -> anyhow::Result<()> {
+    if !platform::confirm(&install::installation_question(), "Install") {
+        log::info!("The installation was declined.");
+        return Ok(());
+    }
+    let report = install::install(&mut PlatformInstaller)?;
+    reporter.info(&report.join("\n"));
+    Ok(())
 }
 
 /// Runs as a relay process launched by the browser.

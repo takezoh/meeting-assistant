@@ -166,6 +166,25 @@ pub fn show_info(message: &str) {
     dialog(message, "note");
 }
 
+/// Asks in a dialog with a Cancel button and a default button named `action`. True when `action` was chosen;
+/// osascript fails when Cancel is.
+pub fn confirm(message: &str, action: &str) -> bool {
+    let script = format!(
+        "display dialog {} with title {} buttons {{\"Cancel\", {action}}} default button {action} cancel button \
+         \"Cancel\" with icon note",
+        applescript_string(message),
+        applescript_string(APP_NAME),
+        action = applescript_string(action),
+    );
+    match Command::new("osascript").arg("-e").arg(script).output() {
+        Ok(output) => output.status.success(),
+        Err(error) => {
+            log::warn!("Cannot run osascript: {error}");
+            false
+        }
+    }
+}
+
 /// Whether the whole screen can be recorded.
 pub const SCREEN_CAPTURE: bool = true;
 

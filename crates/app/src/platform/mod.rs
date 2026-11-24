@@ -20,6 +20,7 @@
 //! Interaction with the user:
 //! - `has_output`: whether a command-line output exists (tries to set one up if not)
 //! - `show_error` / `show_info`: reports the result in a dialog when there is no output
+//! - `confirm`: asks in a dialog whether to go ahead with an action
 //! - `notify`: shows a notification
 //! - `panel_window` / `style_panel`: give the status panel's window the platform's look (transparency, material,
 //!   rounded corners, accent color)
@@ -43,6 +44,6 @@ compile_error!("This OS is not supported yet. Add an implementation under crates
 
 pub use self::imp::{
     PlatformInstaller, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource, SCREEN_CAPTURE, SingleInstance,
-    has_output, notify, panel_shown, panel_window, prepare_event_loop, recorder, request_quit, set_tray_icon,
+    confirm, has_output, notify, panel_shown, panel_window, prepare_event_loop, recorder, request_quit, set_tray_icon,
     show_error, show_info, style_panel, tray_look, watch_exit_requests,
 };

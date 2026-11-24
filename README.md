@@ -49,7 +49,7 @@ target\release\meeting-assistant.exe --install
 
 The executable is its own installer. It changes only the current user's profile and needs no administrator rights: it copies itself to `%LOCALAPPDATA%\Programs\MeetingAssistant`, starts at logon, registers itself with Chrome and Edge for the extension, and adds an entry under Settings > Apps. `--uninstall` reverts this and keeps your configuration, logs and recordings.
 
-On macOS the same two commands install `~/Applications/Meeting Assistant.app`; see [INSTALL.md](INSTALL.md#macos).
+On macOS you install from a disk image: open the app in it and choose **Install**, and it installs itself to `~/Applications/Meeting Assistant.app` in the same way. `packaging/macos/build.sh` makes the disk image; see [INSTALL.md](INSTALL.md#macos).
 
 [INSTALL.md](INSTALL.md) covers the browser extension, updating, macOS and where files are kept.
 

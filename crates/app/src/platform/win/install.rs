@@ -140,11 +140,18 @@ impl InstallSystem for PlatformInstaller {
         matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
     }
 
+    /// Not yet: until the Windows installer is built, an executable that is not installed runs where it is and offers
+    /// the installation in its tray menu (docs/issue/issue-20261124-the-windows-installer-is-not-built.md).
+    fn installs_when_opened(&self) -> bool {
+        false
+    }
+
     fn request_quit(&mut self) -> bool {
         session::request_quit()
     }
 
-    fn copy_executable(&mut self, from: &Path, to: &Path) -> anyhow::Result<()> {
+    /// The app is the executable alone.
+    fn copy_app(&mut self, from: &Path, to: &Path) -> anyhow::Result<()> {
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -278,12 +285,12 @@ impl InstallSystem for PlatformInstaller {
     }
 
     /// Windows does not tie the microphone permission to the executable's signature.
-    fn app_identity(&self, _executable: &Path) -> Option<String> {
-        None
+    fn app_signature(&self, _executable: &Path) -> anyhow::Result<Signature> {
+        Ok(Signature::NotNeeded)
     }
 
-    fn sign_app(&mut self, _executable: &Path) -> anyhow::Result<Signature> {
-        Ok(Signature::NotNeeded)
+    fn app_identity(&self, _executable: &Path) -> Option<String> {
+        None
     }
 
     fn forget_permissions(&mut self) -> anyhow::Result<()> {

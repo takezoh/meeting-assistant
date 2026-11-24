@@ -40,7 +40,9 @@ target\release\meeting-assistant.exe --probe
 
 To measure how far sound and picture are apart in a recording, run `tools/avsync` next to a long self-test; its [README](../tools/avsync/README.md) describes the procedure and what the numbers include.
 
-An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder.
+An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder. Without `--config`, an app bundle opened from outside the install location asks whether to install itself instead of running.
+
+To install a build on macOS, run `packaging/macos/build.sh` and install from the app or the disk image it makes. The installer refuses an executable that is not inside a signed app bundle, so `target/release/meeting-assistant --install` does not install on macOS. The [packaging reference](technical/packaging.md) covers the signing identity, the options and how to check a build.
 
 ## Verify a documentation change
 
@@ -66,6 +68,7 @@ docs lint
 | How one recording is captured and written | [Capture pipeline design](design/design-capture-pipeline.md), `crates/app/src/recording/` |
 | Extension messages, the relay and the tab recording | [Browser tab recording design](design/design-browser-tab-recording.md), [browser link reference](technical/browser-link.md), `crates/app/src/browser/`, `extension/` |
 | Install, update, uninstall, autostart, exit | [Installation design](design/design-installation.md), `crates/app/src/install/` |
+| The file users install from, and its signature | [Packaging](technical/packaging.md), `packaging/` |
 | Windows implementations | `crates/app/src/platform/win/` |
 | macOS implementations | `crates/app/src/platform/mac/` |
 | Test suites | [Testing](technical/testing.md) |
