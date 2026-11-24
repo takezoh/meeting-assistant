@@ -18,7 +18,7 @@ use anyhow::Context;
 
 use super::{registry, session, shell};
 use crate::browser::protocol::HOST_NAME;
-use crate::install::{APP_NAME, InstallSystem};
+use crate::install::{APP_NAME, InstallSystem, Signature};
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "MeetingAssistant";
@@ -275,5 +275,18 @@ impl InstallSystem for PlatformInstaller {
             .shortcuts()
             .iter()
             .try_for_each(|shortcut| remove_file_if_exists(shortcut))
+    }
+
+    /// Windows does not tie the microphone permission to the executable's signature.
+    fn app_identity(&self, _executable: &Path) -> Option<String> {
+        None
+    }
+
+    fn sign_app(&mut self, _executable: &Path) -> anyhow::Result<Signature> {
+        Ok(Signature::NotNeeded)
+    }
+
+    fn forget_permissions(&mut self) -> anyhow::Result<()> {
+        Ok(())
     }
 }

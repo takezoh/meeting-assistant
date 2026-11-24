@@ -37,7 +37,7 @@ boundaries:
     statement: "The commands --install, --uninstall and --quit, and the tray actions for installing and for start at logon."
   consumes:
   - id: CONS-001
-    statement: "InstallSystem: copy and remove files, register the app, set autostart, register native hosts, create launchers, request quit, launch."
+    statement: "InstallSystem: copy and remove files, register the app, set autostart, register native hosts, create launchers, request quit, launch, read the app's identity, sign the app, clear the permissions kept for an earlier identity."
   forbidden:
   - id: FORB-001
     statement: "Installing as a service or into a machine-wide location."
@@ -78,7 +78,7 @@ Let one executable set itself up to run at every logon and be removed cleanly, w
 
 ## Responsibilities
 
-`install` holds the procedures as shared code over the `InstallSystem` port: `install` (which is also update), `uninstall`, the autostart toggle and the content of the native-host manifest. The platform installers supply the operations. On Windows these are a copy to `%LOCALAPPDATA%\Programs\MeetingAssistant`, a `Run` value, native-host keys under `HKCU`, `.lnk` shortcuts and an uninstall key. On macOS they are an app bundle `~/Applications/Meeting Assistant.app` whose `Info.plist` is the registration, the extension in `~/Library/Application Support/MeetingAssistant`, a LaunchAgent plist, native-host JSON files and launcher `.app` bundles; the installed app is started through LaunchServices.
+`install` holds the procedures as shared code over the `InstallSystem` port: `install` (which is also update), `uninstall`, the autostart toggle and the content of the native-host manifest. The platform installers supply the operations. On Windows these are a copy to `%LOCALAPPDATA%\Programs\MeetingAssistant`, a `Run` value, native-host keys under `HKCU`, `.lnk` shortcuts and an uninstall key. On macOS they are an app bundle `~/Applications/Meeting Assistant.app` whose `Info.plist` is the registration, the extension in `~/Library/Application Support/MeetingAssistant`, a LaunchAgent plist, native-host JSON files and launcher `.app` bundles; the installed app is started through LaunchServices. On macOS the installer signs the bundle, after writing its `Info.plist` and before anything runs it, with the keychain identity `Meeting Assistant Local Signing` or else ad hoc, and clears the app's screen recording permission when its designated requirement changed across the update ([the decision](../adr/adr-20261124-sign-the-macos-app-with-a-lasting-identity.md)).
 
 The platform session code provides the single-instance guard and delivers a quit request to the resident instance. The tray turns a quit request, a menu quit and the end of the user session into the same shutdown path, which stops the engine and with it the recorder. On macOS the end of the session reaches the app as a request to terminate the application, which ends the tray's event loop; the tray finalizes on that loop's last event as well, once.
 
@@ -104,7 +104,7 @@ Locations and mechanisms are per platform. The order of steps and the rule that 
 
 ## Conformance
 
-`install/mod.rs` tests the procedures against a fake `InstallSystem` that records calls. Install, update and uninstall were run by hand on Windows on 2026-11-17 and on macOS on 2026-11-18, on macOS during a recording; a real logoff was not performed on either. See the [macOS verification note](../note/note-20261118-macos-verification-2026-11-18.md).
+`install/mod.rs` tests the procedures against a fake `InstallSystem` that records calls. Install, update and uninstall were run by hand on Windows on 2026-11-17 and on macOS on 2026-11-18, on macOS during a recording; a real logoff was not performed on either. Signing with the identity, the one-time clearing of the screen recording permission, and an update that kept both permissions were run on one Mac on 2026-11-24. See the [macOS verification note](../note/note-20261118-macos-verification-2026-11-18.md).
 
 ## Related Decisions
 

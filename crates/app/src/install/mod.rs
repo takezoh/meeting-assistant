@@ -47,6 +47,34 @@ pub trait InstallSystem {
     /// Creates something (e.g. a shortcut) that launches the browser with the launch option, and returns its name.
     fn create_browser_launcher(&mut self, browser: &str, option: &str) -> anyhow::Result<String>;
     fn remove_browser_launcher(&mut self, browser: &str) -> anyhow::Result<()>;
+
+    /// What the OS ties the installed app's permissions to: on macOS, its code signature's designated requirement.
+    /// `None` when the OS ties none, or when it cannot be read (the app is not installed, for example).
+    fn app_identity(&self, executable: &Path) -> Option<String>;
+    /// Signs the installed app, so that the OS keeps its permissions across updates where it can.
+    fn sign_app(&mut self, executable: &Path) -> anyhow::Result<Signature>;
+    /// Clears the permissions the OS keeps for an earlier identity of the app, which it would go on showing as given
+    /// but no longer honour, so that it asks for them again.
+    fn forget_permissions(&mut self) -> anyhow::Result<()>;
+}
+
+/// How the installed app was signed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Signature {
+    /// The OS needs no signature to keep the app's permissions.
+    #[cfg_attr(not(windows), allow(dead_code, reason = "only Windows needs no signature"))]
+    NotNeeded,
+    /// With the signing identity of this name, which stays the same across builds.
+    #[cfg_attr(windows, allow(dead_code, reason = "only macOS signs the app"))]
+    Lasting(String),
+    /// Ad hoc, because the lasting identity could not be used, for this reason. The identity changes with every build.
+    #[cfg_attr(windows, allow(dead_code, reason = "only macOS signs the app"))]
+    AdHoc(String),
+}
+
+/// Whether the OS will no longer honour the permissions it gave the app as it was before an update.
+fn identity_changed(before: Option<&str>, after: Option<&str>) -> bool {
+    matches!((before, after), (Some(before), Some(after)) if before != after)
 }
 
 /// Definition of the relay process, handed to the browser.
@@ -91,6 +119,7 @@ pub fn install(system: &mut dyn InstallSystem) -> anyhow::Result<Vec<String>> {
     let source = system.current_executable()?;
     let target = system.installed_executable();
     let mut report = Vec::new();
+    let identity_before = system.app_identity(&target);
 
     // Quit the resident app before changing anything, so a file being recorded is not corrupted.
     quit_running_instance(system)?;
@@ -106,6 +135,8 @@ pub fn install(system: &mut dyn InstallSystem) -> anyhow::Result<Vec<String>> {
     report.push(format!("Installed the browser extension: {}", extension.display()));
 
     system.register_app(&target)?;
+    // The signature seals the app as registered, so it comes after its registration and before anything runs it.
+    report.extend(sign(system, &target, identity_before.as_deref()));
     system.set_autostart(Some(&target))?;
     report.push("Registered in the app list and set to start at logon.".to_owned());
 
@@ -124,6 +155,36 @@ pub fn install(system: &mut dyn InstallSystem) -> anyhow::Result<Vec<String>> {
     system.launch(&target)?;
     report.push(format!("Started {APP_NAME}."));
     Ok(report)
+}
+
+/// Signs the installed app and, when the OS would no longer honour the permissions it gave the app before, has it
+/// forget them so that it asks again. The app runs without either, so a failure is reported rather than stopping the
+/// installation. Returns what to report.
+fn sign(system: &mut dyn InstallSystem, target: &Path, identity_before: Option<&str>) -> Vec<String> {
+    let mut report = Vec::new();
+    match system.sign_app(target) {
+        Ok(Signature::NotNeeded) => {}
+        Ok(Signature::Lasting(name)) => report.push(format!(
+            "Signed the app with \"{name}\", so its permissions are kept across updates."
+        )),
+        Ok(Signature::AdHoc(reason)) => report.push(format!(
+            "Warning: signed the app ad hoc ({reason}). The screen recording and microphone permissions will have to \
+             be given again after every update; INSTALL.md says how to keep them."
+        )),
+        Err(error) => report.push(format!("Warning: could not sign the app: {error:#}")),
+    }
+    if identity_changed(identity_before, system.app_identity(target).as_deref()) {
+        report.push(match system.forget_permissions() {
+            Ok(()) => format!(
+                "The app's signature changed, so its earlier permissions were cleared. {APP_NAME} asks for them \
+                 again when it first records."
+            ),
+            Err(error) => format!(
+                "Warning: the app's signature changed, but its earlier permissions could not be cleared: {error:#}"
+            ),
+        });
+    }
+    report
 }
 
 /// Uninstalls. Keeps settings, logs and recordings. Returns a list of what was done.
@@ -160,6 +221,12 @@ mod tests {
         present: Vec<&'static str>,
         autostart: Option<PathBuf>,
         fails_on: Option<&'static str>,
+        /// The installed app's identity: `None` before a first installation.
+        identity: Option<String>,
+        /// The identity signing gives it.
+        signed_identity: Option<String>,
+        /// What signing reports.
+        signature: Signature,
     }
 
     impl FakeSystem {
@@ -171,7 +238,17 @@ mod tests {
                 present: vec!["Chrome"],
                 autostart: None,
                 fails_on: None,
+                identity: None,
+                signed_identity: Some("lasting".into()),
+                signature: Signature::Lasting("Local Signing".into()),
             }
+        }
+
+        fn position(&self, kind: &str) -> usize {
+            self.kinds()
+                .iter()
+                .position(|k| *k == kind)
+                .unwrap_or_else(|| panic!("no {kind}"))
         }
 
         fn act(&mut self, action: String) -> anyhow::Result<()> {
@@ -262,6 +339,105 @@ mod tests {
         fn remove_browser_launcher(&mut self, browser: &str) -> anyhow::Result<()> {
             self.act(format!("remove-launcher {browser}"))
         }
+        fn app_identity(&self, _executable: &Path) -> Option<String> {
+            self.identity.clone()
+        }
+        fn sign_app(&mut self, executable: &Path) -> anyhow::Result<Signature> {
+            self.act(format!("sign {}", executable.display()))?;
+            self.identity.clone_from(&self.signed_identity);
+            Ok(self.signature.clone())
+        }
+        fn forget_permissions(&mut self) -> anyhow::Result<()> {
+            self.act("forget-permissions".into())
+        }
+    }
+
+    #[test]
+    fn signs_the_app_after_registering_it_and_before_anything_runs_it() {
+        let mut system = FakeSystem::new();
+        let report = install(&mut system).unwrap();
+
+        assert!(system.actions.contains(&format!("sign {TARGET}")));
+        assert!(system.position("register-app") < system.position("sign"));
+        assert!(system.position("sign") < system.position("autostart"));
+        assert!(system.position("sign") < system.position("launch"));
+        assert!(
+            report.iter().any(|line| line.contains("\"Local Signing\"")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn an_update_that_changes_the_signature_clears_the_earlier_permissions_before_the_app_runs() {
+        let mut system = FakeSystem::new();
+        system.identity = Some("ad hoc build 1".into());
+        let report = install(&mut system).unwrap();
+
+        assert_eq!(system.count("forget-permissions"), 1);
+        assert!(system.position("sign") < system.position("forget-permissions"));
+        assert!(system.position("forget-permissions") < system.position("launch"));
+        assert!(
+            report
+                .iter()
+                .any(|line| line.contains("earlier permissions were cleared"))
+        );
+    }
+
+    #[test]
+    fn an_update_with_the_same_signature_keeps_the_permissions() {
+        let mut system = FakeSystem::new();
+        system.identity = Some("lasting".into());
+        install(&mut system).unwrap();
+
+        assert_eq!(system.count("forget-permissions"), 0);
+    }
+
+    #[test]
+    fn a_first_installation_has_no_earlier_permissions_to_clear() {
+        let mut system = FakeSystem::new();
+        install(&mut system).unwrap();
+
+        assert_eq!(system.count("forget-permissions"), 0);
+    }
+
+    #[test]
+    fn nothing_is_said_of_signing_where_the_os_needs_no_signature() {
+        let mut system = FakeSystem::new();
+        system.signature = Signature::NotNeeded;
+        system.signed_identity = None;
+        let report = install(&mut system).unwrap();
+
+        assert!(!report.iter().any(|line| line.contains("ign")), "{report:?}");
+    }
+
+    #[test]
+    fn an_ad_hoc_signature_is_reported_as_a_warning() {
+        let mut system = FakeSystem::new();
+        system.signature = Signature::AdHoc("no signing identity".into());
+        let report = install(&mut system).unwrap();
+
+        assert!(
+            report
+                .iter()
+                .any(|line| line.starts_with("Warning: signed the app ad hoc (no signing identity)")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn a_failure_to_sign_or_to_clear_permissions_is_reported_and_the_app_still_starts() {
+        let mut system = FakeSystem::new();
+        system.fails_on = Some("sign");
+        let report = install(&mut system).unwrap();
+        assert!(report.iter().any(|line| line.starts_with("Warning: could not sign")));
+        assert_eq!(system.count("launch"), 1);
+
+        let mut system = FakeSystem::new();
+        system.identity = Some("ad hoc build 1".into());
+        system.fails_on = Some("forget-permissions");
+        let report = install(&mut system).unwrap();
+        assert!(report.iter().any(|line| line.contains("could not be cleared")));
+        assert_eq!(system.count("launch"), 1);
     }
 
     #[test]

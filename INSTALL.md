@@ -8,7 +8,7 @@ This page takes you from a checkout to a running app that records desktop meetin
 - A Rust toolchain that supports edition 2024 (Rust 1.85 or later). No prebuilt binaries are published.
 - For per-tab recording: Google Chrome or Microsoft Edge.
 
-For macOS see [macOS](#macos) first; it needs two permissions, which for now have to be given again after each update.
+For macOS see [macOS](#macos) first; it needs two permissions, and a signing identity created once so that updates keep them.
 
 ## Build and install
 
@@ -79,7 +79,7 @@ The extension is active on Google Meet, Microsoft Teams, Zoom, Webex, Slack, Whe
 
 ## Update
 
-Build the new version and run its `--install` again. The installer asks the running app to finalize any recording and exit, replaces the files and starts the new version. If the running app does not exit, nothing is changed.
+Build the new version and run its `--install` again. The installer asks the running app to finalize any recording and exit, replaces the files and starts the new version. If the running app does not exit, nothing is changed. On macOS it also signs the app; see [Keeping the permissions across updates](#keeping-the-permissions-across-updates).
 
 After an update that changes the extension, press **Reload** for the extension on the browser's extensions page.
 
@@ -119,7 +119,13 @@ Recording a desktop app or the screen needs two permissions, which macOS asks fo
 | Screen & System Audio Recording | System Settings > Privacy & Security. Turn on **Meeting Assistant**, then quit and start it again | Recordings of desktop apps and of the screen fail to start; browser tabs are recorded by the extension and are not affected |
 | Microphone | System Settings > Privacy & Security > Microphone | The microphone track of every recording, browser tabs included, is silent |
 
-The app is signed ad hoc, so after each update macOS stops honouring its Screen & System Audio Recording permission although System Settings still shows it on, and turning it off and on does not help. Reset it with `tccutil reset ScreenCapture com.meeting-assistant.app`, start a recording (or `open -n -a "Meeting Assistant" --args --self-test`) so that macOS asks again, turn **Meeting Assistant** on, and quit and start the app. macOS may ask for the microphone again too. See [the issue](docs/issue/issue-20261119-every-update-drops-the-macos-screen-reco.md).
+### Keeping the permissions across updates
+
+macOS ties both permissions to the app's signature. Create once, in your login keychain, a code-signing identity named `Meeting Assistant Local Signing`: in Keychain Access choose **Keychain Access > Certificate Assistant > Create a Certificate**, enter that name, choose Identity Type **Self-Signed Root** and Certificate Type **Code Signing**, and create it. `--install` then signs the app with it and says so, and later updates keep the permissions.
+
+When macOS asks whether `codesign` may use the key, enter your login password and choose **Allow**. Do not choose **Always Allow**: whoever can sign with this key can make macOS treat their program as Meeting Assistant and give it its permissions.
+
+Without the identity the installer signs the app ad hoc and warns that macOS will treat every update as a new app. When the app's signature changes, as after every ad-hoc update or the first update with the identity, the installer clears the old Screen & System Audio Recording permission so that macOS asks for it again, and macOS asks for the microphone again; give both again. See [the decision](docs/adr/adr-20261124-sign-the-macos-app-with-a-lasting-identity.md).
 
 What has been run on a Mac is listed in [Product](PRODUCT.md#what-is-not-established). `--self-test` records the main display, the output audio and the microphone for five seconds.
 

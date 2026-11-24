@@ -17,11 +17,60 @@ use anyhow::Context;
 
 use super::{request_quit, support_directory};
 use crate::browser::protocol::HOST_NAME;
-use crate::install::{APP_NAME, InstallSystem};
+use crate::install::{APP_NAME, InstallSystem, Signature};
 
 const LAUNCH_AGENT_LABEL: &str = "com.meeting-assistant.agent";
 const APP_BUNDLE_IDENTIFIER: &str = "com.meeting-assistant.app";
 const EXECUTABLE_NAME: &str = "meeting-assistant";
+/// The code-signing identity in the user's keychain that the app is signed with, so that macOS ties its permissions
+/// to the same identity across updates. INSTALL.md says how to create it.
+const SIGNING_IDENTITY: &str = "Meeting Assistant Local Signing";
+
+/// Runs a command-line tool of macOS without input. Returns its standard output, or an error with its standard error.
+fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> anyhow::Result<String> {
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("Cannot run {program}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The designated requirement in what `codesign -d -r-` prints, which is the identity macOS ties permissions to. An
+/// implicit one, as a linker-signed executable has, is marked with `#`.
+fn designated_requirement(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (_, requirement) = line.trim_start_matches(['#', ' ']).split_once("designated => ")?;
+        Some(requirement.trim().to_owned()).filter(|requirement| !requirement.is_empty())
+    })
+}
+
+/// Whether `security find-identity` lists a code-signing identity with this name, trusted or not.
+fn lists_identity(output: &str, name: &str) -> bool {
+    let quoted = format!("\"{name}\"");
+    output.lines().any(|line| line.contains(&quoted))
+}
+
+/// Signs `bundle` with the identity of that name (`-` for ad hoc), as the app this installer registers.
+fn codesign(bundle: &Path, identity: &str) -> anyhow::Result<()> {
+    run_tool(
+        "/usr/bin/codesign",
+        &[
+            "--force".as_ref(),
+            "--sign".as_ref(),
+            identity.as_ref(),
+            "--identifier".as_ref(),
+            APP_BUNDLE_IDENTIFIER.as_ref(),
+            bundle.as_os_str(),
+        ],
+    )
+    .map(drop)
+}
 
 /// A supported browser.
 struct Browser {
@@ -413,6 +462,52 @@ impl InstallSystem for PlatformInstaller {
     fn remove_browser_launcher(&mut self, browser: &str) -> anyhow::Result<()> {
         remove_if_exists(&Browser::named(browser)?.launcher())
     }
+
+    fn app_identity(&self, executable: &Path) -> Option<String> {
+        let bundle = enclosing_bundle(executable)?;
+        let output = run_tool(
+            "/usr/bin/codesign",
+            &["-d".as_ref(), "-r-".as_ref(), bundle.as_os_str()],
+        )
+        .ok()?;
+        designated_requirement(&output)
+    }
+
+    /// With the lasting identity when the keychain has it; otherwise ad hoc, which still seals the bundle under the
+    /// app's identifier. Using the identity's key may make macOS ask for the user's permission.
+    fn sign_app(&mut self, executable: &Path) -> anyhow::Result<Signature> {
+        let bundle = enclosing_bundle(executable)
+            .with_context(|| format!("Not inside an app bundle: {}", executable.display()))?;
+        let identities = run_tool(
+            "/usr/bin/security",
+            &["find-identity".as_ref(), "-p".as_ref(), "codesigning".as_ref()],
+        )
+        .unwrap_or_default();
+        let reason = if lists_identity(&identities, SIGNING_IDENTITY) {
+            match codesign(bundle, SIGNING_IDENTITY) {
+                Ok(()) => return Ok(Signature::Lasting(SIGNING_IDENTITY.to_owned())),
+                Err(error) => format!("\"{SIGNING_IDENTITY}\" could not be used: {error:#}"),
+            }
+        } else {
+            format!("the keychain has no code-signing identity named \"{SIGNING_IDENTITY}\"")
+        };
+        codesign(bundle, "-").context("Cannot sign the app ad hoc")?;
+        Ok(Signature::AdHoc(reason))
+    }
+
+    /// Only the screen recording permission: macOS asks for the microphone again by itself when the identity changes,
+    /// but keeps refusing to record the screen while it shows the earlier permission as given.
+    fn forget_permissions(&mut self) -> anyhow::Result<()> {
+        run_tool(
+            "/usr/bin/tccutil",
+            &[
+                "reset".as_ref(),
+                "ScreenCapture".as_ref(),
+                APP_BUNDLE_IDENTIFIER.as_ref(),
+            ],
+        )
+        .map(drop)
+    }
 }
 
 #[cfg(test)]
@@ -420,6 +515,31 @@ mod tests {
     use super::*;
 
     const BUNDLED: &str = "/Users/someone/Applications/Meeting Assistant.app/Contents/MacOS/meeting-assistant";
+
+    #[test]
+    fn reads_the_designated_requirement_whether_explicit_or_implicit() {
+        assert_eq!(
+            designated_requirement(
+                "designated => identifier \"com.meeting-assistant.app\" and certificate leaf = H\"d2cf\"\n"
+            )
+            .as_deref(),
+            Some("identifier \"com.meeting-assistant.app\" and certificate leaf = H\"d2cf\"")
+        );
+        assert_eq!(
+            designated_requirement("# designated => cdhash H\"7d0b\"\n").as_deref(),
+            Some("cdhash H\"7d0b\"")
+        );
+        assert_eq!(designated_requirement(""), None);
+    }
+
+    #[test]
+    fn finds_the_signing_identity_by_its_exact_name_trusted_or_not() {
+        let output = "\nPolicy: Code Signing\n  Matching identities\n  1) D2CF \"Meeting Assistant Local Signing\" \
+                      (CSSMERR_TP_NOT_TRUSTED)\n     1 identities found\n";
+        assert!(lists_identity(output, SIGNING_IDENTITY));
+        assert!(!lists_identity(output, "Meeting Assistant"));
+        assert!(!lists_identity("     0 identities found\n", SIGNING_IDENTITY));
+    }
 
     #[test]
     fn finds_the_bundle_only_for_an_executable_laid_out_inside_one() {

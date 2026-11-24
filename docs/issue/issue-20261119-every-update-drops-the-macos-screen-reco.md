@@ -2,7 +2,7 @@
 id: issue-20261119-every-update-drops-the-macos-screen-reco
 kind: issue
 title: Every update drops the macOS screen recording permission
-status: open
+status: done
 created: '2026-11-19'
 issue_type: bug
 tags: []
@@ -11,8 +11,11 @@ relations:
 - {type: references, target: note-20261119-macos-verification-2026-11-19}
 subject_paths:
 - crates/app/src/platform/mac/install.rs
-summary: After each --install of a new build, macOS treats Meeting Assistant as not allowed to record the screen and
-  system audio until the user removes and grants the permission again; the app is only linker-signed ad hoc.
+summary: After each --install of a new build, macOS treats Meeting Assistant as not
+  allowed to record the screen and system audio until the user removes and grants
+  the permission again; the app is only linker-signed ad hoc.
+disposition_target: adr-20261124-sign-the-macos-app-with-a-lasting-identity
+updated: '2026-11-24'
 ---
 
 ## Symptom
@@ -31,3 +34,8 @@ On one Mac (macOS 26) on 2026-11-19, see [the verification note](../note/note-20
 ## Context for follow-up
 
 The installer is in `crates/app/src/platform/mac/install.rs` and the decision to install a self-copied executable is in [the self-installing ADR](../adr/adr-20261117-self-installing-per-user-executable.md). The Microphone permission is affected too: after the `--install` of 10:51 on 2026-11-19, macOS asked for the microphone again when the next browser tab recording started, and that recording waited for the answer, so the first seconds of the call were not recorded ([verification note](../note/note-20261119-two-audio-tracks-verification-2026-11-19.md)).
+
+
+{% transition from="open" to="done" date="2026-11-24" %}
+The installer signs the app with a lasting local identity and clears the stale screen recording permission itself; an update kept both permissions on a Mac on 2026-11-24.
+{% /transition %}
