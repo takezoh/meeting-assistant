@@ -35,7 +35,8 @@ invariants:
   enforcement: test
 - id: INV-004
   statement: An audio source that cannot be opened leaves its track silent and is
-    not replaced by a wider source.
+    not replaced by a wider source. The start reports it, with the reason, as a sound
+    the recording does not have.
   enforcement: test
 - id: INV-005
   statement: A window recording starts with a black picture when no picture arrives
@@ -148,7 +149,7 @@ INV-004 and INV-005 implement the product's scope rule on this side: degraded in
 
 ## Failure Responsibility
 
-`start` waits up to 20 seconds for the pipeline to open and returns its error. After that, a failure ends the thread; the coordinator learns of it through `take_failure` exactly once and may start again. A panic in the thread is reported as a failure, not propagated.
+`start` waits up to 20 seconds for the pipeline to open and returns its error. A start that did not open in time is told to stop, but its thread keeps preparing until the call it waits in returns, and it may create and finalize the file after `start` returned. After that, a failure ends the thread; the coordinator learns of it through `take_failure` exactly once and may start again. A panic in the thread is reported as a failure, not propagated.
 
 ## Variability
 

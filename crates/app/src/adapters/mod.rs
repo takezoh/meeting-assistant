@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{Datelike, Timelike};
-use meeting_assistant_core::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
+use meeting_assistant_core::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause, naming};
 
 use crate::recording::merge::{Placement, RecordingFiles, Remuxer};
 use crate::recording::mp4::{self, ReadAt};
@@ -34,12 +34,19 @@ impl Clock for SystemClock {
     }
 }
 
-/// A folder on disk.
+/// The recordings folder on disk, with its in-progress folder inside it. Being on the same volume, a finished file
+/// moves into the recordings folder by a rename, all at once.
 pub struct DiskFolder(pub PathBuf);
+
+impl DiskFolder {
+    fn in_progress_folder(&self) -> PathBuf {
+        self.0.join(naming::IN_PROGRESS_FOLDER)
+    }
+}
 
 impl OutputFolder for DiskFolder {
     fn prepare(&mut self) -> anyhow::Result<()> {
-        std::fs::create_dir_all(&self.0)?;
+        std::fs::create_dir_all(self.in_progress_folder())?;
         Ok(())
     }
 
@@ -47,8 +54,41 @@ impl OutputFolder for DiskFolder {
         self.0.join(file_name).exists()
     }
 
-    fn path_of(&self, file_name: &str) -> PathBuf {
-        self.0.join(file_name)
+    fn in_progress(&self) -> anyhow::Result<Vec<String>> {
+        let entries = match std::fs::read_dir(self.in_progress_folder()) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error).context("cannot read the in-progress folder"),
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_file()
+                && let Some(name) = entry.file_name().to_str()
+            {
+                names.push(name.to_owned());
+            }
+        }
+        Ok(names)
+    }
+
+    fn in_progress_path(&self, file_name: &str) -> PathBuf {
+        self.in_progress_folder().join(file_name)
+    }
+
+    fn publish(&mut self, file_name: &str, target_name: &str) -> anyhow::Result<PathBuf> {
+        let target = self.0.join(target_name);
+        // A rename would replace an existing file on macOS; the name was chosen free, so this only guards a race.
+        anyhow::ensure!(!target.exists(), "{} already exists", target.display());
+        std::fs::rename(self.in_progress_path(file_name), &target)
+            .with_context(|| format!("cannot move {file_name} to {}", target.display()))?;
+        // The in-progress folder exists only while something is in it; it is made again for the next recording.
+        let _ = std::fs::remove_dir(self.in_progress_folder());
+        Ok(target)
+    }
+
+    fn discard(&mut self, file_name: &str) -> anyhow::Result<()> {
+        std::fs::remove_file(self.in_progress_path(file_name)).with_context(|| format!("cannot remove {file_name}"))
     }
 }
 
@@ -146,6 +186,76 @@ pub fn real_ports(output_directory: PathBuf) -> CoordinatorPorts {
 mod tests {
     use super::*;
 
+    fn folder() -> (tempfile::TempDir, DiskFolder) {
+        let root = tempfile::tempdir().unwrap();
+        let folder = DiskFolder(root.path().join("MeetingAssistant"));
+        (root, folder)
+    }
+
+    #[test]
+    fn a_recording_is_written_in_progress_and_moved_into_the_recordings_folder() {
+        let (_root, mut folder) = folder();
+        assert!(
+            folder.in_progress().unwrap().is_empty(),
+            "nothing in progress before the folder exists"
+        );
+        folder.prepare().unwrap();
+        let writing = folder.in_progress_path("a.mp4");
+        assert_eq!(writing, folder.0.join("in-progress").join("a.mp4"));
+        std::fs::write(&writing, b"video").unwrap();
+        assert_eq!(folder.in_progress().unwrap(), ["a.mp4"]);
+        assert!(
+            !folder.contains("a.mp4"),
+            "a file in progress is not in the recordings folder"
+        );
+
+        let moved = folder.publish("a.mp4", "a.mp4").unwrap();
+
+        assert_eq!(moved, folder.0.join("a.mp4"));
+        assert_eq!(std::fs::read(&moved).unwrap(), b"video");
+        assert!(folder.contains("a.mp4"));
+        assert!(
+            !folder.0.join("in-progress").exists(),
+            "the empty in-progress folder is removed"
+        );
+    }
+
+    #[test]
+    fn the_in_progress_folder_stays_while_something_is_still_in_it() {
+        let (_root, mut folder) = folder();
+        folder.prepare().unwrap();
+        std::fs::write(folder.in_progress_path("a.mp4"), b"a").unwrap();
+        std::fs::write(folder.in_progress_path("b.mp4"), b"b").unwrap();
+
+        folder.publish("a.mp4", "a.mp4").unwrap();
+
+        assert_eq!(folder.in_progress().unwrap(), ["b.mp4"]);
+    }
+
+    #[test]
+    fn moving_never_replaces_a_file_in_the_recordings_folder() {
+        let (_root, mut folder) = folder();
+        folder.prepare().unwrap();
+        std::fs::write(folder.0.join("a.mp4"), b"kept").unwrap();
+        std::fs::write(folder.in_progress_path("a.mp4"), b"new").unwrap();
+
+        assert!(folder.publish("a.mp4", "a.mp4").is_err());
+
+        assert_eq!(std::fs::read(folder.0.join("a.mp4")).unwrap(), b"kept");
+        assert_eq!(std::fs::read(folder.in_progress_path("a.mp4")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn an_unfinished_copy_is_removed_from_the_in_progress_folder() {
+        let (_root, mut folder) = folder();
+        folder.prepare().unwrap();
+        std::fs::write(folder.in_progress_path("a.annotating.mp4"), b"part").unwrap();
+
+        folder.discard("a.annotating.mp4").unwrap();
+
+        assert!(folder.in_progress().unwrap().is_empty());
+    }
+
     /// Adds the microphone file named by `MEETING_ASSISTANT_MERGE_MICROPHONE` to the recording named by
     /// `MEETING_ASSISTANT_MERGE_RECORDING`, writing `MEETING_ASSISTANT_MERGE_OUTPUT`: for checking the merge with a
     /// browser's real recording by hand.
@@ -207,7 +317,10 @@ mod tests {
 
         assert!(folder.contains("existing.mp4"));
         assert!(!folder.contains("missing.mp4"));
-        assert_eq!(folder.path_of("missing.mp4"), root.path().join("missing.mp4"));
+        assert_eq!(
+            folder.in_progress_path("missing.mp4"),
+            root.path().join("in-progress").join("missing.mp4")
+        );
     }
 
     #[test]

@@ -38,7 +38,7 @@ Automatic tab recording needs the browser to be started with an undocumented swi
 
 The status panel that opens from the tray icon lists the meetings in progress and starts or stops the recording of each by hand, records the entire screen or a window you choose, with or without your microphone, pauses automatic recording, and opens the recordings folder, the configuration file and the log folder. The tray menu offers the same actions. Rules decide which desktop apps count as a meeting; edit them in `config.toml` and check them with `meeting-assistant --probe`. Browser meetings come from the extension alone. See [Configuration](docs/usage/configuration.md).
 
-Logging off, shutting down, quitting from the menu or running `meeting-assistant --quit` finalizes the file first. If the app is killed while recording, the file remains playable up to a moment before the kill.
+Logging off, shutting down, quitting from the menu or running `meeting-assistant --quit` finalizes the file first. A recording in progress is written in the `in-progress` folder inside the recordings folder and moved out when it is finished, so a file in the recordings folder is never still being written. If the app is killed while recording, the file remains playable up to a moment before the kill and is moved into the recordings folder the next time the app starts.
 
 ## Install
 

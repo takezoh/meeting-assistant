@@ -44,16 +44,29 @@ pub trait Clock {
     fn now(&self) -> LocalDateTime;
 }
 
-/// The folder where recordings are saved.
+/// The folder where recordings are saved, and the folder inside it where they are written while in progress.
+///
+/// A recording is written in the in-progress folder and moved into the recordings folder once nothing writes it any
+/// more, so a file in the recordings folder is never still being written.
 pub trait OutputFolder {
-    /// Makes the folder (creating it if missing) ready for writing.
+    /// Makes both folders (creating them if missing) ready for writing.
     fn prepare(&mut self) -> anyhow::Result<()>;
 
-    /// Whether a file with that name already exists.
+    /// Whether the recordings folder has a file with that name.
     fn contains(&self, file_name: &str) -> bool;
 
-    /// The location of the file with that name.
-    fn path_of(&self, file_name: &str) -> PathBuf;
+    /// The names of the files in the in-progress folder, in any order. Empty when the folder does not exist.
+    fn in_progress(&self) -> anyhow::Result<Vec<String>>;
+
+    /// Where a file of that name is written while in progress.
+    fn in_progress_path(&self, file_name: &str) -> PathBuf;
+
+    /// Moves `file_name` from the in-progress folder into the recordings folder as `target_name`, which must not exist
+    /// there. Returns its new location.
+    fn publish(&mut self, file_name: &str, target_name: &str) -> anyhow::Result<PathBuf>;
+
+    /// Removes `file_name` from the in-progress folder.
+    fn discard(&mut self, file_name: &str) -> anyhow::Result<()>;
 }
 
 /// Pauses before a retry.

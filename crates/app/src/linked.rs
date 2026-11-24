@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use meeting_assistant_core::{
-    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ProcessEntry, Recorder, RecordingMetadata, RecordingRequest,
-    SignalSource, VideoTarget, WindowEntry,
+    AudioSession, BrowserLink, BrowserMeeting, BrowserTab, MissingSound, ProcessEntry, Recorder, RecordingMetadata,
+    RecordingRequest, SignalSource, Sound, Started, VideoTarget, WindowEntry,
 };
 
 use crate::recording::annotate::{self, Annotate};
@@ -141,18 +141,28 @@ impl<R, B, M, G, A: Annotate> LinkedRecorder<R, B, M, G, A> {
 }
 
 /// Starts the microphone beside a tab recording about to start at `recording`. The tab is recorded without it if it
-/// cannot be started.
+/// cannot be started. Also returns the microphone as missing when it could not be started or opened.
 fn start_side_microphone(
     microphone: &mut impl MicrophoneRecorder,
     recording: &Path,
     device: Option<String>,
-) -> Option<SideMicrophone> {
+) -> (Option<SideMicrophone>, Vec<MissingSound>) {
     let path = merge::microphone_path(recording);
     match microphone.start_microphone(&path, device) {
-        Ok(started) => Some(SideMicrophone { path, started }),
+        Ok(ready) => (
+            Some(SideMicrophone {
+                path,
+                started: ready.zero,
+            }),
+            ready.missing,
+        ),
         Err(error) => {
             log::warn!("Your own voice will not be in the tab recording: cannot record the microphone: {error:#}");
-            None
+            let missing = MissingSound {
+                sound: Sound::Microphone,
+                reason: format!("{error:#}"),
+            };
+            (None, vec![missing])
         }
     }
 }
@@ -186,7 +196,7 @@ impl<R, B, M: MicrophoneRecorder, G: MicrophoneMerge, A> LinkedRecorder<R, B, M,
 impl<R: Recorder, B: BrowserPort, M: MicrophoneRecorder, G: MicrophoneMerge, A: Annotate> Recorder
     for LinkedRecorder<R, B, M, G, A>
 {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<Started> {
         anyhow::ensure!(self.active.is_none(), "already recording");
         self.metadata = request.metadata.clone();
         match &request.video {
@@ -195,16 +205,16 @@ impl<R: Recorder, B: BrowserPort, M: MicrophoneRecorder, G: MicrophoneMerge, A: 
                     anyhow::bail!("not connected to the browser extension");
                 };
                 // The microphone starts first, so that it covers the whole tab recording.
-                let microphone = start_side_microphone(
+                let (microphone, missing) = start_side_microphone(
                     &mut self.microphone,
                     &request.output_path,
                     request.capture_device_id.clone(),
                 );
                 match browser.start_capture(*tab, &request.output_path) {
                     Ok(capture) => {
-                        let written = capture.path.clone();
+                        let path = capture.path.clone();
                         self.active = Some(Active::Browser { capture, microphone });
-                        Ok(written)
+                        Ok(Started { path, missing })
                     }
                     Err(error) => {
                         if let Some(microphone) = microphone {
@@ -216,9 +226,11 @@ impl<R: Recorder, B: BrowserPort, M: MicrophoneRecorder, G: MicrophoneMerge, A: 
                 }
             }
             _ => {
-                let written = self.platform.start(request)?;
-                self.active = Some(Active::Platform { path: written.clone() });
-                Ok(written)
+                let started = self.platform.start(request)?;
+                self.active = Some(Active::Platform {
+                    path: started.path.clone(),
+                });
+                Ok(started)
             }
         }
     }
@@ -281,6 +293,7 @@ mod tests {
 
     use super::*;
     use crate::recording::merge::Placement;
+    use crate::recording::session::Ready;
 
     const TAB: BrowserTab = BrowserTab { link: 1, tab: 42 };
 
@@ -352,17 +365,29 @@ mod tests {
         zero: Instant,
         start_fails: bool,
         stop_fails: bool,
+        /// While `Some`, the microphone recording starts silent, with this reason.
+        cannot_open: Option<String>,
     }
 
     impl MicrophoneRecorder for Arc<Mutex<FakeMicrophone>> {
-        fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Instant> {
+        fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Ready> {
             let state = self.lock().unwrap();
             anyhow::ensure!(!state.start_fails, "no microphone permission");
             note(
                 &state.journal,
                 format!("microphone started: {} ({device:?})", path.display()),
             );
-            Ok(state.zero)
+            Ok(Ready {
+                zero: state.zero,
+                missing: state
+                    .cannot_open
+                    .iter()
+                    .map(|reason| MissingSound {
+                        sound: Sound::Microphone,
+                        reason: reason.clone(),
+                    })
+                    .collect(),
+            })
         }
         fn stop_microphone(&mut self) -> anyhow::Result<()> {
             let state = self.lock().unwrap();
@@ -452,6 +477,7 @@ mod tests {
             zero: microphone_zero,
             start_fails: false,
             stop_fails: false,
+            cannot_open: None,
         }));
         let merge = Arc::new(Mutex::new(FakeMerge {
             journal: journal.clone(),
@@ -503,12 +529,15 @@ mod tests {
     #[test]
     fn a_tab_is_recorded_by_the_extension_with_the_microphone_recorded_beside_it_and_added_when_it_ends() {
         let mut f = fixture();
-        let written = f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        let started = f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
 
         assert_eq!(
-            written,
-            PathBuf::from("out.mp4"),
-            "the file the extension writes is reported"
+            started,
+            Started {
+                path: PathBuf::from("out.mp4"),
+                missing: Vec::new(),
+            },
+            "the file the extension writes is reported, with the microphone"
         );
         assert!(f.platform.state().started.is_empty());
         assert_eq!(
@@ -559,10 +588,45 @@ mod tests {
         let mut f = fixture();
         f.microphone.lock().unwrap().start_fails = true;
 
-        f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+        let started = f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
         f.linked.stop().unwrap();
 
         assert_eq!(f.journal(), ["tab 42 started: out.mp4", "tab stopped"]);
+        assert_eq!(
+            started.missing,
+            [MissingSound {
+                sound: Sound::Microphone,
+                reason: "no microphone permission".into(),
+            }],
+            "the start says the microphone is missing, and why"
+        );
+    }
+
+    #[test]
+    fn a_microphone_recording_that_starts_silent_is_reported_with_the_tab_recording() {
+        let mut f = fixture();
+        f.microphone.lock().unwrap().cannot_open = Some("no input device".into());
+
+        let started = f.linked.start(&request(VideoTarget::BrowserTab(TAB))).unwrap();
+
+        let missing: Vec<&str> = started.missing.iter().map(|m| m.reason.as_str()).collect();
+        assert_eq!(missing, ["no input device"]);
+        f.linked.stop().unwrap();
+    }
+
+    #[test]
+    fn what_the_os_recording_lacks_is_passed_on() {
+        let mut f = fixture();
+        let lacking = MissingSound {
+            sound: Sound::OtherSide,
+            reason: "screen recording is not allowed".into(),
+        };
+        f.platform.state().missing = vec![lacking.clone()];
+
+        let started = f.linked.start(&request(VideoTarget::Window(7))).unwrap();
+
+        assert_eq!(started.missing, [lacking]);
+        f.linked.stop().unwrap();
     }
 
     #[test]

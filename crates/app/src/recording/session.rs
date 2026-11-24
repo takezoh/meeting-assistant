@@ -10,7 +10,9 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use meeting_assistant_core::{AudioConfig, Recorder, RecordingMetadata, RecordingRequest, VideoConfig};
+use meeting_assistant_core::{
+    AudioConfig, MissingSound, Recorder, RecordingMetadata, RecordingRequest, Started, VideoConfig,
+};
 
 use super::merge::MicrophoneRecorder;
 use super::pipeline::{CaptureBackend, Control, Pacer, Pipeline};
@@ -74,10 +76,18 @@ impl<B> ThreadedRecorder<B> {
     }
 }
 
+/// A recording that has started on its thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ready {
+    /// The moment the recording's timeline starts: the sound written at its time zero is what was captured then.
+    pub zero: Instant,
+    /// The sounds asked for that it does not have, because their source could not be opened.
+    pub missing: Vec<MissingSound>,
+}
+
 impl<B: CaptureBackend + 'static> ThreadedRecorder<B> {
-    /// Starts recording `plan` to `output_path`. Returns once recording has started, with the moment the recording's
-    /// timeline starts: the sound written at its time zero is what was captured then.
-    pub fn start_plan(&mut self, plan: CapturePlan, output_path: PathBuf) -> anyhow::Result<Instant> {
+    /// Starts recording `plan` to `output_path`. Returns once recording has started.
+    pub fn start_plan(&mut self, plan: CapturePlan, output_path: PathBuf) -> anyhow::Result<Ready> {
         anyhow::ensure!(self.session.is_none(), "already recording");
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -114,7 +124,7 @@ impl<B: CaptureBackend + 'static> ThreadedRecorder<B> {
 
 /// The same recorder records the microphone alone beside a browser tab recording.
 impl<B: CaptureBackend + 'static> MicrophoneRecorder for ThreadedRecorder<B> {
-    fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Instant> {
+    fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Ready> {
         let plan = plan::microphone_plan(&self.audio, device);
         self.start_plan(plan, path.to_owned())
     }
@@ -125,10 +135,13 @@ impl<B: CaptureBackend + 'static> MicrophoneRecorder for ThreadedRecorder<B> {
 }
 
 impl<B: CaptureBackend + 'static> Recorder for ThreadedRecorder<B> {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<Started> {
         let plan = plan::meeting_plan(request, &self.audio)?;
-        self.start_plan(plan, request.output_path.clone())?;
-        Ok(request.output_path.clone())
+        let ready = self.start_plan(plan, request.output_path.clone())?;
+        Ok(Started {
+            path: request.output_path.clone(),
+            missing: ready.missing,
+        })
     }
 
     fn stop(&mut self) -> anyhow::Result<()> {
@@ -190,7 +203,7 @@ fn record<B: CaptureBackend>(
     output_path: &Path,
     video: &VideoConfig,
     mut control: ThreadControl,
-    ready: mpsc::Sender<anyhow::Result<Instant>>,
+    ready: mpsc::Sender<anyhow::Result<Ready>>,
 ) -> anyhow::Result<()> {
     let mut pacer = RealPacer(Instant::now());
     let opened =
@@ -198,7 +211,10 @@ fn record<B: CaptureBackend>(
     let pipeline = match opened {
         Ok(pipeline) => {
             // Writing starts right after this, so this is the timeline's time zero.
-            let _ = ready.send(Ok(Instant::now()));
+            let _ = ready.send(Ok(Ready {
+                zero: Instant::now(),
+                missing: pipeline.missing().to_vec(),
+            }));
             pipeline
         }
         Err(error) => {
@@ -213,10 +229,10 @@ fn record<B: CaptureBackend>(
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
-    use meeting_assistant_core::VideoTarget;
+    use meeting_assistant_core::{Sound, VideoTarget};
 
     use super::super::pipeline::fakes::FakeBackend;
-    use super::super::plan::VideoSource;
+    use super::super::plan::{AudioSource, VideoSource};
     use super::*;
 
     const PATIENCE: Duration = Duration::from_secs(10);
@@ -303,6 +319,21 @@ mod tests {
             "a start failure is not reported as a failure during recording"
         );
         recorder.stop().unwrap();
+    }
+
+    #[test]
+    fn start_tells_which_sound_could_not_be_opened_and_records_without_it() {
+        let (backend, create) = shared_backend!();
+        backend.state().failing_audio = vec![AudioSource::Microphone(None)];
+        let mut recorder = recorder(create);
+
+        let started = recorder.start(&request()).unwrap();
+
+        assert_eq!(started.path, PathBuf::from("out.mp4"));
+        let missing: Vec<_> = started.missing.iter().map(|m| m.sound).collect();
+        assert_eq!(missing, [Sound::Microphone]);
+        recorder.stop().unwrap();
+        assert!(backend.state().finalized);
     }
 
     #[test]

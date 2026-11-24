@@ -28,7 +28,7 @@ It is a personal tool for one logged-in user on one computer. It has no accounts
 | Do not record the gaps | A recording ends `end_grace_seconds` after the app has stopped using the microphone and closed its call window |
 | Record the meeting, not the desktop | Video is one window or one tab; the other side's audio is the audio of that app or tab |
 | Keep recording while you work elsewhere | A tab recording continues while another tab is visible; a window recording continues while the window is covered |
-| Never lose the file | Fragmented MP4 is written continuously; exit, logoff and shutdown finalize it |
+| Never lose the file | Fragmented MP4 is written continuously; exit, logoff and shutdown finalize it; a recording left by a killed run is moved into the recordings folder at the next start |
 | Decide for yourself when it matters | Manual start and stop, and a pause for automatic recording, in the tray menu |
 | Adapt to your apps | Rules in `config.toml` name the processes of desktop meeting apps; `--probe` shows how each rule evaluates right now |
 
@@ -56,7 +56,9 @@ With the default `capture_scope = "app"`:
 | Other side's audio | Audio played by the app's top-level process and its descendants | Audio of the tab |
 | Your audio | The microphone | The microphone, recorded by the app beside the tab |
 
-Every recording has two audio tracks in this order: the other side's audio first, your microphone second. They are not mixed, so that a recording turned into minutes keeps who said what. A source that is turned off in the configuration or cannot be captured, or a microphone you leave out of a recording of the screen or a window, leaves its track silent; the order does not change.
+Every recording has two audio tracks in this order: the other side's audio first, your microphone second. They are not mixed, so that a recording turned into minutes keeps who said what. A source that is turned off in the configuration or cannot be captured, or a microphone you leave out of a recording of the screen or a window, leaves its track silent; the order does not change. When a sound that was asked for cannot be captured, a warning notification says so, with the reason, as the recording starts; the recording goes on without it.
+
+A recording is written in `in-progress`, a folder inside the recordings folder, and moved into the recordings folder once the app no longer writes it, also when it failed. A file in the recordings folder is therefore never still being written, which lets a tool that watches the folder pick up finished recordings. A recording left in `in-progress` because the app was killed is moved at the next start. See [the decision](docs/adr/adr-20261124-write-recordings-in-progress-apart.md).
 
 For a browser meeting the extension records the tab, and the app records the microphone beside it in a file named `<recording>.microphone.m4a`. When the meeting ends, the app adds the microphone to the tab's file as its second audio track without re-encoding either, and removes the separate file. If that fails, or the browser recorded WebM, the tab's file stays as the browser wrote it and the microphone file stays beside it; the log says so.
 
@@ -92,7 +94,7 @@ The two "does not substitute" rules are deliberate: a person who chose to record
 - It does not detect or record a meeting in a browser without the extension, or in a browser the extension does not support.
 - It does not record a shared screen or a second window that the meeting app opens separately from the window it chose.
 - It does not update the picture while the recorded window is minimized.
-- It does not transcribe, summarize, upload, encrypt or delete recordings. Files stay where they were written until you remove them.
+- It does not transcribe, summarize, upload, encrypt or delete recordings. Files stay in the recordings folder until you remove them.
 - It does not run as a Windows service or without a logged-in user, because capture needs the user's session.
 
 ## What is not established

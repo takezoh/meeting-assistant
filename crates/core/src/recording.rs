@@ -35,12 +35,39 @@ pub struct RecordingRequest {
     pub metadata: RecordingMetadata,
 }
 
+/// A sound a recording is asked to record on a track of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sound {
+    /// What the meeting plays: the other participants.
+    OtherSide,
+    /// The user's microphone.
+    Microphone,
+}
+
+/// A sound a started recording was asked for but does not have, because its source could not be opened. Its track
+/// stays silent; nothing else is recorded in its place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingSound {
+    pub sound: Sound,
+    /// Why its source could not be opened.
+    pub reason: String,
+}
+
+/// A recording that has started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Started {
+    /// The file it writes to. That is the request's `output_path`, unless the recorder gave the file the extension of
+    /// a different container than the one asked for, as a tab recorded as WebM does.
+    pub path: PathBuf,
+    /// The sounds asked for that it does not record.
+    pub missing: Vec<MissingSound>,
+}
+
 /// A port that records the display and audio into one file.
 pub trait Recorder {
-    /// Returns once recording has actually started, with the file it writes to. That is `request.output_path`,
-    /// unless the recorder gave the file the extension of a different container than the one asked for, as a tab
-    /// recorded as WebM does. Errors if it cannot start.
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf>;
+    /// Returns once recording has actually started. Errors if it cannot start. A start that did not finish in time
+    /// may still be preparing, and creating and writing the file, after it returned its error.
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<Started>;
 
     /// Returns once the file is finalized. Does nothing if not recording.
     fn stop(&mut self) -> anyhow::Result<()>;

@@ -7,6 +7,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use meeting_assistant_core::handover;
+
+use super::session::Ready;
+
 /// Where the microphone recording goes on the timeline of the recording it is added to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Placement {
@@ -33,7 +37,7 @@ pub fn placement(recording_started: Instant, microphone_started: Instant) -> Pla
 
 /// Where the microphone is recorded beside `recording`, until it is added to it: `<name>.microphone.m4a`.
 pub fn microphone_path(recording: &Path) -> PathBuf {
-    with_suffix(recording, "microphone", "m4a")
+    with_suffix(recording, handover::MICROPHONE, "m4a")
 }
 
 /// Whether the microphone can be added to `recording`: only MP4 is copied track by track.
@@ -49,20 +53,21 @@ fn merging_path(recording: &Path) -> PathBuf {
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or("mp4");
-    with_suffix(recording, "merging", extension)
+    with_suffix(recording, handover::MERGING, extension)
 }
 
-/// `<stem>.<suffix>.<extension>` beside `path`.
+/// `<stem>.<suffix>.<extension>` beside `path`. The core hands such files over together with the recording, so the
+/// suffixes are the ones `meeting_assistant_core::handover` knows.
 pub(super) fn with_suffix(path: &Path, suffix: &str, extension: &str) -> PathBuf {
     let stem = path.file_stem().map(|stem| stem.to_string_lossy()).unwrap_or_default();
-    path.with_file_name(format!("{stem}.{suffix}.{extension}"))
+    path.with_file_name(handover::beside(&stem, suffix, extension))
 }
 
 /// Records the microphone alone, beside a recording made elsewhere.
 pub trait MicrophoneRecorder {
     /// Starts recording the microphone (`device`, or the default one) to `path`. Returns once it is being written, with
-    /// the moment its timeline starts.
-    fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Instant>;
+    /// the moment its timeline starts and whether the microphone could be opened at all.
+    fn start_microphone(&mut self, path: &Path, device: Option<String>) -> anyhow::Result<Ready>;
     /// Stops and finalizes the file. An error says why the recording ended early, if it did; what was recorded is kept.
     fn stop_microphone(&mut self) -> anyhow::Result<()>;
 }

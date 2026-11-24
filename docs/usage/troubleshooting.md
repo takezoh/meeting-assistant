@@ -32,15 +32,18 @@ For apps with several windows the largest one is chosen. A shared screen shown i
 
 ## There is no sound from the other participants
 
+When the other side's sound cannot be captured, a warning notification says so as the recording starts, with the reason.
+
+- On macOS, Meeting Assistant is not allowed under System Settings > Privacy & Security > Screen & System Audio Recording. The meeting app's sound is captured through it. Allow it and start the app again.
 - In app scope only the meeting app's audio is recorded. If the app plays audio through a helper process that is not its descendant, it is not captured. The log names an audio source that could not be opened.
 - `audio.record_system_audio` may be `false`.
 
 ## My own voice is missing
 
-Your voice is the recording's second audio track. Many players play only the first; check with a tool that lists the tracks, such as `ffprobe`.
+Your voice is the recording's second audio track. Many players play only the first; check with a tool that lists the tracks, such as `ffprobe`. When the microphone cannot be opened, a warning notification says so as the recording starts.
 
 - The microphone is muted in Windows, not just in the meeting. The log has a warning at the start of the recording.
-- On macOS, Meeting Assistant is not allowed under System Settings > Privacy & Security > Microphone. The track is then silent.
+- On macOS, Meeting Assistant is not allowed under System Settings > Privacy & Security > Microphone. macOS still opens the microphone but gives only silence; the app checks the permission and warns as the recording starts.
 - `audio.record_microphone` is `false`.
 - For a tab recording, a file named `<recording>.microphone.m4a` beside the recording means the microphone could not be added to it; the log says why. It holds your voice from slightly before the recording started.
 
@@ -70,4 +73,4 @@ This is a known defect: the app does not register itself as a notification publi
 
 ## A file is left after a crash
 
-The file is playable up to shortly before the crash. Nothing needs to be repaired.
+The file is playable up to shortly before the crash. Nothing needs to be repaired. Until the app starts again it is in the `in-progress` folder inside the recordings folder; at the next start the app moves it into the recordings folder and says so.

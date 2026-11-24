@@ -71,8 +71,10 @@ fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<Ap
         // Every finished recording gets what is known of it written into its file.
         Annotator::new(Mp4Remuxer, DiskFiles),
     );
-    let coordinator =
+    let mut coordinator =
         RecordingCoordinator::new(recorder, real_ports(output_directory)).with_capture_scope(config.capture_scope);
+    // What a run that was killed left in progress goes to the recordings folder before anything new is recorded.
+    coordinator.recover_unfinished();
     let signals = LinkedSignalSource::new(PlatformSignalSource::new()?, browser);
     Ok(Engine::new(signals, coordinator, config)?
         .with_apps(&crate::apps::adapters())

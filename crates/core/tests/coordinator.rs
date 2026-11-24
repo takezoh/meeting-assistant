@@ -1,9 +1,11 @@
 use std::collections::HashSet;
 
-use meeting_assistant_core::fakes::{FakeOutputFolder, FakeRecorder, RecordedPauses, fake_ports_with, output_path};
+use meeting_assistant_core::fakes::{
+    FakeOutputFolder, FakeRecorder, RecordedPauses, fake_ports_with, in_progress_path,
+};
 use meeting_assistant_core::{
-    BrowserTab, CaptureScope, CoordinatorStatus, DetectorEvent, MeetingInfo, NoticeLevel, RecordingCoordinator,
-    RecordingTarget, RecordingTrigger, VideoTarget, WindowChoice,
+    BrowserTab, CaptureScope, CoordinatorStatus, DetectorEvent, MeetingInfo, MissingSound, NoticeLevel,
+    RecordingCoordinator, RecordingTarget, RecordingTrigger, Sound, VideoTarget, WindowChoice,
 };
 
 type Coordinator = RecordingCoordinator<FakeRecorder>;
@@ -76,7 +78,7 @@ fn meeting_start_begins_recording_the_apps_window_and_sound() {
     let state = f.recorder.state();
     assert_eq!(state.started.len(), 1);
     let request = &state.started[0];
-    assert_eq!(request.output_path, output_path("2026-11-17_10-00-00_Zoom.mp4"));
+    assert_eq!(request.output_path, in_progress_path("2026-11-17_10-00-00_Zoom.mp4"));
     assert_eq!(request.video, VideoTarget::Window(77));
     assert_eq!(request.audio_process_id, Some(100));
     assert_eq!(request.capture_device_id.as_deref(), Some("mic"));
@@ -128,7 +130,7 @@ fn adds_a_sequence_number_when_a_file_with_the_same_name_already_exists() {
 
     assert_eq!(
         f.recorder.state().started[0].output_path,
-        output_path("2026-11-17_10-00-00_Zoom_3.mp4")
+        in_progress_path("2026-11-17_10-00-00_Zoom_3.mp4")
     );
 }
 
@@ -639,7 +641,7 @@ fn the_file_the_recorder_actually_writes_is_the_one_reported() {
     f.recorder.state().written_extension = Some("webm".into());
     f.coordinator.handle(DetectorEvent::Started(meet_tab()));
 
-    let expected = output_path("2026-11-17_10-00-00_GoogleMeet.webm");
+    let expected = in_progress_path("2026-11-17_10-00-00_GoogleMeet.webm");
     assert_eq!(f.coordinator.status().recording.unwrap().path, expected);
     let notices = f.coordinator.take_notices();
     assert!(notices[0].message.ends_with("GoogleMeet.webm"), "{notices:?}");
@@ -781,4 +783,211 @@ fn when_scope_is_screen_an_extension_reported_meeting_is_recorded_as_the_whole_d
     coordinator.handle(DetectorEvent::Started(meet_tab()));
 
     assert_eq!(f.recorder.state().started[0].video, VideoTarget::Display(None));
+}
+
+// ---- Handing a recording over from the in-progress folder to the recordings folder
+
+const ZOOM_FILE: &str = "2026-11-17_10-00-00_Zoom.mp4";
+
+fn published(f: &Fixture) -> Vec<(String, String)> {
+    f.folder.state().published.clone()
+}
+
+fn pair(from: &str, to: &str) -> (String, String) {
+    (from.to_owned(), to.to_owned())
+}
+
+#[test]
+fn a_stopped_recording_is_moved_into_the_recordings_folder() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    assert!(published(&f).is_empty(), "nothing moves while it is written");
+
+    ended(&mut f.coordinator);
+
+    assert_eq!(published(&f), [pair(ZOOM_FILE, ZOOM_FILE)]);
+    let notices = f.coordinator.take_notices();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.message == format!("Recording saved: {ZOOM_FILE}")),
+        "{notices:?}"
+    );
+}
+
+#[test]
+fn a_recording_that_failed_is_moved_with_what_it_kept() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.recorder.fail("encoder died");
+    f.coordinator.poll_recorder();
+
+    assert_eq!(published(&f), [pair(ZOOM_FILE, ZOOM_FILE)]);
+    assert_eq!(
+        f.recorder.state().started[1].output_path,
+        in_progress_path("2026-11-17_10-00-00_Zoom_2.mp4"),
+        "the recording resumes in a new file"
+    );
+}
+
+#[test]
+fn the_files_written_beside_a_recording_move_first_and_unfinished_copies_are_removed() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.folder.state().in_progress = vec![
+        "2026-11-17_10-00-00_Zoom.microphone.m4a".into(),
+        "2026-11-17_10-00-00_Zoom.annotating.mp4".into(),
+    ];
+    ended(&mut f.coordinator);
+
+    assert_eq!(
+        published(&f),
+        [
+            pair(
+                "2026-11-17_10-00-00_Zoom.microphone.m4a",
+                "2026-11-17_10-00-00_Zoom.microphone.m4a"
+            ),
+            pair(ZOOM_FILE, ZOOM_FILE),
+        ]
+    );
+    assert_eq!(f.folder.state().discarded, ["2026-11-17_10-00-00_Zoom.annotating.mp4"]);
+}
+
+#[test]
+fn a_recording_that_starts_without_a_sound_says_so_with_the_reason() {
+    let mut f = fixture();
+    f.recorder.state().missing = vec![
+        MissingSound {
+            sound: Sound::OtherSide,
+            reason: "screen recording is not allowed".into(),
+        },
+        MissingSound {
+            sound: Sound::Microphone,
+            reason: "no microphone".into(),
+        },
+    ];
+    started(&mut f.coordinator);
+
+    let warnings: Vec<String> = f
+        .coordinator
+        .take_notices()
+        .into_iter()
+        .filter(|n| n.level == NoticeLevel::Warning)
+        .map(|n| n.message)
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            "The other participants are not being recorded; their track stays silent: screen recording is not allowed",
+            "Your microphone is not being recorded; its track stays silent: no microphone",
+        ]
+    );
+    assert!(f.recorder.state().recording, "the recording goes on");
+}
+
+#[test]
+fn a_recording_with_every_sound_it_asked_for_gives_no_warning() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+
+    assert!(!has_notice(&mut f.coordinator, NoticeLevel::Warning));
+}
+
+#[test]
+fn what_a_failed_start_began_stays_in_progress_until_the_next_start_of_the_app() {
+    let mut f = fixture();
+    f.recorder
+        .state()
+        .start_failures
+        .push_back("recording did not finish starting in time".into());
+    started(&mut f.coordinator);
+
+    assert!(published(&f).is_empty(), "it may still be written");
+    let retry = "2026-11-17_10-00-00_Zoom_2.mp4";
+    assert_eq!(
+        f.recorder.state().started[0].output_path,
+        in_progress_path(retry),
+        "the retry does not take its name"
+    );
+
+    ended(&mut f.coordinator);
+    assert_eq!(
+        published(&f),
+        [pair(retry, retry)],
+        "only the recording moves when it ends"
+    );
+
+    f.coordinator.recover_unfinished();
+    assert_eq!(published(&f)[1], pair(ZOOM_FILE, ZOOM_FILE));
+}
+
+#[test]
+fn a_name_taken_in_the_recordings_folder_meanwhile_gives_the_next_free_name() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.folder.state().files = vec![ZOOM_FILE.into()];
+    ended(&mut f.coordinator);
+
+    assert_eq!(published(&f), [pair(ZOOM_FILE, "2026-11-17_10-00-00_Zoom_2.mp4")]);
+    let notices = f.coordinator.take_notices();
+    assert!(
+        notices.iter().any(|n| n.message.ends_with("Zoom_2.mp4")),
+        "the notice names where the file is: {notices:?}"
+    );
+}
+
+#[test]
+fn a_name_in_progress_is_not_given_to_a_new_recording() {
+    let mut f = fixture();
+    f.folder.state().in_progress = vec!["2026-11-17_10-00-00_Zoom.webm".into()];
+    started(&mut f.coordinator);
+
+    assert_eq!(
+        f.recorder.state().started[0].output_path,
+        in_progress_path("2026-11-17_10-00-00_Zoom_2.mp4")
+    );
+}
+
+#[test]
+fn a_recording_that_cannot_be_moved_stays_in_progress_and_is_reported() {
+    let mut f = fixture();
+    started(&mut f.coordinator);
+    f.folder.state().publish_failure = Some("disk full".into());
+    f.coordinator.take_notices();
+    ended(&mut f.coordinator);
+
+    assert!(published(&f).is_empty());
+    let notices = f.coordinator.take_notices();
+    assert!(notices.iter().any(|n| n.level == NoticeLevel::Error), "{notices:?}");
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.message == format!("Recording saved: {ZOOM_FILE}")),
+        "the recording itself was finished: {notices:?}"
+    );
+}
+
+#[test]
+fn recordings_left_in_progress_by_an_earlier_run_are_moved_at_startup() {
+    let mut f = fixture();
+    f.folder.state().in_progress = vec!["a.mp4".into(), "a.annotating.mp4".into(), "b.microphone.m4a".into()];
+    f.coordinator.recover_unfinished();
+
+    assert_eq!(
+        published(&f),
+        [pair("a.mp4", "a.mp4"), pair("b.microphone.m4a", "b.microphone.m4a")]
+    );
+    assert_eq!(f.folder.state().discarded, ["a.annotating.mp4"]);
+    let notices = f.coordinator.take_notices();
+    assert_eq!(notices.len(), 2, "{notices:?}");
+    assert!(notices.iter().all(|n| n.level == NoticeLevel::Warning));
+}
+
+#[test]
+fn nothing_is_reported_at_startup_when_nothing_was_left_in_progress() {
+    let mut f = fixture();
+    f.coordinator.recover_unfinished();
+
+    assert!(published(&f).is_empty());
+    assert!(f.coordinator.take_notices().is_empty());
 }

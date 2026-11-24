@@ -7,7 +7,7 @@
 //! |---|---|
 //! | [`SignalSource`] | Acquiring signals for detection |
 //! | [`Recorder`] | Recording |
-//! | [`Clock`], [`OutputFolder`], [`Pause`] | Clock, recording output folder, wait between retries |
+//! | [`Clock`], [`OutputFolder`], [`Pause`] | Clock, recordings folder and its in-progress folder, wait between retries |
 //!
 //! With the `fakes` feature enabled, fakes of these (the `fakes` module) are available.
 
@@ -18,6 +18,7 @@ mod detector;
 mod engine;
 #[cfg(feature = "fakes")]
 pub mod fakes;
+pub mod handover;
 mod metadata;
 pub mod naming;
 mod ports;
@@ -35,7 +36,7 @@ pub use detector::{DetectorEvent, MeetingDetector, MeetingInfo, MeetingKey, Timi
 pub use engine::Engine;
 pub use metadata::{MAX_ENTRIES, MAX_KEY_LEN, MAX_VALUE_CHARS, MeetingMetadata, RecordingMetadata};
 pub use ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
-pub use recording::{Recorder, RecordingRequest, VideoTarget};
+pub use recording::{MissingSound, Recorder, RecordingRequest, Sound, Started, VideoTarget};
 pub use rules::{AppWindow, MeetingRule, RuleEvaluator, RuleEvidence, default_rules};
 pub use signals::{
     AudioSession, BrowserLink, BrowserMeeting, BrowserTab, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry,

@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use meeting_assistant_core::{
-    AudioSession, Config, Recorder, RecordingMetadata, RecordingRequest, RuleEvaluator, VideoTarget, full_snapshot,
+    AudioSession, Config, Recorder, RecordingMetadata, RecordingRequest, RuleEvaluator, Sound, VideoTarget,
+    full_snapshot,
 };
 
 use crate::platform::{self, PlatformSignalSource};
@@ -136,8 +137,15 @@ pub fn self_test(config: &Config, keep: Option<PathBuf>, length: Duration) -> an
         },
     };
 
-    recorder.start(&request).context("cannot start recording")?;
+    let started = recorder.start(&request).context("cannot start recording")?;
     println!("Recording started. Recording for {} seconds.", length.as_secs());
+    for missing in &started.missing {
+        let track = match missing.sound {
+            Sound::OtherSide => "other side",
+            Sound::Microphone => "microphone",
+        };
+        println!("Warning: the {track} track stays silent: {}", missing.reason);
+    }
     std::thread::sleep(length);
     let failure = recorder.take_failure();
     let stopped = recorder.stop();

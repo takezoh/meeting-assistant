@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
+use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
 use objc2_avf_audio::{AVAudioEngine, AVAudioPCMBuffer, AVAudioTime};
 
 use crate::recording::mixer::{BufferPolicy, SourceBuffer};
@@ -55,6 +56,13 @@ impl Microphone {
             engine
                 .startAndReturnError()
                 .map_err(|error| anyhow::anyhow!("cannot start the microphone: {error}"))?;
+            // A microphone macOS does not let this app use still starts, and gives silence. The permission is asked
+            // while the engine starts, so it is known by now.
+            if let Err(error) = microphone_allowed() {
+                engine.stop();
+                input.removeTapOnBus(0);
+                return Err(error);
+            }
             Ok(Self {
                 engine,
                 sound,
@@ -81,6 +89,20 @@ impl Drop for Microphone {
             self.engine.inputNode().removeTapOnBus(0);
         }
     }
+}
+
+/// Errors if macOS does not let this app use the microphone.
+fn microphone_allowed() -> anyhow::Result<()> {
+    // SAFETY: a class method given the framework's own media type constant.
+    let status = unsafe {
+        let audio = AVMediaTypeAudio.ok_or_else(|| anyhow::anyhow!("AVFoundation has no audio media type"))?;
+        AVCaptureDevice::authorizationStatusForMediaType(audio)
+    };
+    anyhow::ensure!(
+        status != AVAuthorizationStatus::Denied && status != AVAuthorizationStatus::Restricted,
+        "macOS does not let Meeting Assistant use the microphone. Allow it in System Settings > Privacy & Security > Microphone"
+    );
+    Ok(())
 }
 
 /// The float samples of a tapped buffer, one slice per channel, valid while the buffer is.

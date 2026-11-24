@@ -1,6 +1,6 @@
 //! Decides what to capture and at what size to write, from the recording request and settings. No side effects.
 
-use meeting_assistant_core::{AudioConfig, RecordingRequest, VideoTarget};
+use meeting_assistant_core::{AudioConfig, RecordingRequest, Sound, VideoTarget};
 
 /// All audio inputs are normalized to this format (16-bit) before being handled.
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -59,6 +59,14 @@ impl Track {
         match self {
             Self::OtherSide => "other side",
             Self::Microphone => "microphone",
+        }
+    }
+
+    /// The sound this track records.
+    pub fn sound(self) -> Sound {
+        match self {
+            Self::OtherSide => Sound::OtherSide,
+            Self::Microphone => Sound::Microphone,
         }
     }
 }

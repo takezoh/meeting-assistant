@@ -5,6 +5,9 @@ use crate::ports::LocalDateTime;
 /// File extension of recording files.
 pub const RECORDING_EXTENSION: &str = "mp4";
 
+/// The folder inside the recordings folder where recordings are written while in progress.
+pub const IN_PROGRESS_FOLDER: &str = "in-progress";
+
 /// Builds a file name without extension from a date/time and a label (such as a rule name).
 pub fn recording_stem(time: LocalDateTime, label: &str) -> String {
     format!(

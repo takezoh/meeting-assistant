@@ -13,7 +13,7 @@ A file of the current version that cannot be parsed, contains an unknown key or 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `version` | `1` | The format of this file. Not a setting; a file of another version is replaced with the defaults |
-| `output_directory` | `Videos\MeetingAssistant` (`~/Movies/MeetingAssistant` on macOS) | Folder for recordings |
+| `output_directory` | `Videos\MeetingAssistant` (`~/Movies/MeetingAssistant` on macOS) | Folder for recordings. A recording in progress is written in its `in-progress` subfolder and moved into it when finished |
 | `start_debounce_seconds` | `3.0` | How long a desktop app must use the microphone before its meeting is considered started |
 | `end_grace_seconds` | `2.0` | How long a desktop app must not have used the microphone before its meeting is considered ended, whatever windows it still has |
 | `browser_start_debounce_seconds` | `1.0` | How long the extension must report a call before the browser meeting is considered started |

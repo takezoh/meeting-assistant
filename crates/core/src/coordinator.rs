@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use crate::config::CaptureScope;
 use crate::detector::{DetectorEvent, MeetingInfo, MeetingKey};
+use crate::handover::{self, Group};
 use crate::metadata::RecordingMetadata;
 use crate::naming;
 use crate::ports::{CoordinatorPorts, LocalDateTime};
-use crate::recording::{Recorder, RecordingRequest, VideoTarget};
+use crate::recording::{MissingSound, Recorder, RecordingRequest, Sound, VideoTarget};
 use crate::target::RecordingTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +113,9 @@ impl ActiveRecording {
 /// - Stopping a recording by hand starts nothing else, and auto-recording does not start that meeting again for the
 ///   rest of the meeting.
 /// - Failures to start and failures during recording are retried a limited number of times.
+/// - A recording is written in the output folder's in-progress folder. Once the recorder has stopped writing it, also
+///   after a failure, its files are moved into the recordings folder; what an earlier run left in the in-progress
+///   folder is moved by [`Self::recover_unfinished`].
 ///
 /// It touches the outside world only through the recorder and [`CoordinatorPorts`] (clock, output folder, pause).
 pub struct RecordingCoordinator<R: Recorder> {
@@ -300,6 +304,32 @@ impl<R: Recorder> RecordingCoordinator<R> {
         }
     }
 
+    /// Moves into the recordings folder what an earlier run left in the in-progress folder, for example when it was
+    /// killed while recording. Call once at startup, before anything is recorded.
+    pub fn recover_unfinished(&mut self) {
+        let names = match self.ports.output.in_progress() {
+            Ok(names) => names,
+            Err(error) => {
+                log::warn!("Could not look for recordings left in progress by an earlier run: {error:#}");
+                return;
+            }
+        };
+        for group in handover::groups(&names) {
+            let Some(moved) = self.hand_over(&group) else { continue };
+            log::warn!(
+                "Moved a recording left in progress by an earlier run: {}",
+                moved.display()
+            );
+            self.notify(
+                NoticeLevel::Warning,
+                format!(
+                    "A recording left unfinished by an earlier run was moved to the recordings folder: {}",
+                    file_name(&moved)
+                ),
+            );
+        }
+    }
+
     /// Checks whether the recorder failed during recording and resumes it if conditions allow. Call periodically.
     pub fn poll_recorder(&mut self) {
         let Some(error) = self.recorder.take_failure() else {
@@ -307,7 +337,9 @@ impl<R: Recorder> RecordingCoordinator<R> {
         };
         // A failure that arrives after stopping is ignored, since the user was already told the outcome.
         let Some(failed) = self.recording.take() else { return };
-        log::error!("Recording was interrupted: {error} ({})", failed.path.display());
+        // The recorder no longer writes the failed file, which keeps what was written.
+        let kept = self.hand_over_written(&failed.path);
+        log::error!("Recording was interrupted: {error} ({})", kept.display());
 
         let auto_enabled = self.auto_enabled;
         let meeting = failed.meeting().cloned().and_then(|key| self.meeting_mut(&key));
@@ -379,11 +411,15 @@ impl<R: Recorder> RecordingCoordinator<R> {
     fn start(&mut self, trigger: RecordingTrigger, target: RecordingTarget) -> bool {
         for attempt in 1..=Self::MAX_START_ATTEMPTS {
             match self.try_start(&target) {
-                Ok(request) => {
+                Ok((request, missing)) => {
                     let path = request.output_path;
                     let metadata = request.metadata;
                     log::info!("Recording started ({trigger:?}): {}", path.display());
                     self.notify(NoticeLevel::Info, format!("Recording started: {}", file_name(&path)));
+                    // A silent track is noticed only when the recording is played, so it is told now.
+                    for missing in &missing {
+                        self.notify(NoticeLevel::Warning, missing_sound_notice(missing));
+                    }
                     // Only a meeting's window is followed; a window chosen by hand stays the one recorded.
                     let follows_meeting = target.meeting().is_some();
                     let (window, follows_app) = match request.video {
@@ -416,7 +452,9 @@ impl<R: Recorder> RecordingCoordinator<R> {
         false
     }
 
-    fn try_start(&mut self, target: &RecordingTarget) -> anyhow::Result<RecordingRequest> {
+    /// Starts recording `target`. Returns the request as the recorder carried it out, with the sounds it does not
+    /// record.
+    fn try_start(&mut self, target: &RecordingTarget) -> anyhow::Result<(RecordingRequest, Vec<MissingSound>)> {
         // A meeting that is gone must not turn into a recording of the screen.
         let meeting = match target.meeting() {
             Some(key) => Some(
@@ -461,43 +499,120 @@ impl<R: Recorder> RecordingCoordinator<R> {
             },
         };
         // Report the file that is actually written; a tab recorded as WebM gets another extension.
-        let written = self.recorder.start(&request)?;
-        Ok(RecordingRequest {
-            output_path: written,
-            ..request
-        })
+        // What a failed start began is not moved: a start that did not finish in time may still be creating and
+        // writing its file. It stays in progress, and the next start of the app moves it.
+        let started = self.recorder.start(&request)?;
+        Ok((
+            RecordingRequest {
+                output_path: started.path,
+                ..request
+            },
+            started.missing,
+        ))
     }
 
     fn stop(&mut self) {
         let Some(recording) = self.recording.take() else { return };
-        match self.recorder.stop() {
+        let stopped = self.recorder.stop();
+        // Stopping returns once nothing writes the file any more, whether it succeeded or not.
+        let saved = self.hand_over_written(&recording.path);
+        match stopped {
             Ok(()) => {
-                log::info!("Recording saved: {}", recording.path.display());
-                self.notify(
-                    NoticeLevel::Info,
-                    format!("Recording saved: {}", file_name(&recording.path)),
-                );
+                log::info!("Recording saved: {}", saved.display());
+                self.notify(NoticeLevel::Info, format!("Recording saved: {}", file_name(&saved)));
             }
             Err(error) => {
-                log::error!("Failed to stop recording: {} : {error:#}", recording.path.display());
+                log::error!("Failed to stop recording: {} : {error:#}", saved.display());
                 self.notify(
                     NoticeLevel::Error,
                     format!(
                         "Failed to stop recording. The file may be incomplete: {}",
-                        file_name(&recording.path)
+                        file_name(&saved)
                     ),
                 );
             }
         }
     }
 
-    /// Prepares the output folder and picks a file location that is not yet in use.
+    /// Moves the recording written at `written`, with the files written beside it, into the recordings folder.
+    /// Returns where the recording is now: in the recordings folder, or still at `written` if it could not be moved.
+    fn hand_over_written(&mut self, written: &Path) -> PathBuf {
+        let Some(name) = written.file_name().and_then(|name| name.to_str()) else {
+            return written.to_path_buf();
+        };
+        let stem = handover::stem_of(name).to_owned();
+        match self.ports.output.in_progress() {
+            Ok(names) => {
+                let group = handover::group(&stem, &names);
+                self.hand_over(&group).unwrap_or_else(|| written.to_path_buf())
+            }
+            Err(error) => {
+                log::error!("Could not read the in-progress folder: {error:#}");
+                self.notify(
+                    NoticeLevel::Error,
+                    format!(
+                        "Could not move the recording to the recordings folder; it is still at {}",
+                        written.display()
+                    ),
+                );
+                written.to_path_buf()
+            }
+        }
+    }
+
+    /// Moves the files of `group` into the recordings folder, the recording's own file last. Returns the recording's
+    /// new location, or where the first file went for a group without one; `None` when nothing was moved.
+    fn hand_over(&mut self, group: &Group) -> Option<PathBuf> {
+        let plan = handover::handover(group, |name| self.ports.output.contains(name));
+        for name in &plan.discard {
+            if let Err(error) = self.ports.output.discard(name) {
+                log::warn!("Could not remove the unfinished copy {name}: {error:#}");
+            }
+        }
+        let mut moved: Option<PathBuf> = None;
+        for step in &plan.moves {
+            match self.ports.output.publish(&step.from, &step.to) {
+                Ok(path) => {
+                    if moved.is_none() || group.recording.as_ref() == Some(&step.from) {
+                        moved = Some(path);
+                    }
+                }
+                Err(error) => {
+                    log::error!("Could not move {} to the recordings folder: {error:#}", step.from);
+                    self.notify(
+                        NoticeLevel::Error,
+                        format!(
+                            "Could not move {} to the recordings folder; it is still in the in-progress folder.",
+                            step.from
+                        ),
+                    );
+                }
+            }
+        }
+        moved
+    }
+
+    /// Prepares the output folder and picks a name used neither in the recordings folder nor in progress. Returns
+    /// where that recording is written while in progress.
     fn new_output_path(&mut self, started_at: LocalDateTime, label: &str) -> anyhow::Result<PathBuf> {
         self.ports.output.prepare()?;
         let stem = naming::recording_stem(started_at, label);
-        let file_name = naming::first_unused_file_name(&stem, |name| self.ports.output.contains(name));
-        Ok(self.ports.output.path_of(&file_name))
+        let in_progress = self.ports.output.in_progress()?;
+        let output = &self.ports.output;
+        let file_name = naming::first_unused_file_name(&stem, |name| {
+            output.contains(name) || !handover::group(handover::stem_of(name), &in_progress).files.is_empty()
+        });
+        Ok(self.ports.output.in_progress_path(&file_name))
     }
+}
+
+/// What the user is told of a sound a recording does not have.
+fn missing_sound_notice(missing: &MissingSound) -> String {
+    let what = match missing.sound {
+        Sound::OtherSide => "The other participants are not being recorded; their track stays silent",
+        Sound::Microphone => "Your microphone is not being recorded; its track stays silent",
+    };
+    format!("{what}: {}", missing.reason)
 }
 
 fn file_name(path: &Path) -> String {

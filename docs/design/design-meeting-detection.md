@@ -83,6 +83,19 @@ invariants:
     of the desktop or of a window started by hand leaves the microphone out; it keeps
     its track.
   enforcement: test
+- id: INV-012
+  statement: A recording is written in the output folder's in-progress folder, and
+    its files are moved into the recordings folder once the recorder no longer writes
+    them (after a stop or a failure), the recording's own file last. What a failed
+    start began stays in progress, since a start that did not finish in time may still
+    write it; it is moved at startup with what an earlier run left. A new recording's name
+    is used neither in the recordings folder nor in progress.
+  enforcement: test
+- id: INV-013
+  statement: A recording that starts without a sound it asked for, the other side or
+    the microphone, raises a warning notice for each with the reason the recorder
+    gave. The recording goes on with that track silent.
+  enforcement: test
 boundaries:
   provides:
   - id: PROV-001
@@ -142,6 +155,7 @@ owners: []
 relations:
 - {type: references, target: adr-20261117-record-only-the-meeting-app}
 - {type: references, target: adr-20261120-record-the-desktop-or-a-window-by-hand}
+- {type: references, target: adr-20261124-write-recordings-in-progress-apart}
 source_paths:
 - crates/core/src/apps.rs
 - crates/app/src/apps
@@ -151,6 +165,7 @@ source_paths:
 - crates/core/src/coordinator.rs
 - crates/core/src/engine.rs
 - crates/core/src/naming.rs
+- crates/core/src/handover.rs
 - crates/core/src/config.rs
 - crates/core/src/signals.rs
 - crates/core/src/recording.rs

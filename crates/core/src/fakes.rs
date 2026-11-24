@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::apps::{MeetingApp, WindowRole};
 use crate::metadata::{MeetingMetadata, RecordingMetadata};
 use crate::ports::{Clock, CoordinatorPorts, LocalDateTime, OutputFolder, Pause};
-use crate::recording::{Recorder, RecordingRequest};
+use crate::recording::{MissingSound, Recorder, RecordingRequest, Started};
 use crate::signals::{
     AudioSession, BrowserLink, BrowserMeeting, ProcessEntry, SignalSnapshot, SignalSource, WindowEntry,
 };
@@ -46,6 +46,10 @@ pub struct RecorderState {
     pub described: Vec<RecordingMetadata>,
     /// While `Some`, started recordings report a file with this extension, as a tab recorded as WebM does.
     pub written_extension: Option<String>,
+    /// The files failed starts began, which the fake output folder counts as in progress.
+    pub begun: Vec<PathBuf>,
+    /// What every started recording reports it does not record.
+    pub missing: Vec<MissingSound>,
 }
 
 /// A recorder that only logs the instructions it receives. Clones share state,
@@ -67,16 +71,20 @@ impl FakeRecorder {
 }
 
 impl Recorder for FakeRecorder {
-    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<PathBuf> {
+    fn start(&mut self, request: &RecordingRequest) -> anyhow::Result<Started> {
         let mut state = self.state();
         if let Some(error) = state.start_failures.pop_front() {
+            state.begun.push(request.output_path.clone());
             anyhow::bail!(error);
         }
         state.started.push(request.clone());
         state.recording = true;
-        Ok(match &state.written_extension {
-            Some(extension) => request.output_path.with_extension(extension),
-            None => request.output_path.clone(),
+        Ok(Started {
+            path: match &state.written_extension {
+                Some(extension) => request.output_path.with_extension(extension),
+                None => request.output_path.clone(),
+            },
+            missing: state.missing.clone(),
         })
     }
 
@@ -180,11 +188,21 @@ pub struct FolderState {
     pub prepared: u32,
     /// While `Some`, makes preparing the folder fail.
     pub prepare_failure: Option<String>,
-    /// Names of files that already exist.
+    /// Names of files in the recordings folder.
     pub files: Vec<String>,
+    /// Names of files in the in-progress folder besides those the fake recorder writes, such as a microphone
+    /// recorded beside a tab or what an earlier run left.
+    pub in_progress: Vec<String>,
+    /// Files moved into the recordings folder, in order: `(from, to)`.
+    pub published: Vec<(String, String)>,
+    /// Files removed from the in-progress folder, in order.
+    pub discarded: Vec<String>,
+    /// While `Some`, makes moving a file into the recordings folder fail.
+    pub publish_failure: Option<String>,
 }
 
-/// An output folder that does not touch the file system. Recordings from the fake recorder count as existing.
+/// An output folder that does not touch the file system. The files the fake recorder starts count as written in the
+/// in-progress folder until they are moved or removed.
 #[derive(Clone)]
 pub struct FakeOutputFolder {
     state: Arc<Mutex<FolderState>>,
@@ -202,6 +220,21 @@ impl FakeOutputFolder {
     pub fn state(&self) -> MutexGuard<'_, FolderState> {
         self.state.lock().unwrap()
     }
+
+    /// The names of the files the fake recorder wrote, as it reports them, and of those its failed starts began.
+    fn written(&self) -> Vec<String> {
+        let recorder = self.recorder.state();
+        recorder
+            .started
+            .iter()
+            .map(|request| match &recorder.written_extension {
+                Some(extension) => request.output_path.with_extension(extension),
+                None => request.output_path.clone(),
+            })
+            .chain(recorder.begun.iter().cloned())
+            .filter_map(|path| path.file_name().and_then(|n| n.to_str()).map(str::to_owned))
+            .collect()
+    }
 }
 
 impl OutputFolder for FakeOutputFolder {
@@ -215,17 +248,43 @@ impl OutputFolder for FakeOutputFolder {
     }
 
     fn contains(&self, file_name: &str) -> bool {
-        let recorded = self
-            .recorder
-            .state()
-            .started
-            .iter()
-            .any(|request| request.output_path == self.path_of(file_name));
-        recorded || self.state().files.iter().any(|name| name == file_name)
+        let state = self.state();
+        state.files.iter().any(|name| name == file_name) || state.published.iter().any(|(_, to)| to == file_name)
     }
 
-    fn path_of(&self, file_name: &str) -> PathBuf {
-        PathBuf::from(OUTPUT_ROOT).join(file_name)
+    fn in_progress(&self) -> anyhow::Result<Vec<String>> {
+        let written = self.written();
+        let state = self.state();
+        let gone =
+            |name: &String| state.published.iter().any(|(from, _)| from == name) || state.discarded.contains(name);
+        let mut names: Vec<String> = written.into_iter().chain(state.in_progress.iter().cloned()).collect();
+        names.retain(|name| !gone(name));
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
+    fn in_progress_path(&self, file_name: &str) -> PathBuf {
+        in_progress_path(file_name)
+    }
+
+    fn publish(&mut self, file_name: &str, target_name: &str) -> anyhow::Result<PathBuf> {
+        anyhow::ensure!(
+            self.in_progress()?.iter().any(|name| name == file_name),
+            "{file_name} is not in progress"
+        );
+        anyhow::ensure!(!self.contains(target_name), "{target_name} already exists");
+        let mut state = self.state();
+        if let Some(error) = &state.publish_failure {
+            anyhow::bail!(error.clone());
+        }
+        state.published.push((file_name.to_owned(), target_name.to_owned()));
+        Ok(output_path(target_name))
+    }
+
+    fn discard(&mut self, file_name: &str) -> anyhow::Result<()> {
+        self.state().discarded.push(file_name.to_owned());
+        Ok(())
     }
 }
 
@@ -258,9 +317,16 @@ pub fn fake_ports_with(output: FakeOutputFolder, pauses: RecordedPauses) -> Coor
     }
 }
 
-/// Location of the file with that name in the fake output folder.
+/// Location of the file with that name in the fake recordings folder.
 pub fn output_path(file_name: &str) -> PathBuf {
     PathBuf::from(OUTPUT_ROOT).join(file_name)
+}
+
+/// Location of the file with that name in the fake in-progress folder.
+pub fn in_progress_path(file_name: &str) -> PathBuf {
+    PathBuf::from(OUTPUT_ROOT)
+        .join(crate::naming::IN_PROGRESS_FOLDER)
+        .join(file_name)
 }
 
 // ---- Helpers for building signal snapshots

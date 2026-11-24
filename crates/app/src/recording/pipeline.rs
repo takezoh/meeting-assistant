@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use meeting_assistant_core::VideoConfig;
+use meeting_assistant_core::{MissingSound, VideoConfig};
 
 use super::plan::{AudioSource, CHANNELS, CapturePlan, MediaFormat, SAMPLE_RATE, VideoPlan, VideoSource};
 use super::timeline::{Step, Timeline};
@@ -97,6 +97,8 @@ pub struct Pipeline<B: CaptureBackend> {
     /// The size every picture is fitted into.
     canvas: (u32, u32),
     block: Vec<i16>,
+    /// The sounds whose source could not be opened.
+    missing: Vec<MissingSound>,
 }
 
 impl<B: CaptureBackend> Pipeline<B> {
@@ -118,6 +120,7 @@ impl<B: CaptureBackend> Pipeline<B> {
         // A source that cannot be opened leaves its track silent; nothing else takes its place.
         let mut audio = Vec::new();
         let mut labels = Vec::new();
+        let mut missing = Vec::new();
         for (track, source) in &plan.tracks {
             let opened = source.as_ref().and_then(|source| match backend.open_audio(source) {
                 Ok(opened) => Some((opened, source.label())),
@@ -126,6 +129,10 @@ impl<B: CaptureBackend> Pipeline<B> {
                         "{} will not be recorded; its track stays silent: {error:#}",
                         source.label()
                     );
+                    missing.push(MissingSound {
+                        sound: track.sound(),
+                        reason: format!("{error:#}"),
+                    });
                     None
                 }
             });
@@ -174,7 +181,13 @@ impl<B: CaptureBackend> Pipeline<B> {
             framerate: video_config.framerate,
             canvas,
             block: Vec::new(),
+            missing,
         })
+    }
+
+    /// The sounds asked for that this recording does not have, because their source could not be opened.
+    pub fn missing(&self) -> &[MissingSound] {
+        &self.missing
     }
 
     /// Writes until told to stop, then finalizes the file.
@@ -608,7 +621,7 @@ pub mod fakes {
 
 #[cfg(test)]
 mod tests {
-    use meeting_assistant_core::{AudioConfig, RecordingRequest, VideoTarget};
+    use meeting_assistant_core::{AudioConfig, RecordingRequest, Sound, VideoTarget};
 
     use super::super::plan::{self, Track};
     use super::fakes::*;
@@ -658,7 +671,8 @@ mod tests {
 
     #[test]
     fn captures_the_requested_target_and_opens_the_output_in_the_configured_format() {
-        let (backend, _pipeline) = opened_window();
+        let (backend, pipeline) = opened_window();
+        assert!(pipeline.missing().is_empty(), "{:?}", pipeline.missing());
 
         let state = backend.state();
         assert_eq!(state.opened_video, [VideoSource::Window(7)]);
@@ -734,6 +748,14 @@ mod tests {
             "output device audio is not substituted"
         );
         assert_eq!(
+            pipeline.missing(),
+            [MissingSound {
+                sound: Sound::OtherSide,
+                reason: "cannot capture ProcessAudio(100)".into(),
+            }],
+            "the sound it does not have is reported with why"
+        );
+        assert_eq!(
             backend.state().format.as_ref().unwrap().audio_tracks,
             [Track::OtherSide, Track::Microphone],
             "the file keeps both tracks"
@@ -755,6 +777,8 @@ mod tests {
         backend.state().failing_audio = vec![AudioSource::ProcessAudio(100), AudioSource::Microphone(None)];
         backend.state().pictures.push_back(Some("first".into()));
         let pipeline = open(&backend, VideoTarget::Window(7)).unwrap();
+        let missing: Vec<Sound> = pipeline.missing().iter().map(|m| m.sound).collect();
+        assert_eq!(missing, [Sound::OtherSide, Sound::Microphone]);
 
         pipeline
             .run(&mut StopAfter::steps(3), &mut FakePacer::default())

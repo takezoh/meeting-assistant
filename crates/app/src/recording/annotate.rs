@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use meeting_assistant_core::RecordingMetadata;
+use meeting_assistant_core::{RecordingMetadata, handover};
 
 use super::merge::{RecordingFiles, Remuxer, with_suffix};
 
@@ -61,7 +61,7 @@ impl<X, F> Annotator<X, F> {
 impl<X: Remuxer, F: RecordingFiles> Annotate for Annotator<X, F> {
     fn annotate(&self, recording: &Path, metadata: &RecordingMetadata) -> anyhow::Result<()> {
         anyhow::ensure!(can_describe(recording), "only an MP4 file takes metadata");
-        let annotating = with_suffix(recording, "annotating", "mp4");
+        let annotating = with_suffix(recording, handover::ANNOTATING, "mp4");
         let written = self
             .remuxer
             .add_metadata(recording, &file_entries(metadata), &annotating)
