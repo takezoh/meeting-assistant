@@ -57,15 +57,15 @@ On macOS you install from a disk image: open the app in it and choose **Install*
 
 | | Windows | macOS |
 | --- | --- | --- |
-| Browser meetings with the extension, per tab | Supported | Supported; run with Google Meet calls in Chrome on one Mac |
-| Desktop apps such as Zoom | Supported | Supported; run with Slack huddles on one Mac, Zoom, Teams and Webex not run |
+| Browser meetings with the extension, per tab | Supported; run with a Google Meet call in Chrome on one PC | Supported; run with Google Meet calls in Chrome on one Mac |
+| Desktop apps such as Zoom | Supported; run with a Slack huddle on one PC, Zoom, Teams and Webex not run | Supported; run with Slack huddles on one Mac, Zoom, Teams and Webex not run |
 | Manual recording | Supported | Supported; the entire screen and a chosen window run on one Mac |
 | Install, start at login, finalize on exit, browser launcher | Supported | Supported; a real logout and the Edge launcher were not run |
 
 ## What to expect
 
 - A desktop-app meeting you join without ever using the microphone is not detected, and neither is a browser meeting without the extension. Record the entire screen from the status panel instead.
-- Detection has been exercised with synthetic meetings on one PC, not with every meeting service. [Product](PRODUCT.md#what-is-not-established) lists what is and is not established.
+- Detection has been exercised with synthetic meetings, and with Slack huddles and Google Meet calls on one Mac and one PC, not with every meeting service. [Product](PRODUCT.md#what-is-not-established) lists what is and is not established.
 - [Troubleshooting](docs/usage/troubleshooting.md) covers a meeting that was not recorded, missing audio and a black picture.
 
 ## Develop

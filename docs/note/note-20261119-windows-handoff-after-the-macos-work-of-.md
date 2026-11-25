@@ -25,6 +25,8 @@ relations:
 - {type: references, target: adr-20261120-record-the-desktop-or-a-window-by-hand}
 - {type: references, target: note-20261120-window-recording-by-hand-on-windows}
 - {type: references, target: note-20261120-window-recording-by-hand-on-a-mac}
+- {type: references, target: note-20261125-windows-checks-of-the-handoff-2026-11-25}
+- {type: references, target: issue-20261125-tab-recordings-are-taken-above-1080p}
 source_paths:
 - crates/app/src/platform/win/recorder/writer.rs
 - crates/app/src/platform/win/recorder/mod.rs
@@ -53,6 +55,24 @@ A Windows session worked on its own at the same time: NV12 encoding up to 1080p 
 
 Recorded in [Windows checks after the macOS merge](note-20261119-windows-checks-after-the-macos-merge.md) and committed in d1a8127: step 1, with the extension's tests of 6900d1b; step 2, with the issue below fixed; step 3 without a microphone, since the PC had no default one; and step 7. The sink writer accepts two AAC streams and a file without video in fragmented MP4, and a window smaller than the canvas is drawn in its middle at its own size. Steps 3 with a microphone, 4, 5 and 6 remain on Windows, and the fix of step 2 has not run on a Mac (see "For a Mac" below).
 
+### Done on Windows, 2026-11-25
+
+Recorded in [Windows checks of the handoff on 2026-11-25](note-20261125-windows-checks-of-the-handoff-2026-11-25.md), with 9c5ce64 installed:
+
+- Step 1 again.
+- Step 4 without a voice: a Google Meet tab recording in Chrome had the microphone added as its last track and nothing left beside it. Its video was above 1080p, filed as [an issue](../issue/issue-20261125-tab-recordings-are-taken-above-1080p.md).
+- Step 5 in part: a Slack huddle was recorded black until joined and then with the huddle window only.
+- Writing recordings in progress apart, from 07d5558, also ran on Windows.
+
+The PC's only microphone was a virtual one, muted, so no voice was recorded. The user's configuration had end graces of 15 s and 5 s, so the ends were not measured against the defaults.
+
+What remains on Windows:
+
+- A voice in the microphone's track of a self-test, a tab recording and a huddle (steps 3 to 5).
+- Whether Slack lets go of the microphone when a huddle is joined. One probe as it was joined listed no Slack process using it. With the default end grace of 2 s that would end the recording there.
+- Whether Slack keeps the microphone while muted, and the end about 3 s after leaving, both with the default end graces.
+- Step 6 with Teams, which is installed on the PC. Zoom is not.
+
 ### Goal
 
 The Windows build records what the macOS build was shown to record on 2026-11-19: two audio tracks (the other side first, the microphone second) in desktop, screen and browser tab recordings; the meeting's own window, never the app's main window, black until that window is found; recordings that end about 3 seconds after the app lets go of the microphone; and a picture of `video.width` by `video.height` (1920x1080 by default) whatever the window does.
@@ -80,11 +100,11 @@ The Windows build records what the macOS build was shown to record on 2026-11-19
 ### Open questions only Windows can answer
 
 - Whether the Media Foundation sink writer accepts two AAC streams, and a file with no video stream, in fragmented MP4. **Answered on 2026-11-19:** it does.
-- Whether Slack on Windows puts "[Main]" in its main window's title while a joined huddle is open, as on macOS. If it does not, a huddle is recorded black throughout: Slack opens the huddle window as it takes the microphone, so when the window appeared cannot tell it from the main window.
+- Whether Slack on Windows puts "[Main]" in its main window's title while a joined huddle is open, as on macOS. If it does not, a huddle is recorded black throughout: Slack opens the huddle window as it takes the microphone, so when the window appeared cannot tell it from the main window. **Answered on 2026-11-25:** it does, as "[Main] 🏠", from joining until the huddle window closes. The huddle window appeared before Slack was seen with the microphone.
 - Whether Teams, Zoom and Webex open a separate call window, and whether it opens after the app takes the microphone. A window already open when the microphone is taken is not recorded unless the app's adapter says it is a meeting's; an app without a separate call window is recorded black.
 - Whether Teams, Zoom and Webex let go of the microphone while muted. If one does, a mute longer than the end grace ends the recording; keeping it going would belong in that app's adapter ([ADR](../adr/adr-20261119-end-a-desktop-meeting-on-the-microphone.md)).
 - Whether the D3D11 video processor puts a window smaller than the canvas in its middle at its own size. **Answered on 2026-11-19:** it does; the ignored test `a_picture_smaller_than_the_canvas_is_drawn_in_its_middle_at_its_own_size` checks it.
-- Whether the Windows microphone privacy setting for desktop apps silences the microphone track as it does on macOS.
+- Whether the Windows microphone privacy setting for desktop apps silences the microphone track as it does on macOS. On 2026-11-25 setting it to Deny in the registry did not stop the app from opening the microphone; whether that change took effect without Settings is unknown.
 
 ### Order of work on a Windows machine
 

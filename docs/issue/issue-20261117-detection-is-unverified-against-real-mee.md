@@ -7,13 +7,14 @@ created: '2026-11-17'
 issue_type: plan
 tags: []
 owners: []
-relations: []
+relations:
+- {type: references, target: note-20261125-windows-checks-of-the-handoff-2026-11-25}
 subject_paths:
 - crates/core/src/rules.rs
 - extension/hook.js
 summary: Slack huddles and Google Meet calls were detected in real use on one Mac
-  on 2026-11-19; Zoom, Teams, Webex and the other browser services have not been tried
-  in a real call, and nothing on Windows.
+  on 2026-11-19 and on one Windows PC on 2026-11-25; Zoom, Teams, Webex and the other
+  browser services have not been tried in a real call.
 ---
 
 ## Opportunity
@@ -22,7 +23,7 @@ Detection should be confirmed in real calls on the services the defaults claim t
 
 ## Evidence
 
-Verification on 2026-11-17 used a test process that held the microphone and a test page that held a WebRTC connection; see the [verification note](../note/note-20261117-local-verification.md). On 2026-11-19, on one Mac, Slack huddles and Google Meet calls in Chrome were detected and recorded, without other participants ([Slack huddle note](../note/note-20261119-slack-huddle-window-after-the-merge.md), [metadata note](../note/note-20261119-recording-metadata-verification.md)). The process names in `crates/core/src/rules.rs` for Zoom, Teams and Webex, and the URL patterns in `extension/manifest.json` other than Google Meet's, were written from knowledge of the services, not observed in calls; nothing was tried on Windows.
+Verification on 2026-11-17 used a test process that held the microphone and a test page that held a WebRTC connection; see the [verification note](../note/note-20261117-local-verification.md). On 2026-11-19, on one Mac, Slack huddles and Google Meet calls in Chrome were detected and recorded, without other participants ([Slack huddle note](../note/note-20261119-slack-huddle-window-after-the-merge.md), [metadata note](../note/note-20261119-recording-metadata-verification.md)). The process names in `crates/core/src/rules.rs` for Zoom, Teams and Webex, and the URL patterns in `extension/manifest.json` other than Google Meet's, were written from knowledge of the services, not observed in calls. On 2026-11-25, on one Windows PC, a Slack huddle and a Google Meet call in Chrome were detected and recorded, without other participants ([Windows note](../note/note-20261125-windows-checks-of-the-handoff-2026-11-25.md)). Slack's process there was `Slack.exe`, and a child of it held the microphone.
 
 ## Context for follow-up
 
