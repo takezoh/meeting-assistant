@@ -60,6 +60,11 @@ invariants:
     itself. When adding fails, the tab's file is as the browser wrote it and the microphone
     file stays beside it.
   enforcement: test
+- id: INV-009
+  statement: A tab is captured at its size in device pixels, scaled down to fit in the
+    video.width by video.height that the app sends with start, with its aspect ratio
+    kept and never scaled up, and at that size when the tab's size cannot be read.
+  enforcement: test
 boundaries:
   provides:
   - id: PROV-001
@@ -168,7 +173,9 @@ In the browser, `hook.js` observes `RTCPeerConnection` in the page, `bridge.js` 
 
 The hub decides and the server acts: the hub receives parsed control messages and the upload's events, and returns the commands to send; it writes recording bytes only to a `ChunkSink`. The recording goes from the offscreen document to the app over its own WebSocket rather than through native messaging, which carries only JSON, so the data is never base64-encoded or copied through the service worker and the relay. See [ADR: binary upload](../adr/adr-20261118-send-tab-recordings-to-the-app-over-a-we.md). The extension holds no policy. It reports what it sees and records when told, so that the rules for when to record stay in `crates/core`.
 
-A tab recording does not pass through the capture pipeline. Its video and audio settings are the extension's, not `config.toml`'s.
+A tab recording does not pass through the capture pipeline. Its video and audio settings are the extension's, not `config.toml`'s, except the size of its picture (INV-009). `start` carries `video.width` and `video.height` as `max_size`. The extension computes the tab's size in device pixels, scaled down to fit in `max_size`, and gives that size to the browser as the capture's maximum. The browser does the one scaling while it captures, and the app copies what it records.
+
+The bound is not passed as it is. In Chrome and Edge 158 the browser delivered every picture at exactly the size it was given, and fitted the tab into it with black bars and scaled up when it was smaller ([the note](../note/note-20261125-tab-capture-sizes-in-chrome-and-edge.md)). Passing `max_size` itself would therefore put bars beside a tab of another shape and scale a smaller tab up. With no size the pictures came at the screen's. The picture keeps its first size for the whole recording. When the tab changes size, the browser fits it into the picture again.
 
 The user's microphone does: `LinkedRecorder` starts the pipeline's microphone-only recording beside the tab's file (`<recording>.microphone.m4a`) before it asks the extension to start, keeps the moment the upload proved itself as the tab's time zero, and after the tab recording ends hands both to `MicrophoneMerge`. `recording::merge` decides where the microphone goes (the part before the tab's zero is dropped, the rest cut at the tab's end) and that the result replaces the tab's file only once it is complete. `recording::mp4` writes it by rewriting the tab's `moov` and appending fragments for the new track, copying the tab's own fragments byte for byte. Re-muxing through AVFoundation was tried and rejected: it reads the browser's fragment timing differently from the fragments' `tfdt` and shortened the video of a 13-minute recording by 9.6 seconds.
 
@@ -194,7 +201,7 @@ Detection inside the page is a heuristic and may be replaced per site. The conta
 
 ## Conformance
 
-`browser/{protocol,hub}.rs`, `linked.rs`, `recording/{merge,mp4}.rs` and `bundle.rs` carry the unit tests; `linked.rs` checks the order of starting, stopping and merging and what each failure leaves. The real path through a browser was checked by hand in Chrome and Edge and is recorded in the verification note; it is not covered by automated tests.
+`browser/{protocol,hub}.rs`, `linked.rs`, `recording/{merge,mp4}.rs` and `bundle.rs` carry the unit tests; `linked.rs` checks the order of starting, stopping and merging and what each failure leaves. INV-009 is checked from both sides: `browser/server.rs` checks that a start names the largest picture, and `extension/test/background.test.mjs` checks the size the extension then captures at. What the browser does with that size was observed in a browser, not tested. The real path through a browser was checked by hand in Chrome and Edge and is recorded in the verification note; it is not covered by automated tests.
 
 ## Related Decisions
 

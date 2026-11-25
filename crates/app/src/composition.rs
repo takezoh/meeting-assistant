@@ -12,6 +12,7 @@ use meeting_assistant_core::{Config, Engine, Notice, NoticeLevel, RecordingCoord
 
 use crate::adapters::{DiskFiles, Mp4Remuxer, real_ports};
 use crate::browser::BrowserLinkServer;
+use crate::browser::protocol::PictureSize;
 use crate::linked::{LinkedRecorder, LinkedSignalSource};
 use crate::platform::{self, PlatformLoopbackPeers, PlatformRecorder, PlatformSignalSource};
 use crate::recording::annotate::Annotator;
@@ -58,7 +59,12 @@ type AppEngine = Engine<
 
 fn build_engine(config: &Config, output_directory: PathBuf) -> anyhow::Result<AppEngine> {
     // Even without the browser extension, the other detection and recording keep working.
-    let browser = BrowserLinkServer::start(Arc::new(PlatformLoopbackPeers))
+    // A tab is recorded at most at the size of every other recording's picture.
+    let largest_picture = PictureSize {
+        width: config.video.width,
+        height: config.video.height,
+    };
+    let browser = BrowserLinkServer::start(Arc::new(PlatformLoopbackPeers), largest_picture)
         .inspect_err(|error| log::warn!("not linking with the browser extension: {error:#}"))
         .ok();
 

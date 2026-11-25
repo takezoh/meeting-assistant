@@ -24,7 +24,7 @@ The meeting app, or another process of it, still uses the microphone. `meeting-a
 
 - **Black from the start, or throughout:** the meeting's window has not been found. The picture appears when it is. A Slack huddle is black while it is previewed and shows from the moment it is joined. For other apps, a window that was already open when the app took the microphone is not taken for the meeting's, so a call window that opens just before the microphone is taken stays unrecorded. The app's main window and the whole display are deliberately not recorded instead.
 - **Frozen:** the recorded window is minimized, or it was closed while the meeting went on. Audio continues.
-- **Black bars:** the window's shape differs from the picture's (`video.width` by `video.height`, 16:9 by default), and the window is scaled to fit with its aspect ratio kept.
+- **Black bars:** the window's shape differs from the picture's (`video.width` by `video.height`, 16:9 by default), and the window is scaled to fit with its aspect ratio kept. A browser tab's picture takes the tab's shape when the recording starts; it shows bars after the tab changed size during the recording, because the picture keeps its size.
 
 ## The wrong window was recorded
 

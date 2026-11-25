@@ -15,6 +15,10 @@ function background() {
     /** What the recording page answers to "start". */
     pageReply: {},
     pageOpen: false,
+    /** The tab's size in CSS pixels, as `chrome.tabs.get` reports it. */
+    tab: { width: 1280, height: 720 },
+    /** The last "start" the recording page was told. */
+    pageStart: null,
   };
   const port = { onMessage: event(), onDisconnect: event(), postMessage: (message) => posted.push(message) };
   const runtime = {
@@ -28,6 +32,7 @@ function background() {
     sendMessage: async (message) => {
       steps.push(`tell the page: ${message.type}`);
       assert.ok(browser.pageOpen, "the recording page exists");
+      if (message.type === "start") browser.pageStart = message;
       return message.type === "start" ? browser.pageReply : {};
     },
   };
@@ -37,7 +42,7 @@ function background() {
     tabs: {
       get: async () => {
         steps.push("read the tab's size");
-        return { width: 1280, height: 720 };
+        return browser.tab;
       },
       onRemoved: event(),
     },
@@ -62,8 +67,49 @@ function background() {
   };
   const script = load("background.js", { chrome });
   const errors = () => posted.filter((message) => message.type === "error");
-  return { ...script, steps, posted, errors, browser, runtime };
+  return { ...script, steps, posted, errors, browser, runtime, port };
 }
+
+/** The app's start of tab 7, at most `max_size`, after the tab's page reported `pixelRatio`. */
+async function startFromTheApp(b, pixelRatio, max_size) {
+  b.runtime.onMessage.fire(
+    { type: "call-state", inCall: true, host: "meet.google.com", title: "Meet", pixelRatio },
+    { tab: { id: 7 }, frameId: 0, url: "https://meet.google.com/abc-defg-hij" },
+  );
+  b.port.onMessage.fire({ type: "start", tab: 7, upload: "ws://127.0.0.1:5000/", token: "token", max_size });
+  await settle();
+  await settle();
+  return plain(b.browser.pageStart?.size);
+}
+
+test("a tab is captured at its size in device pixels, scaled down into the app's largest picture", async () => {
+  const b = background();
+  b.browser.tab = { width: 1768, height: 1190 };
+
+  // 2210x1488 device pixels at 125 %, the size a Google Meet tab was recorded at on 2026-11-25.
+  assert.deepEqual(await startFromTheApp(b, 1.25, { width: 1920, height: 1080 }), { width: 1604, height: 1080 });
+});
+
+test("a tab that fits in the largest picture is captured at its own size, not scaled up", async () => {
+  const b = background();
+  b.browser.tab = { width: 800, height: 450 };
+
+  assert.deepEqual(await startFromTheApp(b, 1.5, { width: 1920, height: 1080 }), { width: 1200, height: 675 });
+});
+
+test("a smaller largest picture from the app bounds the tab too", async () => {
+  const b = background();
+  b.browser.tab = { width: 1440, height: 783 };
+
+  assert.deepEqual(await startFromTheApp(b, 2, { width: 1280, height: 720 }), { width: 1280, height: 696 });
+});
+
+test("a tab whose size cannot be read is captured at the largest picture, never at the screen's size", async () => {
+  const b = background();
+  b.browser.tab = {};
+
+  assert.deepEqual(await startFromTheApp(b, 2, { width: 1920, height: 1080 }), { width: 1920, height: 1080 });
+});
 
 test("the stream ID is asked for last, once the page that uses it exists, and handed over at once", async () => {
   const b = background();

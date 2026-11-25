@@ -20,7 +20,7 @@ A file of the current version that cannot be parsed, contains an unknown key or 
 | `browser_end_grace_seconds` | `1.0` | How long the extension must report no call before the browser meeting is considered ended |
 | `poll_interval_milliseconds` | `1000` | How often signals are read. At least 100 |
 | `capture_scope` | `"app"` | `"app"` records the meeting app only. `"screen"` records the display that holds the meeting's window (the main display when it has none) and all audio of the output device (on macOS, everything apps play, whichever device they play to) |
-| `video.width`, `video.height` | `1920`, `1080` | Size of the picture, even numbers from 320x240 up to 1920x1080. The recorded window or display is fitted into it with its aspect ratio kept, also when the window changes size or shape: a larger one is scaled down; on Windows a smaller one keeps its size in the middle |
+| `video.width`, `video.height` | `1920`, `1080` | Size of the picture, even numbers from 320x240 up to 1920x1080. The recorded window or display is fitted into it with its aspect ratio kept, also when the window changes size or shape: a larger one is scaled down; on Windows a smaller one keeps its size in the middle. A browser tab is recorded at its own size, scaled down to fit in it if larger |
 | `video.framerate` | `30` | Frames per second, 1 to 60 |
 | `video.quality` | `70` | Encoder quality, 1 to 100. Higher is sharper and larger |
 | `video.fallback_bitrate_kbps` | `4000` | Average bitrate used when the encoder does not support a quality setting, 100 to 100000 |

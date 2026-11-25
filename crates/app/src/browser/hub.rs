@@ -10,7 +10,7 @@ use std::io;
 
 use meeting_assistant_core::{BrowserLink, BrowserMeeting, BrowserTab, MeetingMetadata};
 
-use super::protocol::{Incoming, Outgoing};
+use super::protocol::{Incoming, Outgoing, PictureSize};
 
 /// Name given to a meeting whose service name was not reported.
 const UNNAMED_SERVICE: &str = "BrowserMeeting";
@@ -154,13 +154,14 @@ impl Hub {
         (links, meetings)
     }
 
-    /// Starts recording a tab into `sink`, received at `upload`. Returns the recording's identifier and the command
-    /// to send to the extension.
+    /// Starts recording a tab into `sink`, received at `upload`, at most `max_size`. Returns the recording's identifier
+    /// and the command to send to the extension.
     pub fn begin_capture(
         &mut self,
         tab: BrowserTab,
         sink: Box<dyn ChunkSink>,
         upload: Upload,
+        max_size: PictureSize,
     ) -> anyhow::Result<(CaptureId, Outgoing)> {
         anyhow::ensure!(self.capture.is_none(), "A tab is already being recorded");
         anyhow::ensure!(
@@ -183,6 +184,7 @@ impl Hub {
                 tab: tab.tab,
                 upload: upload.url,
                 token: upload.token,
+                max_size,
             },
         ))
     }
@@ -350,13 +352,18 @@ mod tests {
         }
     }
 
+    const MAX_SIZE: PictureSize = PictureSize {
+        width: 1280,
+        height: 720,
+    };
+
     /// State right after one connection exists and recording of tab 7 was requested.
     fn capturing() -> (Hub, u64, CaptureId, MemorySink) {
         let mut hub = Hub::default();
         let link = hub.connect(301);
         let sink = MemorySink::default();
         let (id, _) = hub
-            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload())
+            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload(), MAX_SIZE)
             .unwrap();
         (hub, link, id, sink)
     }
@@ -452,12 +459,17 @@ mod tests {
     }
 
     #[test]
-    fn starting_a_recording_tells_the_extension_where_to_upload_and_waits() {
+    fn starting_a_recording_tells_the_extension_where_to_upload_and_the_largest_picture_and_waits() {
         let mut hub = Hub::default();
         let link = hub.connect(301);
 
         let (id, instruction) = hub
-            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(MemorySink::default()), upload())
+            .begin_capture(
+                BrowserTab { link, tab: 7 },
+                Box::new(MemorySink::default()),
+                upload(),
+                MAX_SIZE,
+            )
             .unwrap();
 
         assert_eq!(
@@ -465,7 +477,8 @@ mod tests {
             Outgoing::Start {
                 tab: 7,
                 upload: "ws://127.0.0.1:5000/".into(),
-                token: "secret".into()
+                token: "secret".into(),
+                max_size: MAX_SIZE
             }
         );
         assert_eq!(hub.capture_phase(), Some(&Phase::Starting));
@@ -480,7 +493,8 @@ mod tests {
             hub.begin_capture(
                 BrowserTab { link: 9, tab: 7 },
                 Box::new(MemorySink::default()),
-                upload()
+                upload(),
+                MAX_SIZE
             )
             .is_err()
         );
@@ -492,8 +506,13 @@ mod tests {
         let (mut hub, link, _, _) = capturing();
 
         assert!(
-            hub.begin_capture(BrowserTab { link, tab: 8 }, Box::new(MemorySink::default()), upload())
-                .is_err()
+            hub.begin_capture(
+                BrowserTab { link, tab: 8 },
+                Box::new(MemorySink::default()),
+                upload(),
+                MAX_SIZE
+            )
+            .is_err()
         );
     }
 
@@ -529,7 +548,7 @@ mod tests {
         hub.end_capture();
         let sink = MemorySink::default();
         let (current, _) = hub
-            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload())
+            .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload(), MAX_SIZE)
             .unwrap();
         hub.upload_opened(current, "video/mp4".into());
 

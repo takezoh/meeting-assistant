@@ -65,15 +65,24 @@ impl Incoming {
     }
 }
 
+/// A size in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PictureSize {
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Commands sent to the extension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Outgoing {
-    /// Record `tab` and send the recording to the WebSocket at `upload`, presenting `token` first.
+    /// Record `tab` and send the recording to the WebSocket at `upload`, presenting `token` first. The picture is the
+    /// tab's size in device pixels, scaled down to fit in `max_size` with its aspect ratio kept.
     Start {
         tab: u64,
         upload: String,
         token: String,
+        max_size: PictureSize,
     },
     Stop {
         tab: u64,
@@ -336,9 +345,13 @@ mod tests {
             json(Outgoing::Start {
                 tab: 7,
                 upload: "ws://127.0.0.1:5000/".into(),
-                token: "t".into()
+                token: "t".into(),
+                max_size: PictureSize {
+                    width: 1280,
+                    height: 720
+                }
             }),
-            r#"{"type":"start","tab":7,"upload":"ws://127.0.0.1:5000/","token":"t"}"#
+            r#"{"type":"start","tab":7,"upload":"ws://127.0.0.1:5000/","token":"t","max_size":{"width":1280,"height":720}}"#
         );
         assert_eq!(json(Outgoing::Stop { tab: 7 }), r#"{"type":"stop","tab":7}"#);
     }

@@ -30,7 +30,7 @@ use super::endpoint::Endpoint;
 use super::hub::{CaptureId, ChunkSink, Finished, Hub, Phase, Upload};
 use super::peer::{self, LoopbackPeers, UserId};
 use super::protocol::{
-    Incoming, MAX_FRAME, MAX_HELLO_FRAME, Outgoing, accept_upload_hello, is_extension_origin, read_frame,
+    Incoming, MAX_FRAME, MAX_HELLO_FRAME, Outgoing, PictureSize, accept_upload_hello, is_extension_origin, read_frame,
     read_frame_within, tokens_match, upload_close_outcome, write_frame,
 };
 use crate::linked::{BrowserPort, TabCapture};
@@ -122,6 +122,8 @@ struct Shared {
     peers: Arc<dyn LoopbackPeers>,
     /// The user this app runs as: only this user's processes may connect.
     user: UserId,
+    /// The largest picture a tab is recorded at.
+    max_size: PictureSize,
 }
 
 impl Shared {
@@ -165,8 +167,9 @@ impl Shared {
 pub struct BrowserLinkServer(Arc<Shared>);
 
 impl BrowserLinkServer {
-    /// Starts listening and publishes the endpoint for the relay process. `peers` tells who made a connection.
-    pub fn start(peers: Arc<dyn LoopbackPeers>) -> anyhow::Result<Self> {
+    /// Starts listening and publishes the endpoint for the relay process. `peers` tells who made a connection; tabs are
+    /// recorded at most at `max_size`.
+    pub fn start(peers: Arc<dyn LoopbackPeers>, max_size: PictureSize) -> anyhow::Result<Self> {
         let user = peers
             .current_user()
             .context("Cannot tell which user this app runs as")?;
@@ -186,6 +189,7 @@ impl BrowserLinkServer {
             unauthenticated: AtomicUsize::new(0),
             peers,
             user,
+            max_size,
         });
         std::thread::Builder::new().name("browser-link".into()).spawn({
             let shared = shared.clone();
@@ -230,7 +234,7 @@ impl BrowserPort for BrowserLinkServer {
         let file = File::create(path).with_context(|| format!("Cannot create the output file: {}", path.display()))?;
         let started = state
             .hub
-            .begin_capture(tab, Box::new(FileSink(file)), upload)
+            .begin_capture(tab, Box::new(FileSink(file)), upload, self.0.max_size)
             .and_then(|(id, instruction)| {
                 let shared = self.0.clone();
                 std::thread::Builder::new()
@@ -599,6 +603,10 @@ mod tests {
             unauthenticated: AtomicUsize::new(0),
             peers: peers.clone(),
             user: UserId(CURRENT_USER.into()),
+            max_size: PictureSize {
+                width: 1280,
+                height: 720,
+            },
         })
     }
 
@@ -627,7 +635,12 @@ mod tests {
             };
             state
                 .hub
-                .begin_capture(BrowserTab { link, tab: 7 }, Box::new(sink.clone()), upload)
+                .begin_capture(
+                    BrowserTab { link, tab: 7 },
+                    Box::new(sink.clone()),
+                    upload,
+                    shared.max_size,
+                )
                 .unwrap()
                 .0
         };
@@ -808,6 +821,44 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         drop(relay);
+    }
+
+    #[test]
+    fn a_start_tells_the_extension_the_largest_picture_and_a_refusal_fails_it() {
+        let peers = Arc::new(FakeLoopbackPeers::default());
+        let shared = shared(&peers);
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn({
+            let shared = shared.clone();
+            move || accept_links(&shared, &listener)
+        });
+        let relay = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        write_frame(&mut &relay, &hello_body(RELAY_TOKEN, 4242)).unwrap();
+        let deadline = Instant::now() + HELLO_TIMEOUT;
+        let link = loop {
+            if let Some(link) = shared.lock().hub.snapshot().0.first() {
+                break link.id;
+            }
+            assert!(Instant::now() < deadline, "the relay was not connected");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("2026-11-25_10-00-00_GoogleMeet.mp4");
+
+        let starting = std::thread::spawn({
+            let server = BrowserLinkServer(shared.clone());
+            let path = path.clone();
+            move || server.start_capture(BrowserTab { link, tab: 7 }, &path)
+        });
+        let start: serde_json::Value = serde_json::from_slice(&read_frame(&mut &relay).unwrap()).unwrap();
+        assert_eq!(start["type"], "start");
+        assert_eq!(start["max_size"], serde_json::json!({ "width": 1280, "height": 720 }));
+        write_frame(&mut &relay, br#"{"type":"error","tab":7,"message":"refused"}"#).unwrap();
+
+        let error = starting.join().unwrap().unwrap_err();
+        assert!(format!("{error:#}").contains("refused"), "{error:#}");
+        assert!(!path.exists(), "no empty file is left");
     }
 
     #[test]

@@ -40,7 +40,7 @@ Each control message is a 32-bit length in native byte order followed by that ma
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |
-| `start` | `tab`, `upload`, `token` | Record this tab and send the recording to the WebSocket at `upload` (`ws://127.0.0.1:<port>/`), presenting `token` first |
+| `start` | `tab`, `upload`, `token`, `max_size` | Record this tab and send the recording to the WebSocket at `upload` (`ws://127.0.0.1:<port>/`), presenting `token` first. `max_size` is `{ "width", "height" }`, the app's `video.width` and `video.height`: the extension captures the tab at its size in device pixels, scaled down to fit in it with its aspect ratio kept and never up, and at `max_size` when the tab's size cannot be read |
 | `stop` | `tab` | Stop recording, send the remaining data and close the upload |
 
 ## Upload connection
@@ -61,7 +61,7 @@ If no message arrives for 30 seconds, or the connection breaks without a close, 
 app                              extension
  | <- meeting(tab, active) ------- |   call connected (control)
  |   microphone recording starts   |   <recording>.microphone.m4a, on the app's side
- | -- start(tab, upload, token) -> |   (control)
+ | -- start(tab, ..., max_size) -> |   (control)
  | <== WebSocket to upload ======= |   Origin checked
  | <== text {token, mime} ======== |   MediaRecorder started: time zero; start_capture returns to the coordinator
  | <== binary ==================== |   about once per second, appended to the file

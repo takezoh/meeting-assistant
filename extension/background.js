@@ -55,7 +55,7 @@ function post(message) {
 }
 
 function onAppMessage(message) {
-  if (message.type === "start") startRecording(message.tab, message.upload, message.token);
+  if (message.type === "start") startRecording(message.tab, message.upload, message.token, message.max_size);
   else if (message.type === "stop") stopRecording();
 }
 
@@ -131,13 +131,33 @@ chrome.tabs.onRemoved.addListener((tab) => {
 // ---- Recording
 
 /**
- * Records `tab`; the recording page sends the recording to `upload` itself, presenting `token`.
+ * The size a tab is captured at: its size in device pixels, scaled down to fit in `maxSize` with its aspect ratio
+ * kept, and never up. `tab` is its size in CSS pixels and `ratio` the device pixels per CSS pixel.
+ *
+ * The browser delivers every picture at exactly the size it is given, for the whole capture, and fits the tab into it
+ * with black bars (Chrome and Edge 158, 2026-11-25). So the app's largest picture is not passed as it is: a tab of
+ * another shape would get bars, and a smaller tab would be scaled up. Given no size, the browser captures at the size of
+ * the screen, so a tab whose size cannot be read is captured at `maxSize`.
+ */
+function captureSize(tab, ratio, maxSize) {
+  if (!(tab.width > 0 && tab.height > 0)) return maxSize ?? null;
+  const device = { width: Math.round(tab.width * ratio), height: Math.round(tab.height * ratio) };
+  if (!maxSize) return device;
+  const scale = Math.min(1, maxSize.width / device.width, maxSize.height / device.height);
+  return {
+    width: Math.min(maxSize.width, Math.max(1, Math.round(device.width * scale))),
+    height: Math.min(maxSize.height, Math.max(1, Math.round(device.height * scale))),
+  };
+}
+
+/**
+ * Records `tab`, at most `maxSize`; the recording page sends the recording to `upload` itself, presenting `token`.
  *
  * Asking for a stream ID registers a capture of the tab in the browser, which refuses another capture of it while that
  * one is pending or running. So everything that can fail on its own comes first, the stream ID is used as soon as it is
  * given, and whatever started is stopped on failure (offscreen.js stops its tracks; this closes the page).
  */
-async function startRecording(tab, upload, token) {
+async function startRecording(tab, upload, token, maxSize) {
   // Refused before anything is touched: the recording under way must not be cleaned up as a failed start.
   if (recordingTab !== null) {
     post({ type: "error", tab, message: "Another tab is already being recorded" });
@@ -152,10 +172,8 @@ async function startRecording(tab, upload, token) {
         justification: "To record the meeting tab",
       });
     }
-    // Without this the recording uses the full screen size, so pass the tab's actual size as the upper limit.
     const { width, height } = await chrome.tabs.get(tab);
-    const ratio = pixelRatios.get(tab) ?? 1;
-    const size = width && height ? { width: Math.round(width * ratio), height: Math.round(height * ratio) } : null;
+    const size = captureSize({ width, height }, pixelRatios.get(tab) ?? 1, maxSize);
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab });
     const result = await chrome.runtime.sendMessage({
       target: "offscreen",
