@@ -11,8 +11,9 @@ responsibilities:
     at logon, native-host registration, browser launchers, uninstall entry.'
 - id: RESP-004
   statement: 'Make the file a user installs from, signed by the build: on macOS a disk
-    image holding the signed app bundle. Opened from elsewhere, that app offers to install
-    itself.'
+    image holding the signed app bundle, on Windows the executable with its version
+    information, icon and manifest, signed when a certificate is named. Opened from
+    elsewhere, that app offers to install itself.'
 - id: RESP-002
   statement: Ensure a single resident instance and let another invocation ask it to
     finalize and exit.
@@ -60,7 +61,9 @@ boundaries:
       start at logon.
   - id: PROV-002
     statement: packaging/macos/build.sh, which builds, signs and puts the macOS app
-      into a disk image.
+      into a disk image; packaging/windows/build.ps1, which builds the Windows executable
+      and signs it when a certificate is named; and crates/app/build.rs, which gives the
+      Windows executable its resources.
   consumes:
   - id: CONS-001
     statement: 'InstallSystem: copy the app and remove files, register the app, set
@@ -108,6 +111,10 @@ source_paths:
 - packaging/macos/build.sh
 - packaging/macos/Info.plist
 - packaging/macos/entitlements.plist
+- packaging/windows/build.ps1
+- crates/app/build.rs
+- crates/app/windows/resources.rs
+- crates/app/windows/app.manifest
 - INSTALL.md
 summary: Contract of the self-installing app, the file it is distributed in, the single
   resident instance and finalization on every exit path.
@@ -131,7 +138,7 @@ The platform installers supply the operations:
 
 | | Windows | macOS |
 | --- | --- | --- |
-| The app | Copied to `%LOCALAPPDATA%\Programs\MeetingAssistant` | `~/Applications/Meeting Assistant.app`, copied whole with `ditto` as the build signed it; its own `Info.plist` lists it |
+| The app | The executable, copied to `%LOCALAPPDATA%\Programs\MeetingAssistant\meeting-assistant.exe` without the mark the browser gave the download | `~/Applications/Meeting Assistant.app`, copied whole with `ditto` as the build signed it; its own `Info.plist` lists it |
 | Start at logon | A `Run` value | A LaunchAgent plist |
 | Native hosts | Keys under `HKCU` | JSON files |
 | Browser launchers | `.lnk` shortcuts | Launcher `.app` bundles |
@@ -144,7 +151,9 @@ The file a user installs from is made by the build ([the decision](../adr/adr-20
 3. Signs the whole bundle as `com.meeting-assistant.app`, with the hardened runtime and the entitlements in `packaging/macos/entitlements.plist`. By default it signs with the identity `Meeting Assistant Local Signing`; `--identity` names another, such as a Developer ID.
 4. Puts the bundle into a disk image, which `--notary-profile` also notarizes.
 
-The installer checks that the bundle's signature verifies before it changes anything, and reports who signed it. It clears the app's screen recording permission when the installed app's designated requirement changed across the update ([the earlier decision](../adr/adr-20261124-sign-the-macos-app-with-a-lasting-identity.md)). On macOS a built app is one that runs from a bundle. Windows has no build script yet, and its executable does not offer to install itself when opened ([the issue](../issue/issue-20261124-the-windows-installer-is-not-built.md)).
+The installer checks that the bundle's signature verifies before it changes anything, and reports who signed it. It clears the app's screen recording permission when the installed app's designated requirement changed across the update ([the earlier decision](../adr/adr-20261124-sign-the-macos-app-with-a-lasting-identity.md)). On macOS a built app is one that runs from a bundle.
+
+On Windows, `packaging/windows/build.ps1` builds the release executable, copies it to `target\windows\Meeting-Assistant-<version>.exe`, and signs it with `signtool` when a certificate is named. `crates/app/build.rs` gives every build of the executable its version information, icon and application manifest, so a Windows executable is always a built app: opened from elsewhere, also when `cargo build` made it, it asks. Windows ties no permission to a signature, so the installer reads none. It removes the `Zone.Identifier` stream from the copy it places, because the copy keeps the stream of the downloaded file, and Windows would check the installed app as a download again each time the shell starts it.
 
 The platform session code provides the single-instance guard and delivers a quit request to the resident instance. The tray turns a quit request, a menu quit and the end of the user session into the same shutdown path, which stops the engine and with it the recorder. On macOS the end of the session reaches the app as a request to terminate the application, which ends the tray's event loop; the tray finalizes on that loop's last event as well, once.
 
@@ -179,7 +188,7 @@ Locations, mechanisms and the form of the distributed file are per platform. So 
 - A changed identity clears the earlier permissions before anything runs the app.
 - Only a built app that is not installed offers to install itself.
 
-`platform/mac/install.rs` checks that `packaging/macos/Info.plist` names the identifier and executable the installer uses.
+`platform/mac/install.rs` checks that `packaging/macos/Info.plist` names the identifier and executable the installer uses. `platform/win/install.rs` reads the version information, the icon and the manifest from the test executable, which `build.rs` gives them as it gives the app, and checks that the version information names the file the installer places.
 
 What was run by hand:
 
@@ -187,10 +196,11 @@ What was run by hand:
 - On one Mac on 2026-11-24: signing with the identity, the one-time clearing of the screen recording permission, and an update that kept both permissions. That was with the installer that signed the app itself. See the [macOS verification note](../note/note-20261118-macos-verification-2026-11-18.md).
 - On the same Mac on 2026-11-24, the build script made the disk image. Its app had the hardened runtime, the microphone entitlement, and the designated requirement of the app installed there before.
 - On 2026-11-25 that disk image was installed, declined once, and installed again over itself. The installed app recorded the screen and the microphone without a permission prompt. See [the note](../note/note-20261125-installing-from-the-macos-disk-image-2026-11-25.md). A downloaded disk image, and so Gatekeeper, was not run.
+- On one Windows PC on 2026-11-25, an executable built by `cargo build --release` asked when opened, and changed nothing when declined. A copy of it marked as downloaded was opened while the installed app recorded, and accepted: the running app finished its recording and exited, and the copy placed itself without the mark and started. See [the note](../note/note-20261125-installing-from-the-windows-executable-2.md). The build script made the unsigned executable. SmartScreen and signing were not run.
 
 ## Related Decisions
 
 - [ADR: ship one self-installing per-user executable](../adr/adr-20261117-self-installing-per-user-executable.md)
 - [ADR: distribute a built and signed app that installs itself](../adr/adr-20261124-distribute-a-built-app-that-installs-itself.md)
 
-The user steps are in `INSTALL.md`. Building the disk image is in [the packaging reference](../technical/packaging.md).
+The user steps are in `INSTALL.md`. Building the disk image and the Windows executable is in [the packaging reference](../technical/packaging.md).

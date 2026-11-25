@@ -120,6 +120,17 @@ fn remove_file_if_exists(path: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// Removes the mark a browser gives a downloaded file, its `Zone.Identifier` stream, which copying the file keeps.
+/// Windows checks a file with that mark again whenever the shell starts it, as the Start menu and the installer do;
+/// the user already let the downloaded file run. The app runs with the mark too, so a failure is only logged.
+fn remove_download_mark(executable: &Path) {
+    let mut stream = executable.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    if let Err(error) = remove_file_if_exists(Path::new(&stream)) {
+        log::warn!("{error:#}");
+    }
+}
+
 /// Install operations for Windows.
 pub struct PlatformInstaller;
 
@@ -140,10 +151,9 @@ impl InstallSystem for PlatformInstaller {
         matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
     }
 
-    /// Not yet: until the Windows installer is built, an executable that is not installed runs where it is and offers
-    /// the installation in its tray menu (docs/issue/issue-20261124-the-windows-installer-is-not-built.md).
+    /// Always: the executable is the file a user downloads and installs from, whatever it is called.
     fn installs_when_opened(&self) -> bool {
-        false
+        true
     }
 
     fn request_quit(&mut self) -> bool {
@@ -159,13 +169,15 @@ impl InstallSystem for PlatformInstaller {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match std::fs::copy(from, to) {
-                Ok(_) => return Ok(()),
+                Ok(_) => break,
                 Err(error) if Instant::now() >= deadline => {
                     return Err(error).with_context(|| format!("Cannot place the executable: {}", to.display()));
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(300)),
             }
         }
+        remove_download_mark(to);
+        Ok(())
     }
 
     fn write_file(&mut self, path: &Path, content: &str) -> anyhow::Result<()> {
@@ -295,5 +307,92 @@ impl InstallSystem for PlatformInstaller {
 
     fn forget_permissions(&mut self) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+    use windows::Win32::System::LibraryLoader::{FindResourceW, GetModuleHandleW};
+    use windows::Win32::UI::WindowsAndMessaging::{RT_GROUP_ICON, RT_MANIFEST};
+    use windows::core::{HSTRING, PCWSTR};
+
+    use super::*;
+
+    /// A string of the version information, which build.rs writes in English with UTF-16 text.
+    fn version_string(data: &[u8], key: &str) -> Option<String> {
+        let mut pointer = std::ptr::null_mut();
+        let mut length = 0u32;
+        let query = HSTRING::from(format!(r"\StringFileInfo\040904B0\{key}"));
+        unsafe { VerQueryValueW(data.as_ptr().cast(), &query, &mut pointer, &mut length) }
+            .as_bool()
+            .then(|| {
+                let units = unsafe { std::slice::from_raw_parts(pointer.cast::<u16>(), length as usize) };
+                String::from_utf16_lossy(units).trim_end_matches('\0').to_owned()
+            })
+    }
+
+    fn download_mark(file: &Path) -> PathBuf {
+        let mut stream = file.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        PathBuf::from(stream)
+    }
+
+    #[test]
+    fn the_placed_executable_does_not_keep_the_mark_of_the_download() {
+        let directory = tempfile::tempdir().unwrap();
+        let downloaded = directory.path().join("Meeting-Assistant-0.1.0.exe");
+        std::fs::write(&downloaded, b"the app").unwrap();
+        std::fs::write(download_mark(&downloaded), "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        let copied = directory.path().join("copied.exe");
+        std::fs::copy(&downloaded, &copied).unwrap();
+        assert!(
+            std::fs::read(download_mark(&copied)).is_ok(),
+            "a plain copy keeps the mark, which is why the installer removes it"
+        );
+
+        let placed = directory.path().join("installed").join("meeting-assistant.exe");
+        PlatformInstaller.copy_app(&downloaded, &placed).unwrap();
+
+        assert_eq!(std::fs::read(&placed).unwrap(), b"the app");
+        assert!(
+            std::fs::read(download_mark(&placed)).is_err(),
+            "the placed copy keeps the mark"
+        );
+        assert!(
+            std::fs::read_to_string(download_mark(&downloaded))
+                .unwrap()
+                .contains("ZoneId=3"),
+            "the downloaded file is left as it was"
+        );
+    }
+
+    /// build.rs gives every executable of this crate its resources, this test's own included.
+    #[test]
+    fn the_executable_carries_its_version_icon_and_manifest() {
+        let executable = HSTRING::from(std::env::current_exe().unwrap().as_os_str());
+        let size = unsafe { GetFileVersionInfoSizeW(&executable, None) };
+        assert!(size > 0, "the executable has no version information");
+        let mut data = vec![0u8; size as usize];
+        unsafe { GetFileVersionInfoW(&executable, None, size, data.as_mut_ptr().cast()) }.unwrap();
+
+        assert_eq!(
+            version_string(&data, "ProductVersion").as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(version_string(&data, "ProductName").as_deref(), Some(APP_NAME));
+        let installed = PlatformInstaller.installed_executable();
+        assert_eq!(
+            version_string(&data, "OriginalFilename").as_deref(),
+            installed.file_name().and_then(|name| name.to_str()),
+            "the name the installer gives the executable"
+        );
+
+        let module = unsafe { GetModuleHandleW(None) }.unwrap();
+        let first = PCWSTR(1 as _);
+        for (kind, what) in [(RT_GROUP_ICON, "icon"), (RT_MANIFEST, "manifest")] {
+            let found = unsafe { FindResourceW(Some(module), first, kind) };
+            assert!(!found.is_invalid(), "the executable has no {what}");
+        }
     }
 }

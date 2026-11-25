@@ -1,27 +1,26 @@
 # Install Meeting Assistant
 
-This page takes you to a running app that records desktop meetings, and then through the optional browser extension for per-tab recording. On macOS you install from a disk image; on Windows, from a checkout. Everything is installed for the current user only; no step needs administrator rights.
+This page takes you to a running app that records desktop meetings, and then through the optional browser extension for per-tab recording. On Windows you install from the executable; on macOS, from a disk image. Everything is installed for the current user only; no step needs administrator rights.
 
 ## Requirements
 
 - Windows 11. The app was developed and checked on Windows 11 only. Capturing the audio of a single app relies on per-process audio loopback, which older Windows 10 builds do not provide.
-- A Rust toolchain that supports edition 2024 (Rust 1.85 or later). No builds are published.
 - For per-tab recording: Google Chrome or Microsoft Edge.
+- To build the app yourself: a Rust toolchain that supports edition 2024 (Rust 1.85 or later), with the MSVC toolchain on Windows. No builds are published.
 
 For macOS see [macOS](#macos) instead of the next section.
 
-## Build and install
+## Install on Windows
 
-```
-cargo build --release
-target\release\meeting-assistant.exe --install
-```
+1. Open `Meeting-Assistant-<version>.exe`. If Windows says "Windows protected your PC", which SmartScreen says of a downloaded program that is not signed, choose **More info**, then **Run anyway**.
+2. Meeting Assistant asks whether to install itself. Choose **OK**. It reports what it did, and a ring appears in the notification area.
+3. You may delete the file you opened. The installed app is in `%LOCALAPPDATA%\Programs\MeetingAssistant`.
 
-The executable is its own installer. `--install`:
+Choosing **Cancel** changes nothing. The executable is made by `packaging\windows\build.ps1`; see [the packaging reference](docs/technical/packaging.md). No executable is published, so get it from whoever builds them, or build it as below.
 
 | Step | Where |
 | --- | --- |
-| Copies the app and writes out the extension | `%LOCALAPPDATA%\Programs\MeetingAssistant`, extension in its `extension` folder |
+| Copies the app as `meeting-assistant.exe` and writes out the extension | `%LOCALAPPDATA%\Programs\MeetingAssistant`, extension in its `extension` folder |
 | Adds a Start Menu entry | `Meeting Assistant` |
 | Starts the app at logon | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
 | Registers the app as the extension's native-messaging host | `HKCU\Software\Google\Chrome\NativeMessagingHosts` and the Edge equivalent |
@@ -29,9 +28,16 @@ The executable is its own installer. `--install`:
 | Registers an uninstall entry | Settings > Apps > Installed apps |
 | Starts the app | A tray icon appears |
 
-If you start the executable without installing it, the tray menu offers the same installation.
-
 The app does not run as a Windows service. Capturing windows and audio needs the logged-in user's session, so it runs as an ordinary process of that user.
+
+### Install from a checkout
+
+```
+cargo build --release
+target\release\meeting-assistant.exe --install
+```
+
+`--install` takes the same steps without asking. Opened without a command, `target\release\meeting-assistant.exe` asks as the downloaded file does.
 
 ## Check that recording works
 
@@ -79,7 +85,7 @@ The extension is active on Google Meet, Microsoft Teams, Zoom, Webex, Slack, Whe
 
 ## Update
 
-On Windows, build the new version and run its `--install` again. On macOS, open the newer disk image, open the app in it and choose **Install**. The installer asks the running app to finalize any recording and exit, replaces the files and starts the new version. If the running app does not exit, nothing is changed. On macOS see also [Keeping the permissions across updates](#keeping-the-permissions-across-updates).
+On Windows, open the newer executable and choose **OK**, or run its `--install`. On macOS, open the newer disk image, open the app in it and choose **Install**. The installer asks the running app to finalize any recording and exit, replaces the files and starts the new version. If the running app does not exit, nothing is changed. On macOS see also [Keeping the permissions across updates](#keeping-the-permissions-across-updates).
 
 After an update that changes the extension, press **Reload** for the extension on the browser's extensions page.
 
@@ -98,7 +104,8 @@ This stops the app, removes the logon entry, the native-host registrations, the 
 ## Commands
 
 ```
-meeting-assistant                      Run in the tray and record detected meetings
+meeting-assistant                      Run in the tray and record detected meetings; opened from elsewhere
+                                       than the install location, ask whether to install instead
 meeting-assistant --install            Install or update
 meeting-assistant --uninstall          Uninstall
 meeting-assistant --quit               Ask the running app to finalize its recording and exit

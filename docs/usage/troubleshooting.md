@@ -52,7 +52,7 @@ Your voice is the recording's second audio track. Many players play only the fir
 The extension is not connected. Check, in this order:
 
 1. The extension is loaded and enabled on the browser's extensions page.
-2. The app is running and was installed with `--install`, which registers it with the browser.
+2. The app is running and was installed, which registers it with the browser. Running an executable that was not installed does not.
 3. The log shows the extension connecting when the browser starts.
 
 ## The tab recording does not start

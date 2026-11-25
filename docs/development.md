@@ -40,9 +40,9 @@ target\release\meeting-assistant.exe --probe
 
 To measure how far sound and picture are apart in a recording, run `tools/avsync` next to a long self-test; its [README](../tools/avsync/README.md) describes the procedure and what the numbers include.
 
-An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder. Without `--config`, an app bundle opened from outside the install location asks whether to install itself instead of running.
+An installed copy of the app may already be running and holds the single-instance lock. Stop it with `meeting-assistant --quit` before starting a development build, and pass `--config <path>` so the development build uses its own configuration and log folder. Without `--config`, a built app opened from outside the install location asks whether to install itself instead of running: on Windows every executable, also one from `cargo build` or `cargo run`, and on macOS an app bundle.
 
-To install a build on macOS, run `packaging/macos/build.sh` and install from the app or the disk image it makes. The installer refuses an executable that is not inside a signed app bundle, so `target/release/meeting-assistant --install` does not install on macOS. The [packaging reference](technical/packaging.md) covers the signing identity, the options and how to check a build.
+To install a build on Windows, run `target\release\meeting-assistant.exe --install` after `cargo build --release`; `packaging\windows\build.ps1` makes the file users install from. To install a build on macOS, run `packaging/macos/build.sh` and install from the app or the disk image it makes. The installer refuses an executable that is not inside a signed app bundle, so `target/release/meeting-assistant --install` does not install on macOS. The [packaging reference](technical/packaging.md) covers the signing identity, the options and how to check a build.
 
 ## Verify a documentation change
 

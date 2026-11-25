@@ -82,4 +82,60 @@ Open the disk image and the app in it. Or install from the bundle in Terminal:
 
 ## Windows
 
-The Windows release is to be the executable itself, signed at build time once a certificate is available. It is not built yet; [the issue](../issue/issue-20261124-the-windows-installer-is-not-built.md) lists the steps. Until then Windows is installed from a checkout as [INSTALL.md](../../INSTALL.md) describes.
+`packaging\windows\build.ps1` makes `target\windows\Meeting-Assistant-<version>.exe`, the executable users install from. Opened from anywhere but the install location, it asks whether to install itself. The installer copies it as `meeting-assistant.exe`, so the file may be renamed.
+
+It needs:
+
+- Rust with the MSVC toolchain, as any build on Windows does
+- Windows PowerShell 5.1, which comes with Windows, or PowerShell 7
+- to sign: a code-signing certificate in the current user's certificate store, and `signtool` from the Windows SDK
+
+### The executable's resources
+
+`crates/app/build.rs` gives every build of the executable its resources, also one made by `cargo build` alone, so Explorer, Settings > Apps, Task Manager and SmartScreen show a name and an icon instead of a bare file name:
+
+- version information: the product name, the version from `Cargo.toml` and the file name `meeting-assistant.exe`
+- the app icon in six sizes from 16 to 256 pixels, drawn by `crates/app/windows/resources.rs`: a red dot inside a light ring on a dark disc
+- the application manifest in `crates/app/windows/app.manifest`: the app runs with the user's own rights and is never elevated, it is aware of each monitor's scaling from the start, and its dialogs have the current look
+
+`build.rs` writes them as a compiled resource file, which the MSVC linker takes as an input, so no resource compiler is needed. With another linker the executable has none, and the build warns.
+
+### Build
+
+```
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+```
+
+Windows runs no PowerShell script by default; `-ExecutionPolicy Bypass` lets this one run, for this command only. The script does this:
+
+1. When a certificate is named, checks that the store has it and that `signtool` can be found, and stops before building if not.
+2. Runs `cargo build --release --locked`.
+3. Copies the executable to `target\windows\Meeting-Assistant-<version>.exe`, and checks that the version it carries is the one in `Cargo.toml`.
+4. When a certificate is named, signs the copy with SHA-256 and a timestamp, then verifies the signature.
+
+| Option | Effect |
+| --- | --- |
+| `-Certificate <subject>` | Sign with the code-signing certificate in the current user's store whose subject contains this |
+| `-TimestampUrl <url>` | The RFC 3161 timestamp server of the certificate's authority, needed with `-Certificate`. The signature then stays valid after the certificate expires |
+
+### Signing
+
+Windows ties no permission to the signature, so an unsigned build installs and runs, and an update keeps the app's settings whoever signed it. SmartScreen warns about a downloaded program it does not know, saying "Windows protected your PC" with **Run anyway** under **More info**, and a signature lets it build a reputation for the publisher instead of for each file. The releases are not signed: no code-signing certificate is available. Signing has not been run.
+
+### Check a build
+
+```
+(Get-Item target\windows\Meeting-Assistant-<version>.exe).VersionInfo | Format-List ProductName, ProductVersion, OriginalFilename
+signtool verify /pa target\windows\Meeting-Assistant-<version>.exe
+```
+
+A good build names Meeting Assistant, the version and `meeting-assistant.exe`, and Explorer shows its icon. The second command applies to a signed build. The test `the_executable_carries_its_version_icon_and_manifest` reads the same resources from the test executable, which `build.rs` gives them as well.
+
+### Install a build on the development PC
+
+Open the executable, or run it with `--install` in a terminal. `cargo build --release` followed by `target\release\meeting-assistant.exe --install` installs the same program under the same name.
+
+### Not done on Windows
+
+- The executable is built for x64 only. An ARM64 build needs the `aarch64-pc-windows-msvc` target.
+- Nothing is published. Where users download the executable from is not decided.

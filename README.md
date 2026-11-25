@@ -42,14 +42,11 @@ Logging off, shutting down, quitting from the menu or running `meeting-assistant
 
 ## Install
 
-```
-cargo build --release
-target\release\meeting-assistant.exe --install
-```
+On Windows, open `Meeting-Assistant-<version>.exe` and choose **OK** when it asks whether to install itself. The app is its own installer. It changes only the current user's profile and needs no administrator rights: it copies itself to `%LOCALAPPDATA%\Programs\MeetingAssistant`, starts at logon, registers itself with Chrome and Edge for the extension, and adds an entry under Settings > Apps. `--uninstall` reverts this and keeps your configuration, logs and recordings.
 
-The executable is its own installer. It changes only the current user's profile and needs no administrator rights: it copies itself to `%LOCALAPPDATA%\Programs\MeetingAssistant`, starts at logon, registers itself with Chrome and Edge for the extension, and adds an entry under Settings > Apps. `--uninstall` reverts this and keeps your configuration, logs and recordings.
+On macOS you install from a disk image: open the app in it and choose **Install**, and it installs itself to `~/Applications/Meeting Assistant.app` in the same way.
 
-On macOS you install from a disk image: open the app in it and choose **Install**, and it installs itself to `~/Applications/Meeting Assistant.app` in the same way. `packaging/macos/build.sh` makes the disk image; see [INSTALL.md](INSTALL.md#macos).
+No builds are published. `packaging\windows\build.ps1` makes the executable and `packaging/macos/build.sh` the disk image; see [the packaging reference](docs/technical/packaging.md). From a checkout on Windows, `cargo build --release` and then `target\release\meeting-assistant.exe --install` also install.
 
 [INSTALL.md](INSTALL.md) covers the browser extension, updating, macOS and where files are kept.
 

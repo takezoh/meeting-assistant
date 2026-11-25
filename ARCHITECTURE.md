@@ -40,9 +40,10 @@ One process hosts the tray UI on the main thread, an engine thread that polls si
 | Path | Responsibility |
 | --- | --- |
 | `crates/core` | Operating-system-independent decisions. Reaches the outside world only through ports |
-| `crates/app` | The `meeting-assistant` executable: adapters, platform code, composition, UI |
+| `crates/app` | The `meeting-assistant` executable: adapters, platform code, composition, UI. Its `build.rs` gives the Windows executable its version information, icon and manifest, from `crates/app/windows` |
 | `extension` | Chrome/Edge MV3 extension: call detection and tab recording. Embedded in the executable and written out at install time |
 | `packaging/macos` | The build script that makes the signed app bundle and the disk image users install from, with the bundle's `Info.plist` and entitlements. See [the packaging reference](docs/technical/packaging.md) |
+| `packaging/windows` | The build script that makes the Windows executable users install from, and signs it when a certificate is named |
 | `tools/tabcapture-probe` | A throwaway extension used once to verify that the browser switch permits tab capture without a user gesture |
 | `tools/avsync` | A Windows tool, outside the workspace, that measures how far sound and picture are apart in a recording of the screen |
 

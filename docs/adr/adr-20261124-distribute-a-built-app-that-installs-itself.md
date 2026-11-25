@@ -14,6 +14,8 @@ relations:
 - {type: references, target: design-installation}
 source_paths:
 - packaging/macos/build.sh
+- packaging/windows/build.ps1
+- crates/app/build.rs
 - crates/app/src/install/mod.rs
 - crates/app/src/platform/mac/install.rs
 - crates/app/src/main.rs
@@ -39,7 +41,7 @@ What stays fixed from [the installation design](../design/design-installation.md
 ### One file per platform, made by the build
 
 - **macOS:** `Meeting-Assistant-<version>.dmg`, a disk image holding `Meeting Assistant.app`, made by `packaging/macos/build.sh`. The script builds the release executable and puts it into a bundle with `packaging/macos/Info.plist`. It signs the whole bundle as `com.meeting-assistant.app`, with the hardened runtime and the microphone entitlement in `packaging/macos/entitlements.plist`. The disk image holds only the app, with no alias to `/Applications`.
-- **Windows:** the executable, as it is today, with version information and an icon in its resources. This is not built yet ([the issue](../issue/issue-20261124-the-windows-installer-is-not-built.md)).
+- **Windows:** `Meeting-Assistant-<version>.exe`, the executable itself, made by `packaging/windows/build.ps1`. `crates/app/build.rs` gives it version information, an icon and an application manifest in its resources, so that Explorer, Settings > Apps and SmartScreen show a name instead of a bare file. The installer copies it as `meeting-assistant.exe`, so the download may have any name.
 
 ### The build signs, the installer does not
 
@@ -66,7 +68,7 @@ The app remains its own installer ([the decision](adr-20261117-self-installing-p
   5. Register the native-messaging hosts and create the browser launchers.
   6. Start the installed copy.
 - **Cancel** changes nothing, and the app exits.
-- On macOS, a built app is one that runs from an app bundle. On Windows the executable will ask too once its installer is done; until then it runs and offers the installation in its tray menu, as before.
+- On macOS, a built app is one that runs from an app bundle. On Windows every executable is one, since the release is the executable itself: one that `cargo build` made asks too.
 - A run with `--config` never asks, so a development build can run beside the installed app.
 
 An update is the same step with a newer disk image or executable. Uninstalling is unchanged.
@@ -92,6 +94,7 @@ An update is the same step with a newer disk image or executable. Uninstalling i
 - Negative: the hardened runtime now applies to the app. Under it the microphone is available only through the entitlement.
 - Negative: the disk image holds an Apple Silicon build only, because the x86_64 macOS target is not installed on the build Mac. Intel Macs cannot run it.
 - Negative: on macOS, `cargo build` followed by `--install` no longer installs. Developers run the build script.
+- Neutral: on Windows, `cargo build` followed by `--install` still installs, and a development build opened without `--config` asks whether to install itself.
 - Negative: on macOS, uninstalling still needs `--uninstall` in Terminal. Moving the app to the Trash leaves its login item, native-host manifests and launchers behind.
 - Neutral: nothing is published. The disk image is built on the builder's Mac, and where to offer it for download is not decided.
 
@@ -101,7 +104,10 @@ These tests check the decision:
 
 - **`crates/app/src/install/mod.rs`:** an app whose signature does not verify changes nothing. The app is placed as it was built and its signer is reported. A built app opened from elsewhere offers to install, and the installed app does not.
 - **`crates/app/src/platform/mac/install.rs`:** the bundle's `Info.plist` names the identifier and executable the installer uses, and keeps the microphone usage description.
+- **`crates/app/src/platform/win/install.rs`:** the executable carries the version information, the icon and the manifest, and its version information names the file the installer places.
 
 On 2026-11-24 the build script made a disk image on one Mac. Its app carried the hardened runtime and the microphone entitlement, and had the same designated requirement as the app installed there before.
 
 On 2026-11-25 the app was installed from that disk image, declined once, and installed again over itself. The installed app then recorded the screen and the microphone without a permission prompt ([the note](../note/note-20261125-installing-from-the-macos-disk-image-2026-11-25.md)).
+
+On 2026-11-25 on one Windows PC the executable asked when opened, and a Cancel changed nothing. A copy marked as downloaded, opened during a recording and accepted, had the running app finish that recording first, and placed the build without the mark ([the note](../note/note-20261125-installing-from-the-windows-executable-2.md)). The build script made the unsigned executable. SmartScreen and signing were not run.
