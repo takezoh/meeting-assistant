@@ -101,6 +101,16 @@ After five seconds a `stop` was given the same way. The offscreen document close
 
 Each file had one `avc1` sample description at that size.
 
+### A zoomed tab, 2026-11-27
+
+At 01:52 local time on 2026-11-27 the same setup ran again in Chrome 158 with the small window. The tab was zoomed to 150 % with `chrome.tabs.setZoom`, and the extension had been changed to take the tab's zoom out of the page's ratio:
+
+- The page's `innerWidth` and `innerHeight` became 591x404 and its `devicePixelRatio` 1.875. `chrome.tabs.get` still gave 886x606.
+- `chrome.tabs.getZoom` gave 1.5 to the extension, which has no `tabs` permission.
+- Given the page's ratio, the extension kept 1.25 device pixels per pixel of the tab's size. With a `max_size` of 1920x1080 it recorded the tab at 1108x758, as at 100 %.
+
+Multiplying the tab's size by the page's ratio, as the extension did before, gives 1661x1136 for this tab, which fitted into 1920x1080 is 1579x1080: the tab would have been scaled up. That is computed, not recorded.
+
 ### Not established here
 
 - The app's `start` over native messaging, a meeting page, and the app's copy of the recording.

@@ -59,6 +59,8 @@ The extension is not connected. Check, in this order:
 
 The log shows the extension's error. The usual cause is that the browser was not started from the `(Meeting Assistant)` shortcut, so the switch that permits capture without a click is missing. Quit the browser completely, including background processes, and start it from the shortcut. If the switch is present and the error remains, the browser version may no longer support it.
 
+If the error says the app and the extension are of different versions, the browser runs an extension other than the one the running app installed. Run `--install` from the app you use, then press **Reload** for the extension on the browser's extensions page.
+
 ## The app is not running after logon
 
 Check **Start at logon** in the tray menu, or run `--install` again. An invalid `config.toml` also stops the app at startup; the message names the problem. A file from an older version does not: it is set aside and replaced with the defaults.

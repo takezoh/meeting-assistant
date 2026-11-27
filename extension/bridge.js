@@ -9,7 +9,7 @@ const send = () => {
       host: location.hostname,
       // Told to the app as the meeting's page title, which also tells two meetings of a service apart.
       title: document.title,
-      // Sent so the recording resolution can match the tab's actual size.
+      // With the tab's zoom taken out, gives the tab's size in device pixels, which bounds the recording's picture.
       pixelRatio: window.devicePixelRatio,
     });
   } catch {

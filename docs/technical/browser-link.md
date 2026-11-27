@@ -40,7 +40,7 @@ Each control message is a 32-bit length in native byte order followed by that ma
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |
-| `start` | `tab`, `upload`, `token`, `max_size` | Record this tab and send the recording to the WebSocket at `upload` (`ws://127.0.0.1:<port>/`), presenting `token` first. `max_size` is `{ "width", "height" }`, the app's `video.width` and `video.height`: the extension captures the tab at its size in device pixels, scaled down to fit in it with its aspect ratio kept and never up, and at `max_size` when the tab's size cannot be read |
+| `start` | `tab`, `upload`, `token`, `max_size` | Record this tab and send the recording to the WebSocket at `upload` (`ws://127.0.0.1:<port>/`), presenting `token` first. `max_size` is `{ "width", "height" }`, the app's `video.width` and `video.height`: the extension captures the tab at its size in device pixels, scaled down to fit in it with its aspect ratio kept and never up, and at `max_size` when the tab's size cannot be read. The tab's size in device pixels is its size from `chrome.tabs.get` times its page's `devicePixelRatio` divided by the tab's zoom, which that ratio includes. A start without a whole positive `max_size` is answered with an `error` saying that the app and the extension are of different versions |
 | `stop` | `tab` | Stop recording, send the remaining data and close the upload |
 
 ## Upload connection

@@ -28,7 +28,7 @@ A file of the current version that cannot be parsed, contains an unknown key or 
 | `audio.record_microphone` | `true` | Record your microphone, the second audio track, also for browser tabs. When `false` that track is silent |
 | `rules` | See below | What counts as a meeting. Must not be empty |
 
-The video and audio settings apply to recordings made by the app itself. A tab recording made by the browser extension uses the browser's encoder with the extension's own bitrate.
+The video and audio settings apply to recordings made by the app itself, except where a row above names browser tabs. A tab recording made by the browser extension uses the browser's encoder with the extension's own frame rate and bitrate; of these settings it takes only the largest picture, `video.width` and `video.height`, and `audio.record_microphone`.
 
 ## Rules
 

@@ -11,8 +11,8 @@ const callFrames = new Map();
 const meetings = new Map();
 /** ID of the tab being recorded */
 let recordingTab = null;
-/** Tab ID -> display scale (how many physical pixels one CSS pixel is) */
-const pixelRatios = new Map();
+/** Tab ID -> how many device pixels the tab has per pixel of its size as `chrome.tabs.get` reports it */
+const deviceScales = new Map();
 
 function serviceName(host) {
   if (host === "meet.google.com") return "GoogleMeet";
@@ -115,13 +115,26 @@ function setCallState(tab, frame, inCall, host, url, title) {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "call-state" && sender.tab) {
-    if (sender.frameId === 0 && message.pixelRatio > 0) pixelRatios.set(sender.tab.id, message.pixelRatio);
+    if (sender.frameId === 0 && message.pixelRatio > 0) noteDeviceScale(sender.tab.id, message.pixelRatio);
     setCallState(sender.tab.id, sender.frameId ?? 0, message.inCall, message.host, sender.url, message.title);
   }
 });
 
+/**
+ * Notes the device pixels per pixel of the tab's size from its page's `devicePixelRatio`. That ratio includes the
+ * tab's zoom, which does not change the tab's size, so the zoom is taken out of it.
+ */
+async function noteDeviceScale(tab, pixelRatio) {
+  try {
+    const zoom = await chrome.tabs.getZoom(tab);
+    deviceScales.set(tab, zoom > 0 ? pixelRatio / zoom : pixelRatio);
+  } catch {
+    // The tab has closed meanwhile.
+  }
+}
+
 chrome.tabs.onRemoved.addListener((tab) => {
-  pixelRatios.delete(tab);
+  deviceScales.delete(tab);
   if (!meetings.has(tab)) return;
   callFrames.delete(tab);
   meetings.delete(tab);
@@ -132,22 +145,26 @@ chrome.tabs.onRemoved.addListener((tab) => {
 
 /**
  * The size a tab is captured at: its size in device pixels, scaled down to fit in `maxSize` with its aspect ratio
- * kept, and never up. `tab` is its size in CSS pixels and `ratio` the device pixels per CSS pixel.
+ * kept, and never up. `tab` is its size as `chrome.tabs.get` reports it and `scale` the device pixels per pixel of it.
  *
  * The browser delivers every picture at exactly the size it is given, for the whole capture, and fits the tab into it
  * with black bars (Chrome and Edge 158, 2026-11-25). So the app's largest picture is not passed as it is: a tab of
  * another shape would get bars, and a smaller tab would be scaled up. Given no size, the browser captures at the size of
  * the screen, so a tab whose size cannot be read is captured at `maxSize`.
  */
-function captureSize(tab, ratio, maxSize) {
-  if (!(tab.width > 0 && tab.height > 0)) return maxSize ?? null;
-  const device = { width: Math.round(tab.width * ratio), height: Math.round(tab.height * ratio) };
-  if (!maxSize) return device;
-  const scale = Math.min(1, maxSize.width / device.width, maxSize.height / device.height);
+function captureSize(tab, scale, maxSize) {
+  if (!(tab.width > 0 && tab.height > 0)) return maxSize;
+  const device = { width: Math.round(tab.width * scale), height: Math.round(tab.height * scale) };
+  const fit = Math.min(1, maxSize.width / device.width, maxSize.height / device.height);
   return {
-    width: Math.min(maxSize.width, Math.max(1, Math.round(device.width * scale))),
-    height: Math.min(maxSize.height, Math.max(1, Math.round(device.height * scale))),
+    width: Math.min(maxSize.width, Math.max(1, Math.round(device.width * fit))),
+    height: Math.min(maxSize.height, Math.max(1, Math.round(device.height * fit))),
   };
+}
+
+/** Whether `size` is a picture size: a whole positive width and height. */
+function isPictureSize(size) {
+  return Number.isInteger(size?.width) && size.width > 0 && Number.isInteger(size?.height) && size.height > 0;
 }
 
 /**
@@ -158,7 +175,19 @@ function captureSize(tab, ratio, maxSize) {
  * given, and whatever started is stopped on failure (offscreen.js stops its tracks; this closes the page).
  */
 async function startRecording(tab, upload, token, maxSize) {
-  // Refused before anything is touched: the recording under way must not be cleaned up as a failed start.
+  // Refused before anything is touched. A start without the largest picture comes from an app of another version,
+  // which would have the tab recorded at whatever size it is.
+  if (!isPictureSize(maxSize)) {
+    post({
+      type: "error",
+      tab,
+      message:
+        "The app and the extension are of different versions: the app did not say the largest picture to record " +
+        "(max_size). Install the app again and press Reload for the extension on the browser's extensions page.",
+    });
+    return;
+  }
+  // The recording under way must not be cleaned up as a failed start.
   if (recordingTab !== null) {
     post({ type: "error", tab, message: "Another tab is already being recorded" });
     return;
@@ -173,7 +202,7 @@ async function startRecording(tab, upload, token, maxSize) {
       });
     }
     const { width, height } = await chrome.tabs.get(tab);
-    const size = captureSize({ width, height }, pixelRatios.get(tab) ?? 1, maxSize);
+    const size = captureSize({ width, height }, deviceScales.get(tab) ?? 1, maxSize);
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab });
     const result = await chrome.runtime.sendMessage({
       target: "offscreen",

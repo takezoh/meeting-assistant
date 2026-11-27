@@ -61,9 +61,10 @@ invariants:
     file stays beside it.
   enforcement: test
 - id: INV-009
-  statement: A tab is captured at its size in device pixels, scaled down to fit in the
-    video.width by video.height that the app sends with start, with its aspect ratio
-    kept and never scaled up, and at that size when the tab's size cannot be read.
+  statement: A tab is captured at its size in device pixels, whatever its zoom, scaled
+    down to fit in the video.width by video.height that the app sends with start, with
+    its aspect ratio kept and never scaled up, and at that size when the tab's size
+    cannot be read. A start without that size is refused before anything is touched.
   enforcement: test
 boundaries:
   provides:
@@ -173,7 +174,9 @@ In the browser, `hook.js` observes `RTCPeerConnection` in the page, `bridge.js` 
 
 The hub decides and the server acts: the hub receives parsed control messages and the upload's events, and returns the commands to send; it writes recording bytes only to a `ChunkSink`. The recording goes from the offscreen document to the app over its own WebSocket rather than through native messaging, which carries only JSON, so the data is never base64-encoded or copied through the service worker and the relay. See [ADR: binary upload](../adr/adr-20261118-send-tab-recordings-to-the-app-over-a-we.md). The extension holds no policy. It reports what it sees and records when told, so that the rules for when to record stay in `crates/core`.
 
-A tab recording does not pass through the capture pipeline. Its video and audio settings are the extension's, not `config.toml`'s, except the size of its picture (INV-009). `start` carries `video.width` and `video.height` as `max_size`. The extension computes the tab's size in device pixels, scaled down to fit in `max_size`, and gives that size to the browser as the capture's maximum. The browser does the one scaling while it captures, and the app copies what it records.
+A tab recording does not pass through the capture pipeline. Its video and audio settings are the extension's, not `config.toml`'s, except the size of its picture (INV-009). `start` carries `video.width` and `video.height` as `max_size`. The extension computes the tab's size in device pixels, scaled down to fit in `max_size`, and gives that size to the browser as the capture's maximum. The browser does the one scaling while it captures, and the app copies what it records. A start without `max_size` comes from an app of another version, so the extension refuses it with an error that says so rather than recording at a size nothing bounds.
+
+The tab's size in device pixels is its size from `chrome.tabs.get` times its page's `devicePixelRatio`, which `bridge.js` reports, divided by the tab's zoom from `chrome.tabs.getZoom`. The page's ratio includes the zoom, while the tab's size does not change with it: in Chrome 158 on 2026-11-27, a tab of 886x606 at 150 % had a ratio of 1.875 on a display at 125 %.
 
 The bound is not passed as it is. In Chrome and Edge 158 the browser delivered every picture at exactly the size it was given, and fitted the tab into it with black bars and scaled up when it was smaller ([the note](../note/note-20261125-tab-capture-sizes-in-chrome-and-edge.md)). Passing `max_size` itself would therefore put bars beside a tab of another shape and scale a smaller tab up. With no size the pictures came at the screen's. The picture keeps its first size for the whole recording. When the tab changes size, the browser fits it into the picture again.
 
@@ -201,7 +204,7 @@ Detection inside the page is a heuristic and may be replaced per site. The conta
 
 ## Conformance
 
-`browser/{protocol,hub}.rs`, `linked.rs`, `recording/{merge,mp4}.rs` and `bundle.rs` carry the unit tests; `linked.rs` checks the order of starting, stopping and merging and what each failure leaves. INV-009 is checked from both sides: `browser/server.rs` checks that a start names the largest picture, and `extension/test/background.test.mjs` checks the size the extension then captures at. What the browser does with that size was observed in a browser, not tested. The real path through a browser was checked by hand in Chrome and Edge and is recorded in the verification note; it is not covered by automated tests.
+`browser/{protocol,hub}.rs`, `linked.rs`, `recording/{merge,mp4}.rs` and `bundle.rs` carry the unit tests; `linked.rs` checks the order of starting, stopping and merging and what each failure leaves. INV-009 is checked from both sides: `browser/server.rs` checks that a start names the largest picture, and `extension/test/background.test.mjs` checks the size the extension then captures at, also for a zoomed page, and that a start without it is refused. What the browser does with that size was observed in a browser, not tested. The real path through a browser was checked by hand in Chrome and Edge and is recorded in the verification note; it is not covered by automated tests.
 
 ## Related Decisions
 

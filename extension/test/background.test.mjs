@@ -4,6 +4,8 @@ import { test } from "node:test";
 import { event, load, plain, settle } from "./harness.mjs";
 
 const EXTENSION_ID = "lnplioaidiniokndppmckdaflgefgale";
+/** The largest picture the app names in its start, by default. */
+const MAX_SIZE = { width: 1920, height: 1080 };
 
 /** background.js with a fake browser: `steps` is what it asked of the browser, in order; `posted` what it told the app. */
 function background() {
@@ -15,8 +17,10 @@ function background() {
     /** What the recording page answers to "start". */
     pageReply: {},
     pageOpen: false,
-    /** The tab's size in CSS pixels, as `chrome.tabs.get` reports it. */
+    /** The tab's size, as `chrome.tabs.get` reports it. */
     tab: { width: 1280, height: 720 },
+    /** The tab's zoom, as `chrome.tabs.getZoom` reports it. */
+    zoom: 1,
     /** The last "start" the recording page was told. */
     pageStart: null,
   };
@@ -44,6 +48,7 @@ function background() {
         steps.push("read the tab's size");
         return browser.tab;
       },
+      getZoom: async () => browser.zoom,
       onRemoved: event(),
     },
     tabCapture: {
@@ -111,9 +116,30 @@ test("a tab whose size cannot be read is captured at the largest picture, never 
   assert.deepEqual(await startFromTheApp(b, 2, { width: 1920, height: 1080 }), { width: 1920, height: 1080 });
 });
 
+test("a page's zoom, which its pixel ratio includes, does not change the size the tab is captured at", async () => {
+  const b = background();
+  b.browser.tab = { width: 800, height: 448 };
+  b.browser.zoom = 1.5;
+
+  // At 125 % and a zoom of 150 % the page reports 1.875; the tab is 1000x560 device pixels.
+  assert.deepEqual(await startFromTheApp(b, 1.875, MAX_SIZE), { width: 1000, height: 560 });
+});
+
+test("a start that names no largest picture is refused before anything is touched", async () => {
+  const b = background();
+
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", undefined);
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", { width: 0, height: 1080 });
+
+  assert.equal(b.errors().length, 2);
+  for (const error of b.errors()) assert.match(error.message, /different versions.*max_size.*press Reload/s);
+  assert.deepEqual(b.steps, [], "nothing was asked of the browser");
+  assert.equal(b.evaluate("recordingTab"), null);
+});
+
 test("the stream ID is asked for last, once the page that uses it exists, and handed over at once", async () => {
   const b = background();
-  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
 
   assert.deepEqual(b.steps, [
     "open the recording page",
@@ -129,7 +155,7 @@ test("a start that fails tells the app why, closes the page and leaves the next 
   const b = background();
   b.browser.pageReply = { error: "NotReadableError: Could not start video source" };
 
-  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
 
   assert.deepEqual(plain(b.errors()), [
     { type: "error", tab: 7, message: "NotReadableError: Could not start video source" },
@@ -139,7 +165,7 @@ test("a start that fails tells the app why, closes the page and leaves the next 
   assert.equal(b.evaluate("recordingTab"), null);
 
   b.browser.pageReply = {};
-  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
   assert.equal(b.errors().length, 1, "the retry starts");
   assert.equal(b.evaluate("recordingTab"), 7);
 });
@@ -148,7 +174,7 @@ test("a capture the browser still holds is explained, with what releases it", as
   const b = background();
   b.browser.streamIdError = "Cannot capture a tab with an active stream.";
 
-  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
 
   const [error] = b.errors();
   assert.match(error.message, /lets it go only when that capture ends or the tab is closed/);
@@ -160,17 +186,17 @@ test("a missing user gesture is explained with the switch that allows recording 
   const b = background();
   b.browser.streamIdError = "Extension has not been invoked for the current page (see activeTab permission).";
 
-  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
 
   assert.match(b.errors()[0].message, new RegExp(`--allowlisted-extension-id=${EXTENSION_ID}`));
 });
 
 test("a start while recording is refused without touching the recording under way", async () => {
   const b = background();
-  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(7, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
   const before = b.steps.length;
 
-  await b.context.startRecording(8, "ws://127.0.0.1:5000/", "token");
+  await b.context.startRecording(8, "ws://127.0.0.1:5000/", "token", MAX_SIZE);
 
   assert.deepEqual(plain(b.errors()), [{ type: "error", tab: 8, message: "Another tab is already being recorded" }]);
   assert.equal(b.steps.length, before, "nothing was asked of the browser");
